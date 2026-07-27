@@ -25,7 +25,7 @@ from groq import Groq
 from ddgs import DDGS
 
 # 1. The Ears & Brain (Groq API)
-GROQ_API_KEY = "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" 
+GROQ_API_KEY = "" 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # ==========================================
