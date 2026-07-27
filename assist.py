@@ -47,7 +47,6 @@ os.environ["ORT_LOGGING_LEVEL"] = "3"
 load_dotenv()
 
 import speech_recognition as sr
-from faster_whisper import WhisperModel
 from groq import Groq
 from ddgs import DDGS
 from piper.voice import PiperVoice, SynthesisConfig
@@ -63,11 +62,6 @@ PIPER_MODEL_PATH = os.getenv("PIPER_MODEL_PATH", "/home/pi/test/piper/en_US-less
 ACTIVE_PIPER_MODEL = PIPER_MODEL_PATH
 PIPER_ESPEAK_DATA_DIR = os.getenv("PIPER_ESPEAK_DATA_DIR", "/home/pi/test/piper/espeak-ng-data")
 PIPER_RATE = int(os.getenv("PIPER_SAMPLE_RATE", "22050"))
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
-WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
-WHISPER_MODEL = None
-WHISPER_MODEL_LOCK = threading.Lock()
 PIPER_VOICE = None
 PIPER_VOICE_LOCK = threading.Lock()
 PIPER_SYNTHESIS_CONFIG = SynthesisConfig(length_scale=0.85, normalize_audio=True, volume=1.0)
@@ -200,24 +194,6 @@ def interrupt_playback():
     stop_playback_event.clear()
 
 
-def get_cached_whisper_model():
-    global WHISPER_MODEL
-    if WHISPER_MODEL is None:
-        with WHISPER_MODEL_LOCK:
-            if WHISPER_MODEL is None:
-                model_name = os.getenv("WHISPER_MODEL_SIZE", "tiny")
-                compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-                print(f"[MODEL] Loading Whisper {model_name} into memory...", flush=True)
-                WHISPER_MODEL = WhisperModel(
-                    model_name,
-                    device=os.getenv("WHISPER_DEVICE", "cpu"),
-                    compute_type=compute_type,
-                    cpu_threads=max(1, os.cpu_count() or 1),
-                )
-                print("[MODEL] Whisper model cached in memory.", flush=True)
-    return WHISPER_MODEL
-
-
 def get_cached_piper_voice():
     global PIPER_VOICE
     if PIPER_VOICE is None:
@@ -235,32 +211,16 @@ def get_cached_piper_voice():
     return PIPER_VOICE
 
 
-def transcribe_with_cached_whisper(wav_data, prompt=""):
-    model = get_cached_whisper_model()
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        temp_path = tmp.name
-
-    try:
-        with wave.open(temp_path, "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(16000)
-            wav_file.writeframes(wav_data)
-
-        segments, _ = model.transcribe(
-            temp_path,
-            beam_size=1,
-            language="en",
-            task="transcribe",
-            initial_prompt=prompt,
-            vad_filter=True,
-        )
-        return " ".join(segment.text for segment in segments).strip()
-    finally:
-        try:
-            os.remove(temp_path)
-        except Exception:
-            pass
+def transcribe_with_groq(wav_data, prompt=""):
+    transcription = groq_client.audio.transcriptions.create(
+        file=("temp.wav", wav_data),
+        model="whisper-large-v3-turbo",
+        response_format="text",
+        language="en",
+        temperature=0.0,
+        prompt=prompt,
+    )
+    return transcription.strip()
 
 
 def synthesize_text_with_piper(text):
@@ -681,7 +641,7 @@ def ai_loop(ui, headless=False):
                             dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
                             break
 
-                    text = transcribe_with_cached_whisper(wav_data, dynamic_stt_prompt).strip()
+                    text = transcribe_with_groq(wav_data, dynamic_stt_prompt).strip()
                     lower_text = text.lower().strip()
                     hallucinations = [
                         "thank you.", "thank you", "thanks.", "thanks", "thanks for watching.", 
@@ -887,7 +847,6 @@ if __name__ == "__main__":
     player_thread = threading.Thread(target=audio_player_worker, daemon=True)
     player_thread.start()
 
-    get_cached_whisper_model()
     get_cached_piper_voice()
 
     HEADLESS = ("--headless" in sys.argv) or (os.getenv("HEADLESS") == "1")

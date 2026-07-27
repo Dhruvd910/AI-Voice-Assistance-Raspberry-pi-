@@ -17,3 +17,4 @@ __pycache__/
 *.pyc
 output.wav
 *.tar.gz
+chat_history.json
