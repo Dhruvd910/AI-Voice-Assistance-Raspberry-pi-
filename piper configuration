@@ -6,7 +6,7 @@ Bash
 mkdir -p models/piper
 cd models/piper
 2. Download Piper Voice Models
-Download your desired voice model (.onnx) and its accompanying config (.onnx.json) from the official Rhasspy Piper Voices repository.
+Download your desired voice model (.onnx) and its accompanying config (.onnx.json) from the official https://github.com/OHF-Voice/piper1-gpl
 
 Example using en_US-lessac-medium (Natural US English):
 
