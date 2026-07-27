@@ -15,12 +15,7 @@ import re
 import ctypes
 import traceback
 import shutil
-import tempfile
-import wave
-import io
 from datetime import datetime
-
-from flask import Flask, Response, jsonify, request
 
 
 def load_dotenv(path=None):
@@ -37,7 +32,7 @@ def load_dotenv(path=None):
                 continue
             key, value = line.split("=", 1)
             key = key.strip()
-            value = value.strip().strip("\"'")
+            value = value.strip().strip('"\'')
             if key and not os.getenv(key):
                 os.environ[key] = value
 
@@ -49,7 +44,6 @@ load_dotenv()
 import speech_recognition as sr
 from groq import Groq
 from ddgs import DDGS
-from piper.voice import PiperVoice, SynthesisConfig
 
 # 1. The Ears & Brain (Groq API)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -60,11 +54,6 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # ==========================================
 PIPER_MODEL_PATH = os.getenv("PIPER_MODEL_PATH", "/home/pi/test/piper/en_US-lessac-medium.onnx")
 ACTIVE_PIPER_MODEL = PIPER_MODEL_PATH
-PIPER_ESPEAK_DATA_DIR = os.getenv("PIPER_ESPEAK_DATA_DIR", "/home/pi/test/piper/espeak-ng-data")
-PIPER_RATE = int(os.getenv("PIPER_SAMPLE_RATE", "22050"))
-PIPER_VOICE = None
-PIPER_VOICE_LOCK = threading.Lock()
-PIPER_SYNTHESIS_CONFIG = SynthesisConfig(length_scale=0.85, normalize_audio=True, volume=1.0)
 
 try:
     RAM_DISK_PATH = os.getenv("RAM_DISK_PATH", "/dev/shm")
@@ -193,89 +182,6 @@ def interrupt_playback():
         
     stop_playback_event.clear()
 
-
-def get_cached_piper_voice():
-    global PIPER_VOICE
-    if PIPER_VOICE is None:
-        with PIPER_VOICE_LOCK:
-            if PIPER_VOICE is None:
-                voice_model_path = ACTIVE_PIPER_MODEL
-                voice_config_path = voice_model_path + ".json"
-                print(f"[MODEL] Loading Piper voice into memory from {voice_model_path}...", flush=True)
-                PIPER_VOICE = PiperVoice.load(
-                    voice_model_path,
-                    config_path=voice_config_path,
-                    espeak_data_dir=PIPER_ESPEAK_DATA_DIR,
-                )
-                print("[MODEL] Piper voice cached in memory.", flush=True)
-    return PIPER_VOICE
-
-
-def transcribe_with_groq(wav_data, prompt=""):
-    transcription = groq_client.audio.transcriptions.create(
-        file=("temp.wav", wav_data),
-        model="whisper-large-v3-turbo",
-        response_format="text",
-        language="en",
-        temperature=0.0,
-        prompt=prompt,
-    )
-    return transcription.strip()
-
-
-def synthesize_text_with_piper(text):
-    if not text or not text.strip():
-        return b""
-    voice = get_cached_piper_voice()
-    chunks = []
-    for chunk in voice.synthesize(text, syn_config=PIPER_SYNTHESIS_CONFIG):
-        chunks.append(chunk.audio_int16_bytes)
-    return b"".join(chunks)
-
-
-def synthesize_text_to_wav_bytes(text):
-    pcm_bytes = synthesize_text_with_piper(text)
-    if not pcm_bytes:
-        return b""
-
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(PIPER_RATE)
-        wav_file.writeframes(pcm_bytes)
-    return buffer.getvalue()
-
-
-HTTP_TTS_APP = Flask(__name__)
-
-@HTTP_TTS_APP.route("/health", methods=["GET"])
-def http_tts_health():
-    return jsonify({"status": "ok", "model_loaded": PIPER_VOICE is not None})
-
-@HTTP_TTS_APP.route("/tts", methods=["GET", "POST"])
-def http_tts_endpoint():
-    text = None
-    if request.method == "POST":
-        payload = request.get_json(silent=True) or {}
-        text = payload.get("text") or payload.get("message")
-    if text is None:
-        text = request.args.get("text", "")
-
-    if not text or not str(text).strip():
-        return jsonify({"error": "missing text"}), 400
-
-    wav_bytes = synthesize_text_to_wav_bytes(str(text).strip())
-    if not wav_bytes:
-        return jsonify({"error": "tts synthesis failed"}), 500
-
-    return Response(wav_bytes, mimetype="audio/wav")
-
-
-def start_http_tts_server(host="0.0.0.0", port=5001):
-    get_cached_piper_voice()
-    HTTP_TTS_APP.run(host=host, port=port, threaded=True)
-
 # ==========================================
 # Bulletproof Audio + Byte-Synced Subtitles
 # ==========================================
@@ -292,63 +198,117 @@ def audio_player_worker():
             continue
 
         playback_active.set()
-        try:
-            aplay_proc = subprocess.Popen(
-                ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(PIPER_RATE), "-c", "1"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-            )
-            active_subprocesses = [aplay_proc]
+        shuttle_text_queue = queue.Queue()
+        shuttle_text_queue.put(first_item)
 
-            def push_words_with_delay(text, duration):
-                words = text.split()
-                if not words:
-                    return
-                if ui_instance is not None:
-                    ui_instance.root.after(0, lambda: ui_instance.set_state("speaking"))
-                per_word_delay = max(duration / max(len(words), 1), 0.03)
-                for word in words:
-                    if stop_playback_event.is_set():
-                        break
-                    if ui_instance is not None:
-                        ui_instance.root.after(0, lambda x=word: ui_instance.push_word(x))
-                    time.sleep(per_word_delay)
+        piper_cmd = [
+            "/home/pi/test/piper/piper", "--model", ACTIVE_PIPER_MODEL, 
+            "--output_raw", "-", "--quiet", "--length_scale", "0.85", "--sentence_silence", "0.2"
+        ]
+        
+        try:
+            piper_proc = subprocess.Popen(piper_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            aplay_proc = subprocess.Popen(["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", "22050", "-c", "1"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
+            active_subprocesses = [piper_proc, aplay_proc]
+            
+            def shuttle_audio():
+                first_chunk = True
+                total_bytes_generated = 0
+                start_time = 0
+                BYTES_PER_SEC = 44100
+                BYTES_PER_CHAR = 2600 
+                
+                word_queue = []
+                cost_accumulator = 0
+                piper_done = False
+                
+                try:
+                    while True:
+                        if not piper_done:
+                            chunk = piper_proc.stdout.read(4096)
+                            if chunk:
+                                if first_chunk:
+                                    start_time = time.time()
+                                    if ui_instance is not None: 
+                                        ui_instance.root.after(0, lambda: ui_instance.set_state("speaking"))
+                                    first_chunk = False
+                                
+                                aplay_proc.stdin.write(chunk)
+                                aplay_proc.stdin.flush()
+                                total_bytes_generated += len(chunk)
+                            else:
+                                piper_done = True
+                                try: aplay_proc.stdin.close() 
+                                except: pass
+                        
+                        while not shuttle_text_queue.empty():
+                            new_sentence = shuttle_text_queue.get_nowait()
+                            if new_sentence == "[END_OF_RESPONSE]": break
+                            word_queue.extend(new_sentence.split())
+                        
+                        if not first_chunk:
+                            bytes_played = min((time.time() - start_time) * BYTES_PER_SEC, total_bytes_generated)
+                            
+                            while word_queue:
+                                next_word = word_queue[0]
+                                word_cost = len(next_word) * BYTES_PER_CHAR
+                                if next_word.endswith(('.', ',', '?', '!')): word_cost += 0
+                                
+                                if bytes_played >= (cost_accumulator + word_cost):
+                                    w = word_queue.pop(0)
+                                    cost_accumulator += word_cost
+                                    if ui_instance: 
+                                        ui_instance.root.after(0, lambda x=w: ui_instance.push_word(x))
+                                else:
+                                    break 
+                                    
+                        if piper_done and not word_queue:
+                            break 
+                        
+                        if piper_done and word_queue:
+                            if (time.time() - start_time) > (total_bytes_generated / BYTES_PER_SEC) + 6.0:
+                                while word_queue:
+                                    w = word_queue.pop(0)
+                                    if ui_instance: 
+                                        ui_instance.root.after(0, lambda x=w: ui_instance.push_word(x))
+                                break
+                            time.sleep(0.05)
+                except Exception: pass
+                finally:
+                    try: aplay_proc.stdin.close()
+                    except: pass
+
+            shuttle_thread = threading.Thread(target=shuttle_audio, daemon=True)
+            shuttle_thread.start()
 
             print(f"Liza (speaking): {first_item}", flush=True)
-            pcm_bytes = synthesize_text_with_piper(first_item)
-            if pcm_bytes:
-                aplay_proc.stdin.write(pcm_bytes)
-                aplay_proc.stdin.flush()
-                duration = max(len(pcm_bytes) / (2 * PIPER_RATE), 0.05)
-                push_words_with_delay(first_item, duration)
+            piper_proc.stdin.write((first_item + "\n").encode("utf-8"))
+            piper_proc.stdin.flush()
             audio_queue.task_done()
 
             while True:
                 sentence = audio_queue.get()
                 if sentence is None: break
                 if sentence == "[END_OF_RESPONSE]":
+                    shuttle_text_queue.put("[END_OF_RESPONSE]")
                     audio_queue.task_done()
                     break
                 if stop_playback_event.is_set():
                     audio_queue.task_done()
                     break
-
+                    
                 print(f"Liza (speaking): {sentence}", flush=True)
                 try:
-                    pcm_bytes = synthesize_text_with_piper(sentence)
-                    if pcm_bytes:
-                        aplay_proc.stdin.write(pcm_bytes)
-                        aplay_proc.stdin.flush()
-                        duration = max(len(pcm_bytes) / (2 * PIPER_RATE), 0.05)
-                        push_words_with_delay(sentence, duration)
+                    shuttle_text_queue.put(sentence)
+                    piper_proc.stdin.write((sentence + "\n").encode("utf-8"))
+                    piper_proc.stdin.flush()
                 except Exception: pass
                 audio_queue.task_done()
 
-            try:
-                aplay_proc.stdin.close()
-            except Exception:
-                pass
-            aplay_proc.wait(timeout=5)
+            piper_proc.stdin.close()
+            shuttle_thread.join()
+            aplay_proc.wait()
+            piper_proc.wait()
 
         except Exception as e:
             print(f"TTS Error: {e}", flush=True)
@@ -641,7 +601,16 @@ def ai_loop(ui, headless=False):
                             dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
                             break
 
-                    text = transcribe_with_groq(wav_data, dynamic_stt_prompt).strip()
+                    transcription = groq_client.audio.transcriptions.create(
+                        file=("temp.wav", wav_data),
+                        model="whisper-large-v3-turbo", 
+                        response_format="text",
+                        language="en",
+                        temperature=0.0,
+                        prompt=dynamic_stt_prompt
+                    )
+                    
+                    text = transcription.strip()
                     lower_text = text.lower().strip()
                     hallucinations = [
                         "thank you.", "thank you", "thanks.", "thanks", "thanks for watching.", 
@@ -847,15 +816,7 @@ if __name__ == "__main__":
     player_thread = threading.Thread(target=audio_player_worker, daemon=True)
     player_thread.start()
 
-    get_cached_piper_voice()
-
     HEADLESS = ("--headless" in sys.argv) or (os.getenv("HEADLESS") == "1")
-    HTTP_TTS = ("--tts-http" in sys.argv) or (os.getenv("ENABLE_HTTP_TTS") == "1")
-
-    if HTTP_TTS:
-        print("[HTTP TTS] Starting cached Piper HTTP service on port 5001", flush=True)
-        start_http_tts_server()
-        sys.exit(0)
 
     if HEADLESS:
         app_ui = HeadlessUI()
