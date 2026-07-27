@@ -5,3 +5,15 @@ env/
 
 #environment variables
 .env
+
+#ignore folder
+assist/
+faces/
+piper/
+test/
+
+#other ignore
+__pycache__/
+*.pyc
+output.wav
+*.tar.gz
