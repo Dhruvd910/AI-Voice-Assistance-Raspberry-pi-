@@ -15,30 +15,81 @@ import re
 import ctypes
 import traceback
 import shutil
+import tempfile
+import wave
+import io
 from datetime import datetime
+
+from flask import Flask, Response, jsonify, request
+
+
+def load_dotenv(path=None):
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+
+    if not os.path.exists(path):
+        return
+
+    with open(path, "r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if key and not os.getenv(key):
+                os.environ[key] = value
+
 
 # Suppress ONNX Runtime warnings
 os.environ["ORT_LOGGING_LEVEL"] = "3"
+load_dotenv()
 
 import speech_recognition as sr
+from faster_whisper import WhisperModel
 from groq import Groq
 from ddgs import DDGS
-from cartesia import Cartesia
+from piper.voice import PiperVoice, SynthesisConfig
 
-# 1. Groq API (Ears & Brain)
-GROQ_API_KEY = "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"
+# 1. The Ears & Brain (Groq API)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 groq_client = Groq(api_key=GROQ_API_KEY)
-
-# 2. Cartesia API (Voice / Multilingual TTS - Hindi & English)
-CARTESIA_API_KEY = "sk_car_KXLnTcFpK1AmSJGbvftJCe"
-CARTESIA_VOICE_ID = "faf0731e-dfb9-4cfc-8119-259a79b27e12" # Replace with your preferred multilingual voice ID
-cartesia_client = Cartesia(api_key=CARTESIA_API_KEY)
 
 # ==========================================
 # Configuration & Setup
 # ==========================================
+PIPER_MODEL_PATH = os.getenv("PIPER_MODEL_PATH", "/home/pi/test/piper/en_US-lessac-medium.onnx")
+ACTIVE_PIPER_MODEL = PIPER_MODEL_PATH
+PIPER_ESPEAK_DATA_DIR = os.getenv("PIPER_ESPEAK_DATA_DIR", "/home/pi/test/piper/espeak-ng-data")
+PIPER_RATE = int(os.getenv("PIPER_SAMPLE_RATE", "22050"))
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
+WHISPER_MODEL = None
+WHISPER_MODEL_LOCK = threading.Lock()
+PIPER_VOICE = None
+PIPER_VOICE_LOCK = threading.Lock()
+PIPER_SYNTHESIS_CONFIG = SynthesisConfig(length_scale=0.85, normalize_audio=True, volume=1.0)
+
+try:
+    RAM_DISK_PATH = os.getenv("RAM_DISK_PATH", "/dev/shm")
+    if os.path.exists(RAM_DISK_PATH):
+        model_name = os.path.basename(PIPER_MODEL_PATH)
+        json_name = model_name + ".json"
+        ram_model = os.path.join(RAM_DISK_PATH, model_name)
+        ram_json = os.path.join(RAM_DISK_PATH, json_name)
+        
+        if not os.path.exists(ram_model):
+            print("[OPTIMIZATION] Moving voice model to RAM...", flush=True)
+            shutil.copy(PIPER_MODEL_PATH, ram_model)
+            shutil.copy(PIPER_MODEL_PATH + ".json", ram_json)
+        ACTIVE_PIPER_MODEL = ram_model
+except Exception as e:
+    pass
+
 wake_event = threading.Event()
-HISTORY_FILE = "chat_history.json"
+HISTORY_FILE = os.getenv("HISTORY_FILE", "chat_history.json")
 MAX_HISTORY_TURNS = 6
 
 audio_queue = queue.Queue()
@@ -148,8 +199,125 @@ def interrupt_playback():
         
     stop_playback_event.clear()
 
+
+def get_cached_whisper_model():
+    global WHISPER_MODEL
+    if WHISPER_MODEL is None:
+        with WHISPER_MODEL_LOCK:
+            if WHISPER_MODEL is None:
+                model_name = os.getenv("WHISPER_MODEL_SIZE", "tiny")
+                compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+                print(f"[MODEL] Loading Whisper {model_name} into memory...", flush=True)
+                WHISPER_MODEL = WhisperModel(
+                    model_name,
+                    device=os.getenv("WHISPER_DEVICE", "cpu"),
+                    compute_type=compute_type,
+                    cpu_threads=max(1, os.cpu_count() or 1),
+                )
+                print("[MODEL] Whisper model cached in memory.", flush=True)
+    return WHISPER_MODEL
+
+
+def get_cached_piper_voice():
+    global PIPER_VOICE
+    if PIPER_VOICE is None:
+        with PIPER_VOICE_LOCK:
+            if PIPER_VOICE is None:
+                voice_model_path = ACTIVE_PIPER_MODEL
+                voice_config_path = voice_model_path + ".json"
+                print(f"[MODEL] Loading Piper voice into memory from {voice_model_path}...", flush=True)
+                PIPER_VOICE = PiperVoice.load(
+                    voice_model_path,
+                    config_path=voice_config_path,
+                    espeak_data_dir=PIPER_ESPEAK_DATA_DIR,
+                )
+                print("[MODEL] Piper voice cached in memory.", flush=True)
+    return PIPER_VOICE
+
+
+def transcribe_with_cached_whisper(wav_data, prompt=""):
+    model = get_cached_whisper_model()
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        temp_path = tmp.name
+
+    try:
+        with wave.open(temp_path, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(wav_data)
+
+        segments, _ = model.transcribe(
+            temp_path,
+            beam_size=1,
+            language="en",
+            task="transcribe",
+            initial_prompt=prompt,
+            vad_filter=True,
+        )
+        return " ".join(segment.text for segment in segments).strip()
+    finally:
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+
+
+def synthesize_text_with_piper(text):
+    if not text or not text.strip():
+        return b""
+    voice = get_cached_piper_voice()
+    chunks = []
+    for chunk in voice.synthesize(text, syn_config=PIPER_SYNTHESIS_CONFIG):
+        chunks.append(chunk.audio_int16_bytes)
+    return b"".join(chunks)
+
+
+def synthesize_text_to_wav_bytes(text):
+    pcm_bytes = synthesize_text_with_piper(text)
+    if not pcm_bytes:
+        return b""
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(PIPER_RATE)
+        wav_file.writeframes(pcm_bytes)
+    return buffer.getvalue()
+
+
+HTTP_TTS_APP = Flask(__name__)
+
+@HTTP_TTS_APP.route("/health", methods=["GET"])
+def http_tts_health():
+    return jsonify({"status": "ok", "model_loaded": PIPER_VOICE is not None})
+
+@HTTP_TTS_APP.route("/tts", methods=["GET", "POST"])
+def http_tts_endpoint():
+    text = None
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        text = payload.get("text") or payload.get("message")
+    if text is None:
+        text = request.args.get("text", "")
+
+    if not text or not str(text).strip():
+        return jsonify({"error": "missing text"}), 400
+
+    wav_bytes = synthesize_text_to_wav_bytes(str(text).strip())
+    if not wav_bytes:
+        return jsonify({"error": "tts synthesis failed"}), 500
+
+    return Response(wav_bytes, mimetype="audio/wav")
+
+
+def start_http_tts_server(host="0.0.0.0", port=5001):
+    get_cached_piper_voice()
+    HTTP_TTS_APP.run(host=host, port=port, threaded=True)
+
 # ==========================================
-# Cartesia Audio Worker + Subtitles Sync
+# Bulletproof Audio + Byte-Synced Subtitles
 # ==========================================
 def audio_player_worker():
     global active_subprocesses
@@ -164,96 +332,70 @@ def audio_player_worker():
             continue
 
         playback_active.set()
-
         try:
-            # Popen aplay for playing raw 16-bit 22050Hz PCM Audio
             aplay_proc = subprocess.Popen(
-                ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", "22050", "-c", "1"],
-                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(PIPER_RATE), "-c", "1"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
             )
-            
-            with subprocess_lock:
-                active_subprocesses = [aplay_proc]
+            active_subprocesses = [aplay_proc]
 
-            def process_and_play(sentence):
-                if not sentence or sentence == "[END_OF_RESPONSE]" or stop_playback_event.is_set():
+            def push_words_with_delay(text, duration):
+                words = text.split()
+                if not words:
                     return
-
-                print(f"Liza (speaking): {sentence}", flush=True)
-
                 if ui_instance is not None:
                     ui_instance.root.after(0, lambda: ui_instance.set_state("speaking"))
-                    words = sentence.split()
-                    for word in words:
-                        ui_instance.root.after(0, lambda w=word: ui_instance.push_word(w))
+                per_word_delay = max(duration / max(len(words), 1), 0.03)
+                for word in words:
+                    if stop_playback_event.is_set():
+                        break
+                    if ui_instance is not None:
+                        ui_instance.root.after(0, lambda x=word: ui_instance.push_word(x))
+                    time.sleep(per_word_delay)
 
-                try:
-                    # Fetch TTS response object from Cartesia API
-                    response = cartesia_client.tts.generate(
-                        model_id="sonic-3.5",
-                        transcript=sentence,
-                        voice={"mode": "id", "id": CARTESIA_VOICE_ID},
-                        output_format={
-                            "container": "raw",
-                            "encoding": "pcm_s16le",
-                            "sample_rate": 22050
-                        }
-                    )
-                    
-                    if aplay_proc.stdin and not stop_playback_event.is_set():
-                        # Safely extract the raw bytes from the BinaryAPIResponse object
-                        if hasattr(response, 'read'):
-                            audio_bytes = response.read()
-                        elif hasattr(response, 'content'):
-                            audio_bytes = response.content
-                        elif hasattr(response, 'iter_bytes'):
-                            audio_bytes = b"".join(response.iter_bytes())
-                        else:
-                            audio_bytes = response # Fallback
-                            
-                        aplay_proc.stdin.write(audio_bytes)
-                        aplay_proc.stdin.flush()
-                        
-                except Exception as err:
-                    print(f"[Cartesia TTS Error] {err}", flush=True)
-
-            # Process first sentence
-            process_and_play(first_item)
+            print(f"Liza (speaking): {first_item}", flush=True)
+            pcm_bytes = synthesize_text_with_piper(first_item)
+            if pcm_bytes:
+                aplay_proc.stdin.write(pcm_bytes)
+                aplay_proc.stdin.flush()
+                duration = max(len(pcm_bytes) / (2 * PIPER_RATE), 0.05)
+                push_words_with_delay(first_item, duration)
             audio_queue.task_done()
 
-            # Process remaining sentences in queue for current turn
             while True:
-                if stop_playback_event.is_set():
-                    break
-                
-                try:
-                    sentence = audio_queue.get(timeout=0.1)
-                except queue.Empty:
-                    if not playback_active.is_set():
-                        break
-                    continue
-
-                if sentence is None:
-                    break
+                sentence = audio_queue.get()
+                if sentence is None: break
                 if sentence == "[END_OF_RESPONSE]":
                     audio_queue.task_done()
                     break
+                if stop_playback_event.is_set():
+                    audio_queue.task_done()
+                    break
 
-                process_and_play(sentence)
+                print(f"Liza (speaking): {sentence}", flush=True)
+                try:
+                    pcm_bytes = synthesize_text_with_piper(sentence)
+                    if pcm_bytes:
+                        aplay_proc.stdin.write(pcm_bytes)
+                        aplay_proc.stdin.flush()
+                        duration = max(len(pcm_bytes) / (2 * PIPER_RATE), 0.05)
+                        push_words_with_delay(sentence, duration)
+                except Exception: pass
                 audio_queue.task_done()
 
-            if aplay_proc.stdin:
-                try: aplay_proc.stdin.close()
-                except Exception: pass
-            aplay_proc.wait()
+            try:
+                aplay_proc.stdin.close()
+            except Exception:
+                pass
+            aplay_proc.wait(timeout=5)
 
         except Exception as e:
-            print(f"Audio Worker Error: {e}", flush=True)
+            print(f"TTS Error: {e}", flush=True)
         finally:
             if ui_instance is not None:
                 ui_instance.root.after(0, lambda: ui_instance.set_state("idle"))
-            with subprocess_lock:
-                active_subprocesses.clear()
+            active_subprocesses.clear()
             playback_active.clear()
 
 # ==========================================
@@ -296,6 +438,8 @@ class TutorUI:
         
         self.mode_tag.bind("<Button-1>", self.cycle_mode)
         self.root.bind("<Escape>", lambda event: self.root.attributes("-fullscreen", False))
+        
+        # Binds a left-click anywhere on the app to instantly wake Liza up
         self.root.bind("<Button-1>", self.wake_up)
 
         self.animations = {}
@@ -379,6 +523,7 @@ class TutorUI:
             try: self.face_canvas.itemconfig(self.transcript_text_id, text="", state="hidden")
             except Exception: pass
 
+    # FIX: No matter what state the UI is in, a tap wakes her up instantly!
     def wake_up(self, event):
         print("[UI] Screen tapped! Waking up...", flush=True)
         wake_event.set()
@@ -414,18 +559,18 @@ def clean_text_for_tts(text):
     return clean.replace('*', '').replace('_', '').replace('#', '').replace('`', '').replace('[', '').replace(']', '').strip()
 
 MODE_INSTRUCTIONS = {
-    "TUTOR": "TUTOR MODE ACTIVE: You are a subject expert. Explain the concept clearly using a maximum of 4 sentences. You can speak Hindi, English, or Hinglish depending on what language the user speaks.",
+    "TUTOR": "TUTOR MODE ACTIVE: You are a subject expert. Explain the concept clearly using a maximum of 4 sentences. Follow this sequence: 1. Core principle. 2. Mechanism. 3. Real-world example.",
     
-    "CO-TELL": "CO-TELL MODE ACTIVE: You are a collaborative study partner. STRICT RULE: YOU MUST SPEAK A MAXIMUM OF 2 SENTENCES TOTAL. Sentence 1: A brief validation or partial hint. Sentence 2: Ask the user a specific question to test their knowledge.",
+    "CO-TELL": "CO-TELL MODE ACTIVE: You are a collaborative study partner. STRICT RULE: YOU MUST SPEAK A MAXIMUM OF 2 SENTENCES TOTAL. Sentence 1: A brief validation or partial hint. Sentence 2: Ask the user a specific question to test their knowledge. NEVER explain the full concept. Wait for them to answer.",
     
     "RE-TELL": """RE-TELL MODE ACTIVE: You are an examiner evaluating the user step-by-step as they teach you. 
     STRICT RULE: YOU MUST SPEAK A MAXIMUM OF 2 SENTENCES TOTAL.
     Analyze the user's latest explanation:
-    - IF CORRECT: Sentence 1: Briefly validate that they are right. Sentence 2: Ask them to elaborate or explain the next step.
-    - IF INCORRECT OR INCOMPLETE: Sentence 1: Gently point out the specific mistake. Sentence 2: Tell them exactly which area to focus on."""
+    - IF CORRECT: Sentence 1: Briefly validate that they are right. Sentence 2: Ask them to elaborate, provide an example, or explain the next logical step to keep them talking.
+    - IF INCORRECT OR INCOMPLETE: Sentence 1: Gently point out the specific mistake or missing detail. Sentence 2: Tell them exactly which area they need to focus on or correct."""
 }
 
-UNIVERSAL_SYSTEM_PROMPT = """You are "Liza", an advanced, highly capable AI Voice Assistant fluent in both Hindi and English.
+UNIVERSAL_SYSTEM_PROMPT = """You are "Liza", an advanced, highly capable AI Assistant. You have LIVE internet access.
 CURRENT SYSTEM TIME & DATE: {system_time}
 
 ============================================================
@@ -434,29 +579,32 @@ CURRENT SYSTEM TIME & DATE: {system_time}
 {domain_guidelines}
 
 ============================================================
-2. UNIVERSAL BEHAVIORAL MATRIX & LANGUAGE RULE (CRITICAL)
+2. UNIVERSAL BEHAVIORAL MATRIX
 ============================================================
-- LANGUAGE MATCHING RULE (STRICT): You MUST detect the language of the user's latest input. 
-  * If the user speaks or asks in ENGLISH, you must reply entirely in ENGLISH.
-  * If the user speaks or asks in HINDI or HINGLISH, you must reply in HINDI/HINGLISH.
-- The STT Forgiveness Rule: Ignore all typos, phonetic misspellings, and grammar issues from the microphone transcription.
-- The Time Override: You already know the exact time and date from the SYSTEM TIME provided above. DO NOT search the web for time/date.
-- The Knowledge Fallback: Never say "I don't have real-time access" or "I am an AI".
+- The STT Forgiveness Rule (CRITICAL): The user is speaking through a microphone. Ignore all typos, phonetic misspellings, and grammar issues. NEVER correct the user. Just infer the meaning and answer.
+- The Time Override: You already know the exact time and date from the SYSTEM TIME provided above. DO NOT search the web for the time or date. 
+- The Knowledge Fallback: You MUST NEVER say "I don't have real-time access", "I cannot browse the internet", or "I am an AI". 
 
 ============================================================
 3. SEARCH PROTOCOL (STRICT)
 ============================================================
-If you need to trigger a search, output EXACTLY AND ONLY:
+If you need to trigger a search, you MUST NOT use the EMOTION or ANSWER tags. You must bypass normal conversation and output EXACTLY AND ONLY this:
 SEARCH: <your optimized query>
+
+CRITICAL EXAMPLES OF SEARCHING:
+User: "What is the temperature in New Delhi?"
+Your Output: SEARCH: current temperature in New Delhi weather
+
+DO NOT add conversational filler. ONLY output the SEARCH tag.
 
 ============================================================
 4. VOICE & FORMATTING CONSTRAINTS
 ============================================================
-- You are a VOICE assistant. Output must be conversational and spoken aloud.
-- DO NOT use bullet points, numbered lists, markdown formatting, or symbols.
-- ALWAYS start your response EXACTLY like this:
+- You are a VOICE assistant. Your output must be spoken aloud.
+- DO NOT use bullet points, numbered lists, markdown formatting, or complex punctuation.
+- If you are NOT searching, ALWAYS start your response EXACTLY like this:
 EMOTION: [emotion]
-ANSWER: <your spoken answer in the matching user language>
+ANSWER: <your spoken answer>
 """
 
 def ai_loop(ui, headless=False):
@@ -488,7 +636,11 @@ def ai_loop(ui, headless=False):
 
     while True:
         if not headless:
+            
+            # --- STANDBY LOOP: waits for screen tap, uses 0% CPU! ---
             if not session_active:
+                
+                # FIX: Thread-safe state update for Tkinter!
                 if hasattr(ui, 'root'):
                     ui.root.after(0, lambda: ui.set_state("idle"))
                 else:
@@ -503,6 +655,10 @@ def ai_loop(ui, headless=False):
                 session_active = True
                 silence_counter = 0
 
+            # Only show listening state if Liza is completely done talking
+            # --- FIX: PREVENT SELF-TALKING LOOP ---
+            # If Liza is currently speaking, skip the microphone entirely.
+            # This saves Pi CPU, prevents ALSA underruns, and stops the infinite loop.
             if playback_active.is_set() or not audio_queue.empty():
                 time.sleep(0.2)
                 continue
@@ -510,11 +666,12 @@ def ai_loop(ui, headless=False):
             ui.set_state("listening")
             print("[STATE] Listening for speech...", flush=True)
                         
+                        
             with mic_device as source:
                 try:
                     audio = recognizer.listen(source, timeout=5, phrase_time_limit=25)
                     wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
-                    silence_counter = 0
+                    silence_counter = 0 # Reset silence timer when sound is heard
                     
                     dynamic_stt_prompt = "Hey Liza. Explain the concept clearly."
                     for msg in reversed(chat_history):
@@ -524,26 +681,22 @@ def ai_loop(ui, headless=False):
                             dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
                             break
 
-                    # Groq Whisper STT (Auto-detects Hindi & English)
-                    transcription = groq_client.audio.transcriptions.create(
-                        file=("temp.wav", wav_data),
-                        model="whisper-large-v3-turbo", 
-                        response_format="text",
-                        prompt=dynamic_stt_prompt
-                    )
-                    
-                    text = transcription.strip()
+                    text = transcribe_with_cached_whisper(wav_data, dynamic_stt_prompt).strip()
                     lower_text = text.lower().strip()
                     hallucinations = [
                         "thank you.", "thank you", "thanks.", "thanks", "thanks for watching.", 
                         "you", "why?", ".", "bye.", "[empty]", "", 
                         "so,", "so.", "so", 
-                        "i'm not sure if i can do it.", "i'm not sure.", "i'm not sure"
+                        "i'm not sure if i can do it.", "i'm not sure.", "i'm not sure",
+                        "so, i'm going to go to the next slide.", "i'm going to go to the next slide.",
+                        "i'm not sure what you're doing.", "i'm not sure if you're a cat.",
+                        "yes.", "yeah.", "okay."
                     ]
                     
-                    if lower_text in hallucinations:
+                    if lower_text in hallucinations or "three, four" in lower_text or "assistant is a professor" in lower_text or "avoid casual" in lower_text:
                         text = ""
                     
+                    # --- ACOUSTIC ECHO CANCELLATION & INTERRUPTION ---
                     if playback_active.is_set() and text:
                         global current_ai_response
                         ai_words = set(current_ai_response.lower().replace('.', '').replace(',', '').split())
@@ -568,8 +721,8 @@ def ai_loop(ui, headless=False):
                         continue
                         
                     silence_counter += 1
-                    if silence_counter >= 6:
-                        print("[STATE] Standby Mode...", flush=True)
+                    if silence_counter >= 6: # ~30 seconds of quiet thinking time
+                        print("[STATE] No interaction for 30 seconds. Returning to Standby Mode...", flush=True)
                         session_active = False
                         silence_counter = 0
                     continue
@@ -584,7 +737,7 @@ def ai_loop(ui, headless=False):
             if text.lower() in ("exit", "quit"): break
             stop_playback_event.clear()
 
-        # LLM Logic
+        # --- 2. THINK & STREAM ---
         ui.set_state("thinking")
         mode_instruction = MODE_INSTRUCTIONS.get(ui.current_mode, MODE_INSTRUCTIONS["TUTOR"])
         
@@ -690,7 +843,7 @@ def ai_loop(ui, headless=False):
                         chat_history.append({"role": "assistant", "content": full_response})
                         chat_history.append({
                             "role": "user", 
-                            "content": f"Here are live search results:\n{search_context}\n\nAnswer concisely based ONLY on this information starting with EMOTION: and ANSWER:"
+                            "content": f"Here are the live web search results:\n{search_context}\n\nBased ONLY on this information, answer the question. If the results do not contain the answer, just say 'I couldn't find the exact data online right now.' DO NOT guess or change the subject. Provide the final spoken answer starting with EMOTION: and ANSWER:"
                         })
                         stream_hf(is_search_loop=True)
                         chat_history.pop() 
@@ -720,7 +873,7 @@ def ai_loop(ui, headless=False):
                 chat_history = trim_history(chat_history)
 
         except Exception as e:
-            print(f"LLM API Error: {e}", flush=True)
+            print(f"HF API Error: {e}", flush=True)
             audio_queue.put("I couldn't reach my brain servers.")
 
         audio_queue.put("[END_OF_RESPONSE]")
@@ -734,7 +887,16 @@ if __name__ == "__main__":
     player_thread = threading.Thread(target=audio_player_worker, daemon=True)
     player_thread.start()
 
-    HEADLESS = ("--headless" in sys.argv)
+    get_cached_whisper_model()
+    get_cached_piper_voice()
+
+    HEADLESS = ("--headless" in sys.argv) or (os.getenv("HEADLESS") == "1")
+    HTTP_TTS = ("--tts-http" in sys.argv) or (os.getenv("ENABLE_HTTP_TTS") == "1")
+
+    if HTTP_TTS:
+        print("[HTTP TTS] Starting cached Piper HTTP service on port 5001", flush=True)
+        start_http_tts_server()
+        sys.exit(0)
 
     if HEADLESS:
         app_ui = HeadlessUI()
@@ -751,3 +913,4 @@ if __name__ == "__main__":
         ai_thread = threading.Thread(target=ai_loop, args=(app_ui,), daemon=True)
         ai_thread.start()
         root.mainloop()
+
