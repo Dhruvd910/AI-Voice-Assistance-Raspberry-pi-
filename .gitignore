@@ -10,7 +10,7 @@ env/
 assist/
 faces/
 piper/
-test/
+tests/
 
 #other ignore
 __pycache__/

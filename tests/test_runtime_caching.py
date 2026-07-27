@@ -1,18 +1,32 @@
 import assist
 
 
-def test_cached_whisper_model_is_reused(monkeypatch):
+def test_transcribe_with_groq_uses_prompt_and_returns_text(monkeypatch):
     calls = []
 
-    class FakeWhisperModel:
-        def __init__(self, *args, **kwargs):
-            calls.append((args, kwargs))
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return "  hello groq  "
 
-    monkeypatch.setattr(assist, "WhisperModel", FakeWhisperModel)
-    assist.WHISPER_MODEL = None
+    class FakeAudio:
+        transcriptions = FakeTranscriptions()
 
-    model_a = assist.get_cached_whisper_model()
-    model_b = assist.get_cached_whisper_model()
+    class FakeGroqClient:
+        audio = FakeAudio()
 
-    assert model_a is model_b
-    assert len(calls) == 1
+    monkeypatch.setattr(assist, "groq_client", FakeGroqClient())
+
+    result = assist.transcribe_with_groq(b"wav-bytes", "context prompt")
+
+    assert result == "hello groq"
+    assert calls == [
+        {
+            "file": ("temp.wav", b"wav-bytes"),
+            "model": "whisper-large-v3-turbo",
+            "response_format": "text",
+            "language": "en",
+            "temperature": 0.0,
+            "prompt": "context prompt",
+        }
+    ]
