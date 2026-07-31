@@ -877,12 +877,31 @@ def clean_text_for_tts(text):
     clean = re.sub(r'VISUAL:.*', '', text, flags=re.IGNORECASE)
     clean = re.sub(r'EMOTION:.*', '', clean, flags=re.IGNORECASE)
     clean = RE_ANSWER_PREFIX.sub('', clean)
-    clean = RE_GREETING_PREFIX.sub('', clean)
+
+    # Drop a leading greeting only when a real answer follows it. A reply that is
+    # nothing but "Hello!" must survive, or the student is met with silence. Re-capitalise
+    # what is left so "Hello, how can I help?" is not spoken as "how can I help?".
+    trimmed = RE_GREETING_PREFIX.sub('', clean).lstrip()
+    if trimmed:
+        if trimmed[0].islower() and not trimmed[1:2].isupper():
+            trimmed = trimmed[0].upper() + trimmed[1:]
+        clean = trimmed
+
     clean = RE_EMOJI.sub('', clean)
     return clean.replace('*', '').replace('_', '').replace('#', '').replace('`', '').replace('[', '').replace(']', '').strip()
 
 MODE_INSTRUCTIONS = {
-    "TUTOR": "TUTOR MODE ACTIVE: You are a subject expert. Explain the concept clearly using a maximum of 4 sentences. Follow this sequence: 1. Core principle. 2. Mechanism. 3. Real-world example.",
+    "TUTOR": """TUTOR MODE ACTIVE: You are a subject expert answering a student out loud.
+
+ANSWER FIRST, ALWAYS. Your opening sentence must be the direct answer to what was asked. Never open with preamble, never restate the question, never define the topic before answering it.
+
+MATCH THE LENGTH TO THE QUESTION. This is the most important rule:
+- Quick questions (conversions, arithmetic, spelling, dates, definitions, yes or no, greetings, small talk) get ONE sentence and then you STOP. "180 centimetres is about 5 feet 11 inches." That is the entire answer. Do not explain the method unless asked.
+- Only when the student actually asks to understand something ("how does X work", "why does X happen", "explain X") do you add up to 3 more sentences: how it works, and one concrete example.
+
+NEVER announce your structure. Do not say "The core principle is", "The mechanism is", "In a real-world example", and do not number your points. Just answer the way a knowledgeable person would in conversation.
+
+If you do not know something, say so in one sentence rather than inventing details.""",
     
     "CO-TELL": "CO-TELL MODE ACTIVE: You are a collaborative study partner. STRICT RULE: YOU MUST SPEAK A MAXIMUM OF 2 SENTENCES TOTAL. Sentence 1: A brief validation or partial hint. Sentence 2: Ask the user a specific question to test their knowledge. NEVER explain the full concept. Wait for them to answer.",
     
@@ -950,6 +969,7 @@ DO NOT add conversational filler. ONLY output the SEARCH tag.
 5. VOICE & FORMATTING CONSTRAINTS
 ============================================================
 - You are a VOICE assistant. Your output must be spoken aloud.
+- Stop talking the moment the question is answered. A short answer is a good answer; padding a one-line reply into a paragraph is a failure, not thoroughness.
 - DO NOT use bullet points, numbered lists, markdown formatting, or complex punctuation.
 - If you are NOT searching, ALWAYS start your response EXACTLY like this:
 EMOTION: [emotion]
@@ -1116,7 +1136,10 @@ def ai_loop(ui, headless=False):
             def stream_hf(is_search_loop=False):
                 try:
                     response_stream = groq_client.chat.completions.create(
-                        model="openai/gpt-oss-120b", messages=chat_history, stream=True, max_tokens=512, temperature=0.7
+                        # Devanagari costs roughly 3x the tokens of the same English, so a
+                        # cap tuned for English truncates Hindi mid-word. Brevity is enforced
+                        # by the prompt instead; this is only a runaway guard.
+                        model="openai/gpt-oss-120b", messages=chat_history, stream=True, max_tokens=800, temperature=0.7
                     )
                     
                     buffer = ""
