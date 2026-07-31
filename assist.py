@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 import random
 import io
 import json
@@ -9,7 +10,6 @@ import atexit
 import subprocess
 import time
 import tkinter as tk
-from PIL import Image, ImageTk
 import threading
 import re
 import ctypes
@@ -167,6 +167,8 @@ signal.signal(signal.SIGINT, _cleanup)
 def _clear_ui_on_interrupt(ui):
     ui.current_subtitle = ""
     ui.clear_next_word = False
+    refresh = getattr(ui, "_refresh_bubble", None)
+    if refresh: refresh()
 
 def interrupt_playback():
     global active_subprocesses
@@ -419,86 +421,388 @@ def audio_player_worker():
             playback_active.clear()
 
 # ==========================================
-# Full-Screen UI Class 
+# Full-Screen UI
 # ==========================================
+UI_W, UI_H = 800, 480
+FRAME_MS = 70
+
+COL_BG = "#070512"
+COL_PANEL = "#110C2B"
+COL_PANEL_EDGE = "#2A2159"
+COL_TEXT = "#EDEAFF"
+COL_TEXT_DIM = "#8B84B8"
+
+MODE_ACCENTS = {"TUTOR": "#A855F7", "CO-TELL": "#38BDF8", "RE-TELL": "#F59E0B"}
+MODE_BLURBS = {
+    "TUTOR": "Concepts explained\nstep by step.",
+    "CO-TELL": "We talk it through\ntogether.",
+    "RE-TELL": "You teach me,\nI correct you."
+}
+MODE_INTROS = {
+    "TUTOR": "You are in tutor mode.",
+    "CO-TELL": "You are in co-tell mode. Let's study together!",
+    "RE-TELL": "You are in re-tell mode. Tell me what you have learned, I am ready to listen."
+}
+
+# label, colour, wobble, animation speed, waveform activity
+STATE_STYLE = {
+    "warmup":    ("WAKING UP",        "#6D5BD0", 0.05, 0.05, 0.10),
+    "idle":      ("TAP TO SPEAK",     "#8B5CF6", 0.05, 0.06, 0.08),
+    "listening": ("I'M LISTENING...", "#22D3EE", 0.12, 0.16, 1.00),
+    "thinking":  ("THINKING...",      "#FBBF24", 0.17, 0.27, 0.35),
+    "speaking":  ("SPEAKING",         "#E879F9", 0.10, 0.20, 0.80),
+    "capturing": ("LOOKING...",       "#34D399", 0.08, 0.12, 0.25),
+    "error":     ("SOMETHING BROKE",  "#FB7185", 0.06, 0.08, 0.12)
+}
+
+# scale, colour blend (>=0 mixes toward the background, <0 toward white), x, y offset.
+# Tk has no alpha, so the glow is a stack of solid shapes fading into the background.
+BLOB_LAYERS = [
+    (1.40, 0.87, 0, 0),
+    (1.30, 0.76, 0, 0),
+    (1.21, 0.63, 0, 0),
+    (1.13, 0.48, 0, 0),
+    (1.06, 0.30, 0, 0),
+    (1.00, 0.00, 0, 0),
+    (0.66, -0.22, -13, -15)
+]
+
+# The Pi image ships with DejaVu only, which has no Devanagari glyphs, so Hindi
+# subtitles render as boxes until a font covering it is installed:
+#   sudo apt install fonts-noto-devanagari
+FONT_PREFERENCE = ("Noto Sans", "Noto Sans Devanagari", "Lohit Devanagari",
+                   "Mukta", "Samyak Devanagari", "FreeSans", "DejaVu Sans", "Helvetica")
+
+BUBBLE_HINTS = {
+    "idle": "Namaste!\n\nI'm your AI tutor.\nTap anywhere and ask me\nanything, in Hindi or English.",
+    "warmup": "Namaste!\n\nWaking up, one moment...",
+    "listening": "Go ahead, I'm listening.\n\nHindi, English or a mix\nof both is fine.",
+    "thinking": "Let me think about that...",
+    "error": "Something went wrong.\nTap to try again."
+}
+
+BLOB_CX, BLOB_CY, BLOB_R = 392, 232, 66
+WAVE_Y, WAVE_BARS, WAVE_BAR_W, WAVE_GAP = 58, 21, 3, 5
+BUBBLE_X0, BUBBLE_Y0, BUBBLE_X1, BUBBLE_Y1 = 16, 146, 234, 322
+CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 90, 10
+MIC_CX, MIC_CY = 392, 396
+
+def _mix(colour, target, t):
+    """Blend two #rrggbb colours; Tk canvas has no alpha so glows are faked this way."""
+    t = max(0.0, min(1.0, t))
+    a = [int(colour[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(target[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#%02x%02x%02x" % tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
 class TutorUI:
+    BLOB_POINTS = 44
+
     def __init__(self, root):
         self.root = root
         self.root.title("AI Tutor")
-        self.root.geometry("800x480")
+        self.root.geometry(f"{UI_W}x{UI_H}")
         self.root.attributes('-fullscreen', True)
-        self.root.configure(bg="#000000")
-        
+        self.root.configure(bg=COL_BG)
+
         self.modes = ["TUTOR", "CO-TELL", "RE-TELL"]
-        self.mode_colors = {"TUTOR": "#FF69B4", "CO-TELL": "#50E3C2", "RE-TELL": "#B8E986"}
+        self.mode_colors = MODE_ACCENTS
         self.current_mode_index = 0
-        self.current_mode = self.modes[self.current_mode_index]
+        self.current_mode = self.modes[0]
         self.current_state = "warmup"
 
-        self.face_canvas = tk.Canvas(root, width=800, height=480, bd=0, highlightthickness=0, bg="#000000")
-        self.face_canvas.place(x=0, y=0)
-        self.bg_image_id = self.face_canvas.create_image(400, 240, image=None)
-
-        self.state_text_id = self.face_canvas.create_text(
-            400, 25, text="• WARMUP •", font=("Helvetica", 12, "bold"), fill="#2C3E50"
-        )
-        self.intro_text_id = self.face_canvas.create_text(
-            400, 65, text="Tap anywhere to wake me up!", font=("Helvetica", 20, "bold"), fill="#2C3E50", state="hidden"
-        )
         self.current_subtitle = ""
         self.clear_next_word = False
+        self.phase = 0.0
+        self.frame = 0
 
-        self.mode_tag = tk.Label(root, text=f"• {self.current_mode} MODE •", font=("Helvetica", 16, "bold"), fg="#FFFFFF", bg=self.mode_colors[self.current_mode], padx=30, pady=5, bd=4, relief="raised", cursor="hand2")
-        self.mode_tag.place(relx=0.5, rely=0.95, anchor="s")
-        
-        self.mode_tag.bind("<Button-1>", self.cycle_mode)
-        self.root.bind("<Escape>", lambda event: self.root.attributes("-fullscreen", False))
-        
-        # Binds a left-click anywhere on the app to instantly wake Liza up
+        self.font_family = self._pick_font()
+        self.canvas = tk.Canvas(root, width=UI_W, height=UI_H, bd=0,
+                                highlightthickness=0, bg=COL_BG)
+        self.canvas.place(x=0, y=0)
+
+        self._build_backdrop()
+        self._build_header()
+        self._build_bubble()
+        self._build_blob()
+        self._build_mode_cards()
+        self._build_mic()
+        self._refresh_cards()
+
+        self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
         self.root.bind("<Button-1>", self.wake_up)
 
-        self.animations = {}
-        self.current_frame_index = 0
-        
-        self.load_animations()
-        self.update_animation()
+        self._animate()
 
-    def load_animations(self):
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        base_path = os.path.join(current_dir, "faces")
-        states = ["warmup", "idle", "listening", "thinking", "speaking", "capturing", "error"] 
-        
-        for state in states:
-            folder = os.path.join(base_path, state)
-            self.animations[state] = []
-            
-            if os.path.exists(folder):
-                files = sorted([f for f in os.listdir(folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))])
-                for f in files:
-                    try:
-                        img = Image.open(os.path.join(folder, f)).resize((800, 480))
-                        self.animations[state].append(ImageTk.PhotoImage(img))
-                    except Exception: pass
-            
-            if not self.animations[state]:
-                blank = Image.new('RGB', (800, 480), color='#000000')
-                self.animations[state].append(ImageTk.PhotoImage(blank))
+    # ---------- drawing helpers ----------
+    def _pick_font(self):
+        """First installed family that can also draw Devanagari, so Hindi is readable."""
+        try:
+            from tkinter import font as tkfont
+            available = {name.lower() for name in tkfont.families(self.root)}
+        except Exception:
+            return "Helvetica"
 
-    def update_animation(self):
-        frames = self.animations.get(self.current_state, []) or self.animations.get("idle", [])
-        if frames:
-            if self.current_state == "speaking" and len(frames) > 1:
-                self.current_frame_index = random.randint(0, len(frames) - 1)
+        for name in FONT_PREFERENCE:
+            if name.lower() in available:
+                if name in ("DejaVu Sans", "Helvetica"):
+                    print("[UI] No Devanagari font found; Hindi subtitles will show as boxes. "
+                          "Fix with: sudo apt install fonts-noto-devanagari", flush=True)
+                return name
+        return "Helvetica"
+
+    def _font(self, size, bold=False):
+        return (self.font_family, size, "bold") if bold else (self.font_family, size)
+
+    def _round_rect(self, x0, y0, x1, y1, r, **kw):
+        pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
+               x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
+        return self.canvas.create_polygon(pts, smooth=True, **kw)
+
+    def _build_backdrop(self):
+        # A few faint stars so the dark panel does not read as a dead rectangle.
+        random.seed(7)
+        for _ in range(46):
+            x, y = random.randint(4, UI_W - 4), random.randint(4, UI_H - 4)
+            size = random.choice((1, 1, 2))
+            shade = random.choice(("#1B1740", "#241E52", "#2E2668"))
+            self.canvas.create_oval(x, y, x + size, y + size, fill=shade, outline="")
+
+    def _build_header(self):
+        self.state_text_id = self.canvas.create_text(
+            BLOB_CX, 28, text="WAKING UP", font=self._font(13, True), fill=COL_TEXT_DIM)
+
+        self.bars = []
+        total = WAVE_BARS * (WAVE_BAR_W + WAVE_GAP) - WAVE_GAP
+        x = BLOB_CX - total / 2
+        for _ in range(WAVE_BARS):
+            self.bars.append(self.canvas.create_rectangle(
+                x, WAVE_Y - 2, x + WAVE_BAR_W, WAVE_Y + 2, fill=COL_TEXT_DIM, outline=""))
+            x += WAVE_BAR_W + WAVE_GAP
+
+    def _build_bubble(self):
+        self._round_rect(BUBBLE_X0, BUBBLE_Y0, BUBBLE_X1, BUBBLE_Y1, 18,
+                         fill=COL_PANEL, outline=COL_PANEL_EDGE, width=2)
+        for i in range(3):
+            cx = BUBBLE_X0 + 22 + i * 12
+            self.canvas.create_oval(cx, BUBBLE_Y0 + 18, cx + 5, BUBBLE_Y0 + 23,
+                                    fill=COL_TEXT_DIM, outline="")
+        # Tail pointing at the blob.
+        self.canvas.create_polygon(
+            BUBBLE_X1 - 1, BUBBLE_Y0 + 58, BUBBLE_X1 + 17, BUBBLE_Y0 + 72,
+            BUBBLE_X1 - 1, BUBBLE_Y0 + 86, fill=COL_PANEL, outline="")
+
+        self.bubble_text_id = self.canvas.create_text(
+            BUBBLE_X0 + 20, BUBBLE_Y0 + 40, text="", anchor="nw", justify="left",
+            font=self._font(12), fill=COL_TEXT, width=BUBBLE_X1 - BUBBLE_X0 - 38)
+        self._refresh_bubble()
+
+    def _build_blob(self):
+        self.rings = [self.canvas.create_oval(0, 0, 1, 1, outline=COL_PANEL_EDGE, width=1)
+                      for _ in range(3)]
+        # Outermost glow first so the solid body lands on top of it.
+        self.blob_layers = [self.canvas.create_polygon(0, 0, 1, 1, 2, 2, smooth=True, outline="")
+                            for _ in range(len(BLOB_LAYERS))]
+        self.highlights = [
+            self.canvas.create_oval(0, 0, 1, 1, fill="", outline=""),
+            self.canvas.create_oval(0, 0, 1, 1, fill="", outline=""),
+        ]
+
+        eye_dx, eye_dy = 25, 14
+        self.eyes_open = [
+            self.canvas.create_oval(0, 0, 1, 1, fill="#140F2E", outline=""),
+            self.canvas.create_oval(0, 0, 1, 1, fill="#140F2E", outline=""),
+        ]
+        self.eyes_happy = [
+            self.canvas.create_arc(0, 0, 1, 1, start=0, extent=180, style="arc",
+                                   outline="#140F2E", width=3),
+            self.canvas.create_arc(0, 0, 1, 1, start=0, extent=180, style="arc",
+                                   outline="#140F2E", width=3),
+        ]
+        self.eye_offset = (eye_dx, eye_dy)
+        self.mouth = self.canvas.create_arc(0, 0, 1, 1, start=200, extent=140, style="arc",
+                                            outline="#140F2E", width=3)
+        self.mouth_open = self.canvas.create_oval(0, 0, 1, 1, fill="#140F2E", outline="")
+
+    def _mode_glyph(self, kind, cx, cy, colour):
+        c = self.canvas
+        items = [c.create_oval(cx - 19, cy - 19, cx + 19, cy + 19,
+                               fill=_mix(colour, COL_BG, 0.74), outline="")]
+        if kind == "TUTOR":                      # mortarboard
+            items.append(c.create_polygon(cx, cy - 9, cx + 13, cy - 3, cx, cy + 3, cx - 13, cy - 3,
+                                          fill=colour, outline=""))
+            items.append(c.create_rectangle(cx - 7, cy + 1, cx + 7, cy + 8, fill=colour, outline=""))
+            items.append(c.create_line(cx + 13, cy - 3, cx + 13, cy + 8, fill=colour, width=2))
+        elif kind == "CO-TELL":                  # two chat bubbles
+            items.append(self._round_rect(cx - 14, cy - 12, cx + 4, cy + 1, 4,
+                                          fill=colour, outline=""))
+            items.append(self._round_rect(cx - 3, cy - 3, cx + 14, cy + 10, 4,
+                                          fill=_mix(colour, "#FFFFFF", 0.35), outline=""))
+        else:                                    # head speaking
+            items.append(c.create_oval(cx - 12, cy - 11, cx + 2, cy + 3, fill=colour, outline=""))
+            items.append(c.create_polygon(cx - 12, cy + 2, cx + 2, cy + 2, cx + 2, cy + 11,
+                                          cx - 12, cy + 11, fill=colour, outline=""))
+            for i, r in enumerate((6, 10)):
+                items.append(c.create_arc(cx + 2 - r, cy - r, cx + 2 + r, cy + r,
+                                          start=-55, extent=110, style="arc",
+                                          outline=colour, width=2))
+        return items
+
+    def _build_mode_cards(self):
+        self.canvas.create_text(CARD_X0 + (CARD_X1 - CARD_X0) / 2, 26, text="CHOOSE MODE",
+                                font=self._font(12, True), fill=COL_TEXT)
+        self.cards = []
+        for i, mode in enumerate(self.modes):
+            y0 = CARD_Y0 + i * (CARD_H + CARD_GAP)
+            y1 = y0 + CARD_H
+            accent = MODE_ACCENTS[mode]
+            tag = f"mode{i}"
+
+            body = self._round_rect(CARD_X0, y0, CARD_X1, y1, 12,
+                                    fill=COL_PANEL, outline=COL_PANEL_EDGE, width=2, tags=tag)
+            glyph = self._mode_glyph(mode, CARD_X0 + 34, y0 + CARD_H / 2, accent)
+            title = self.canvas.create_text(CARD_X0 + 62, y0 + 26, text=f"{mode} MODE",
+                                            anchor="w", font=self._font(12, True),
+                                            fill=accent, tags=tag)
+            blurb = self.canvas.create_text(CARD_X0 + 62, y0 + 50, text=MODE_BLURBS[mode],
+                                            anchor="w", justify="left",
+                                            font=self._font(9), fill=COL_TEXT_DIM, tags=tag)
+            for item in glyph:
+                self.canvas.itemconfig(item, tags=tag)
+            self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.set_mode(idx))
+            self.cards.append({"body": body, "title": title, "blurb": blurb, "accent": accent})
+
+    def _build_mic(self):
+        self.mic_glow = self.canvas.create_oval(MIC_CX - 34, MIC_CY - 34, MIC_CX + 34, MIC_CY + 34,
+                                                fill="", outline="", width=2, tags="mic")
+        self.mic_ring = self.canvas.create_oval(MIC_CX - 26, MIC_CY - 26, MIC_CX + 26, MIC_CY + 26,
+                                                fill=COL_PANEL, outline=COL_PANEL_EDGE,
+                                                width=2, tags="mic")
+        self.mic_body = self._round_rect(MIC_CX - 5, MIC_CY - 12, MIC_CX + 5, MIC_CY + 2, 5,
+                                         fill=COL_TEXT, outline="", tags="mic")
+        self.mic_arc = self.canvas.create_arc(MIC_CX - 11, MIC_CY - 8, MIC_CX + 11, MIC_CY + 8,
+                                              start=200, extent=140, style="arc",
+                                              outline=COL_TEXT, width=2, tags="mic")
+        self.mic_stem = self.canvas.create_line(MIC_CX, MIC_CY + 8, MIC_CX, MIC_CY + 13,
+                                                fill=COL_TEXT, width=2, tags="mic")
+        self.mic_label = self.canvas.create_text(MIC_CX, MIC_CY + 44, text="TAP TO SPEAK",
+                                                 font=self._font(10, True),
+                                                 fill=COL_TEXT_DIM, tags="mic")
+        self.canvas.tag_bind("mic", "<Button-1>", self.wake_up)
+
+    # ---------- runtime ----------
+    def _blob_pts(self, cx, cy, r, phase, wobble):
+        pts = []
+        for i in range(self.BLOB_POINTS):
+            a = 2 * math.pi * i / self.BLOB_POINTS
+            rr = r * (1 + wobble * (0.62 * math.sin(3 * a + phase)
+                                    + 0.38 * math.sin(5 * a - phase * 1.27)))
+            pts.append(cx + rr * math.cos(a))
+            pts.append(cy + rr * math.sin(a) * 1.12)
+        return pts
+
+    def _animate(self):
+        label, colour, wobble, speed, activity = STATE_STYLE.get(
+            self.current_state, STATE_STYLE["idle"])
+        self.phase += speed
+        self.frame += 1
+
+        breathe = 1 + 0.035 * math.sin(self.phase * 0.85)
+        bob = 3.0 * math.sin(self.phase * 0.7)
+        cy = BLOB_CY + bob
+
+        for item, (scale, blend, offx, offy) in zip(self.blob_layers, BLOB_LAYERS):
+            self.canvas.coords(item, self._blob_pts(BLOB_CX + offx, cy + offy,
+                                                    BLOB_R * scale * breathe,
+                                                    self.phase + scale, wobble))
+            target = COL_BG if blend >= 0 else "#FFFFFF"
+            self.canvas.itemconfig(item, fill=_mix(colour, target, abs(blend)))
+
+        for i, ring in enumerate(self.rings):
+            rw = BLOB_R * (1.45 + i * 0.32)
+            rh = 11 + i * 7
+            ry = cy + BLOB_R * 1.25
+            self.canvas.coords(ring, BLOB_CX - rw, ry - rh, BLOB_CX + rw, ry + rh)
+            self.canvas.itemconfig(ring, outline=_mix(colour, COL_BG, 0.62 + i * 0.12))
+
+        hx, hy = BLOB_CX - BLOB_R * 0.42, cy - BLOB_R * 0.52
+        self.canvas.coords(self.highlights[0], hx - 11, hy - 8, hx + 11, hy + 8)
+        self.canvas.itemconfig(self.highlights[0], fill=_mix(colour, "#FFFFFF", 0.62))
+        self.canvas.coords(self.highlights[1], hx + 15, hy - 15, hx + 22, hy - 8)
+        self.canvas.itemconfig(self.highlights[1], fill=_mix(colour, "#FFFFFF", 0.45))
+
+        self._draw_face(cy, colour, activity)
+
+        peak = 0.0
+        for i, bar in enumerate(self.bars):
+            swing = math.sin(self.phase * 2.3 + i * 0.62) ** 2
+            h = 2 + 15 * activity * (0.28 + 0.72 * swing)
+            peak = max(peak, h)
+            x0, _, x1, _ = self.canvas.coords(bar)
+            self.canvas.coords(bar, x0, WAVE_Y - h / 2, x1, WAVE_Y + h / 2)
+            self.canvas.itemconfig(bar, fill=_mix(colour, COL_BG, 0.55 - 0.4 * swing * activity))
+
+        self.canvas.itemconfig(self.state_text_id, text=label,
+                               fill=_mix(colour, COL_TEXT, 0.35))
+
+        pulse = 0.5 + 0.5 * math.sin(self.phase * 1.6)
+        listening = self.current_state == "listening"
+        self.canvas.itemconfig(self.mic_glow,
+                               outline=_mix(colour, COL_BG, 0.25 + 0.5 * (1 - pulse)) if listening else "")
+        self.canvas.itemconfig(self.mic_ring,
+                               outline=colour if listening else COL_PANEL_EDGE)
+
+        self.root.after(FRAME_MS, self._animate)
+
+    def _draw_face(self, cy, colour, activity):
+        dx, dy = self.eye_offset
+        ey = cy - dy
+        happy = self.current_state in ("idle", "warmup", "speaking")
+        blink = happy and (self.frame % 78) < 4
+
+        for i, sign in enumerate((-1, 1)):
+            cxe = BLOB_CX + sign * dx
+            self.canvas.coords(self.eyes_open[i], cxe - 5, ey - 7, cxe + 5, ey + 7)
+            self.canvas.coords(self.eyes_happy[i], cxe - 9, ey - 6, cxe + 9, ey + 10)
+            show_happy = happy or blink
+            self.canvas.itemconfig(self.eyes_open[i], state="hidden" if show_happy else "normal")
+            self.canvas.itemconfig(self.eyes_happy[i], state="normal" if show_happy else "hidden")
+
+        my = cy + 16
+        if self.current_state == "speaking":
+            gap = 4 + 7 * abs(math.sin(self.phase * 2.6))
+            self.canvas.coords(self.mouth_open, BLOB_CX - 11, my - gap / 2, BLOB_CX + 11, my + gap / 2)
+            self.canvas.itemconfig(self.mouth_open, state="normal")
+            self.canvas.itemconfig(self.mouth, state="hidden")
+        else:
+            self.canvas.itemconfig(self.mouth_open, state="hidden")
+            self.canvas.itemconfig(self.mouth, state="normal")
+            if self.current_state == "thinking":
+                self.canvas.coords(self.mouth, BLOB_CX - 10, my - 8, BLOB_CX + 10, my + 4)
+                self.canvas.itemconfig(self.mouth, start=20, extent=140)
+            elif self.current_state == "error":
+                self.canvas.coords(self.mouth, BLOB_CX - 11, my - 2, BLOB_CX + 11, my + 14)
+                self.canvas.itemconfig(self.mouth, start=20, extent=140)
             else:
-                self.current_frame_index = (self.current_frame_index + 1) % len(frames)
-                
-            self.face_canvas.itemconfig(self.bg_image_id, image=frames[self.current_frame_index])
-        
-        speed = 100 if self.current_state == "speaking" else 300
-        self.root.after(speed, self.update_animation)
-    
+                self.canvas.coords(self.mouth, BLOB_CX - 13, my - 12, BLOB_CX + 13, my + 6)
+                self.canvas.itemconfig(self.mouth, start=200, extent=140)
+
+    def _refresh_cards(self):
+        for i, card in enumerate(self.cards):
+            chosen = i == self.current_mode_index
+            accent = card["accent"]
+            self.canvas.itemconfig(card["body"],
+                                   fill=_mix(accent, COL_BG, 0.86) if chosen else COL_PANEL,
+                                   outline=accent if chosen else COL_PANEL_EDGE,
+                                   width=2 if chosen else 1)
+            self.canvas.itemconfig(card["blurb"],
+                                   fill=COL_TEXT if chosen else COL_TEXT_DIM)
+
+    def _refresh_bubble(self):
+        text = self.current_subtitle.strip() or BUBBLE_HINTS.get(self.current_state, "")
+        self.canvas.itemconfig(self.bubble_text_id, text=text)
+
     def push_word(self, word):
-        if not playback_active.is_set() and self.current_state in ["idle", "warmup", "listening"]: 
+        if not playback_active.is_set() and self.current_state in ["idle", "warmup", "listening"]:
             return
 
         if self.clear_next_word:
@@ -507,51 +811,39 @@ class TutorUI:
 
         self.current_subtitle += word + " "
 
-        if word.endswith(('.', '?', '!')) or len(self.current_subtitle.split()) >= 16:
+        if word.endswith(('.', '?', '!', '।')) or len(self.current_subtitle.split()) >= 24:
             self.clear_next_word = True
+        self._refresh_bubble()
 
     def set_state(self, state, caption=None):
-        if state not in self.animations:
+        if state not in STATE_STYLE:
             state = "idle"
-            
+
         if state in ["idle", "listening", "warmup"] and (playback_active.is_set() or not audio_queue.empty()):
             return
 
-        if self.current_state != state:
-            self.current_state = state
-            self.current_frame_index = 0 
-            
-        self.face_canvas.itemconfig(self.state_text_id, text=f"• {state.upper()} •")
-            
-        if state == "idle":
-            try: self.face_canvas.itemconfig(self.intro_text_id, state="normal")
-            except Exception: pass
-        else:
-            try: self.face_canvas.itemconfig(self.intro_text_id, state="hidden")
-            except Exception: pass
-
+        self.current_state = state
         if state in ["idle", "warmup", "listening"]:
             self.current_subtitle = ""
+        self._refresh_bubble()
 
-    # FIX: No matter what state the UI is in, a tap wakes her up instantly!
-    def wake_up(self, event):
+    def wake_up(self, event=None):
         print("[UI] Screen tapped! Waking up...", flush=True)
         wake_event.set()
 
-    def cycle_mode(self, event):
-        self.current_mode_index = (self.current_mode_index + 1) % len(self.modes)
-        self.current_mode = self.modes[self.current_mode_index]
-        self.mode_tag.config(text=f"• {self.current_mode} MODE •", bg=self.mode_colors[self.current_mode])
-        
+    def set_mode(self, index):
+        if index == self.current_mode_index:
+            return
+        self.current_mode_index = index
+        self.current_mode = self.modes[index]
+        self._refresh_cards()
+
         interrupt_playback()
-        
-        intros = {
-            "TUTOR": "You are in tutor mode.",
-            "CO-TELL": "You are in co-tell mode. Let's study together!",
-            "RE-TELL": "You are in re-tell mode. Tell me what you have learned, I am ready to listen."
-        }
-        audio_queue.put(intros[self.current_mode])
+        audio_queue.put(MODE_INTROS[self.current_mode])
         audio_queue.put("[END_OF_RESPONSE]")
+
+    def cycle_mode(self, event=None):
+        self.set_mode((self.current_mode_index + 1) % len(self.modes))
 
 class HeadlessUI:
     def __init__(self): self.current_state = "idle"
