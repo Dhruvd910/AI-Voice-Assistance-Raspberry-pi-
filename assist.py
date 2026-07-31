@@ -94,6 +94,10 @@ RE_EMOJI = re.compile(r'[\U00010000-\U0010ffff]')
 RE_SENTENCE_SPLIT = re.compile(r'(?<=[.?!।])\s+')
 RE_DEVANAGARI = re.compile(r'[ऀ-ॿ]')
 RE_LATIN_WORD = re.compile(r'[A-Za-z]{2,}')
+# Whisper regularly hears Hindi as Urdu (same spoken language, different script) and
+# writes it in Arabic script, which neither voice can read. Same for the other Indic
+# scripts it falls back to. Detecting these lets us re-read the audio as Hindi.
+RE_UNREADABLE_SCRIPT = re.compile(r'[؀-ۿݐ-ݿঀ-෿ﭐ-﷿ﹰ-﻿]')
 
 # Silence C-Level Warnings
 ALSA_HANDLER_FUNC = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p)
@@ -190,12 +194,17 @@ def interrupt_playback():
 # ==========================================
 # Language Routing (Hindi / English / Hinglish)
 # ==========================================
+# Groq reports full language names ("Hindi", "Urdu"), not ISO codes. Urdu and Hindi
+# are the same spoken language, so a student speaking Hindi is routinely reported as
+# either one; both mean "reply in Hindi" here.
+HINDI_STT_ALIASES = {"hi", "hin", "hindi", "ur", "urd", "urdu"}
+
 def detect_user_language(text, stt_language=None):
     """What the student just spoke, used to steer the reply: 'hi', 'en' or 'hinglish'."""
     has_devanagari = bool(RE_DEVANAGARI.search(text))
     has_latin_words = bool(RE_LATIN_WORD.search(text))
     stt_language = (stt_language or "").strip().lower()
-    stt_says_hindi = stt_language.startswith("hi") or stt_language == "hindi"
+    stt_says_hindi = stt_language in HINDI_STT_ALIASES
 
     if has_devanagari and has_latin_words: return "hinglish"
     if has_devanagari: return "hi"
@@ -206,6 +215,20 @@ def detect_user_language(text, stt_language=None):
 def detect_tts_language(text):
     """Which Cartesia voice language a sentence should be spoken in."""
     return "hi" if RE_DEVANAGARI.search(text) else "en"
+
+def transcribe(wav_data, prompt, language=None):
+    """Groq STT. With no `language` Whisper auto-detects; pass one to force it."""
+    params = {
+        "file": ("temp.wav", wav_data),
+        "model": STT_MODEL,
+        "response_format": "verbose_json",
+        "temperature": 0.0,
+        "prompt": prompt
+    }
+    if language: params["language"] = language
+
+    result = groq_client.audio.transcriptions.create(**params)
+    return (result.text or "").strip(), (getattr(result, "language", "") or "")
 
 def cartesia_voice_id(language):
     voice_id = VOICE_IDS.get(language) or CARTESIA_VOICE_ID
@@ -261,6 +284,12 @@ def audio_player_worker():
             cancelled = threading.Event()
 
             def speak_sentence(sentence):
+                # Last resort: neither voice can read Urdu or other Indic scripts, and
+                # sending it anyway produces noise rather than speech.
+                if RE_UNREADABLE_SCRIPT.search(sentence):
+                    print(f"[TTS] Skipping unreadable script: {sentence}", flush=True)
+                    return
+
                 language = detect_tts_language(sentence)
                 offset = clock["generated"]
                 got_timestamps = False
@@ -602,6 +631,7 @@ CURRENT SYSTEM TIME & DATE: {system_time}
 ============================================================
 {language_guidelines}
 - Your answer is read aloud by a voice that picks its language from the script you write in, so the script rule above is not cosmetic. Getting it wrong makes you unintelligible.
+- You may ONLY write in Devanagari or Latin script. NEVER answer in Urdu/Arabic script, nor in Bengali, Telugu, Tamil or any other script, even if the student's message reaches you written in one. A message in Urdu script is a student speaking Hindi: answer it in Devanagari.
 - Mirror the student every single turn. If they switch language mid-conversation, you switch on your very next reply, no matter what language the earlier turns used.
 - NEVER mention language, script or translation. NEVER repeat the same answer in a second language.
 
@@ -705,21 +735,20 @@ def ai_loop(ui, headless=False):
                         if msg["role"] == "assistant":
                             clean_prompt_text = re.sub(r'EMOTION:\s*\[?[a-zA-Z]+\]?', '', msg["content"])
                             clean_prompt_text = clean_prompt_text.replace('ANSWER:', '').strip()
-                            dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
+                            # Never prime Whisper with a script it should not be producing,
+                            # otherwise one Urdu reply drags every later turn into Urdu too.
+                            if not RE_UNREADABLE_SCRIPT.search(clean_prompt_text):
+                                dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
                             break
 
-                    # No `language` argument: Whisper detects Hindi vs English on its own,
-                    # and verbose_json reports back what it heard.
-                    transcription = groq_client.audio.transcriptions.create(
-                        file=("temp.wav", wav_data),
-                        model=STT_MODEL,
-                        response_format="verbose_json",
-                        temperature=0.0,
-                        prompt=dynamic_stt_prompt
-                    )
+                    text, stt_language = transcribe(wav_data, dynamic_stt_prompt)
 
-                    text = (transcription.text or "").strip()
-                    stt_language = getattr(transcription, "language", "") or ""
+                    # Hindi heard as Urdu (or any other Indic script): re-read the same audio
+                    # forced to Hindi so we get Devanagari the voice can actually speak.
+                    if RE_UNREADABLE_SCRIPT.search(text):
+                        print(f"[STT] Heard '{stt_language}' in an unreadable script, re-reading as Hindi...", flush=True)
+                        text, stt_language = transcribe(wav_data, STT_SEED_PROMPT, language="hi")
+
                     lower_text = text.lower().strip()
 
                     if lower_text in HALLUCINATIONS or RE_HALLUCINATION.search(lower_text):
