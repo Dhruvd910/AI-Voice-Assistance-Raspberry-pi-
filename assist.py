@@ -247,17 +247,21 @@ def transcribe(wav_data, prompt, language=None, model=None):
     return (result.text or "").strip(), (getattr(result, "language", "") or "")
 
 def listen_for_wake_word(recognizer, mic_device):
-    """True when 'Hey Liza' is heard. recognizer.listen blocks on silence, so audio is
-    only sent to Whisper when somebody actually speaks near the device."""
+    """(heard, question, language). recognizer.listen blocks on silence, so audio is
+    only sent to Whisper when somebody actually speaks near the device.
+
+    Every path must return the full triple: the caller unpacks it, and a silent room
+    takes the timeout branch every few seconds.
+    """
     try:
         with mic_device as source:
             audio = recognizer.listen(source, timeout=4, phrase_time_limit=4)
     except sr.WaitTimeoutError:
-        return False
+        return False, "", ""
     except Exception as exc:
         print(f"[WAKE ERROR] {exc}", flush=True)
         time.sleep(0.5)
-        return False
+        return False, "", ""
 
     try:
         wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
