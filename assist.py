@@ -40,7 +40,9 @@ def load_dotenv(path=None):
 os.environ["ORT_LOGGING_LEVEL"] = "3"
 load_dotenv()
 
+import av
 import requests
+import yt_dlp
 import speech_recognition as sr
 from groq import Groq
 from cartesia import Cartesia
@@ -85,6 +87,9 @@ RE_WAKE_WORD = re.compile(
     r'|(?:हे|अरे|ओके|हाय|सुनो)?\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)',
     re.IGNORECASE
 )
+
+# Music playback sample rate. PyAV decodes YouTube audio and pipes raw PCM to aplay.
+MUSIC_SAMPLE_RATE = int(os.getenv("MUSIC_SAMPLE_RATE", "44100"))
 
 # Weather panel. The key lives in .env so it never reaches the repo.
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
@@ -270,6 +275,196 @@ def listen_for_wake_word(recognizer, mic_device):
     except Exception as exc:
         print(f"[WAKE ERROR] {exc}", flush=True)
     return False, "", ""
+
+# ==========================================
+# Music (DuckDuckGo -> YouTube -> PyAV -> aplay)
+# ==========================================
+# English puts the verb first ("play hanuman chalisa"), Hindi puts it last
+# ("hanuman chalisa bajao"), so both orders are matched.
+RE_MUSIC_PLAY = re.compile(
+    r'^(?:please\s+|zara\s+|ज़रा\s+)?(?:play|put\s+on|start\s+playing)\s+(?P<a>.{2,80}?)[\s,.!?।]*$'
+    r'|^(?P<b>.{2,80}?)\s+(?:baja\s*do|bajao|chala\s*do|chalao|laga\s*do|lagao)[\s,.!?।]*$'
+    r'|^(?P<c>.{2,80}?)\s+(?:बजा\s*दो|बजाओ|चला\s*दो|चलाओ|लगा\s*दो|लगाओ)[\s,.!?।]*$',
+    re.IGNORECASE
+)
+RE_MUSIC_STOP = re.compile(
+    r'\b(?:stop|turn\s+off|shut)\b|\bband\s*kar|\bbandh\s*kar|बंद\s*कर|रोक\s*दो|रोको',
+    re.IGNORECASE
+)
+RE_MUSIC_PAUSE = re.compile(r'\b(?:pause|hold\s+on|wait)\b|रोक(?:िए)?\s*ज़रा|पॉज़', re.IGNORECASE)
+RE_MUSIC_RESUME = re.compile(r'\b(?:resume|continue|carry\s+on|play\s+again|unpause)\b|फिर\s*से\s*चला|जारी\s*रखो', re.IGNORECASE)
+# A question is never a music command, even if it happens to end in a play verb.
+RE_QUESTION = re.compile(r'\?|\bwh(?:at|y|o|en|ere|ich)\b|\bhow\b|\bkya\b|\bkyu|\bkaise\b|क्या|क्यों|कैसे|कौन', re.IGNORECASE)
+
+MUSIC_STOPWORDS = {"music", "song", "songs", "a song", "some music", "something",
+                   "gaana", "gana", "गाना", "संगीत", "कुछ"}
+
+def detect_music_command(text, music_active):
+    """('play', query) | ('stop'|'pause'|'resume', '') | None."""
+    stripped = text.strip()
+
+    if music_active:
+        if RE_MUSIC_STOP.search(stripped): return ("stop", "")
+        if RE_MUSIC_PAUSE.search(stripped): return ("pause", "")
+        if RE_MUSIC_RESUME.search(stripped): return ("resume", "")
+
+    if RE_QUESTION.search(stripped):
+        return None
+
+    match = RE_MUSIC_PLAY.match(stripped)
+    if not match:
+        return None
+
+    query = next((g for g in match.groups() if g), "").strip(" ,.!?।")
+    if not query or query.lower() in MUSIC_STOPWORDS:
+        return None
+    return ("play", query)
+
+YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True,
+            "noplaylist": True, "format": "bestaudio[abr<=96]/bestaudio/best"}
+
+def resolve_track(query):
+    """Find a track and return yt-dlp's info for it.
+
+    DuckDuckGo is tried first, but it rate-limits hard and raises rather than
+    returning an empty list, so YouTube's own search is the fallback. Without it
+    the feature simply stops working whenever DDG decides to throttle.
+    """
+    target = ""
+    try:
+        with DDGS() as ddgs:
+            for result in ddgs.videos(query, max_results=8):
+                url = result.get("content") or ""
+                if "youtube.com/watch" in url or "youtu.be/" in url:
+                    target = url
+                    break
+    except Exception as exc:
+        print(f"[MUSIC] DuckDuckGo unavailable ({exc})", flush=True)
+
+    if not target:
+        print("[MUSIC] Falling back to YouTube search", flush=True)
+        target = f"ytsearch1:{query}"
+
+    with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+        info = ydl.extract_info(target, download=False)
+
+    entries = info.get("entries") if isinstance(info, dict) else None
+    if entries:
+        info = entries[0]
+    return info
+
+class MusicPlayer:
+    """Streams YouTube audio to aplay. Decoding happens in-process through PyAV,
+    which is the only decoder on this box; there is no mpv or ffmpeg binary."""
+
+    def __init__(self):
+        self.state = "stopped"          # stopped | loading | playing | paused
+        self.title = ""
+        self._stop = threading.Event()
+        self._user_paused = False
+        self._ducked = False
+        self._proc = None
+
+    def is_active(self):
+        return self.state in ("loading", "playing", "paused")
+
+    def _should_hold(self):
+        # Liza talking, the mic listening, or an explicit pause all silence the music.
+        return self._user_paused or self._ducked or playback_active.is_set()
+
+    def play(self, query):
+        self.stop()
+        self._stop.clear()
+        self._user_paused = False
+        self._ducked = False
+        self.title = query
+        self.state = "loading"
+        threading.Thread(target=self._worker, args=(query,), daemon=True).start()
+
+    def toggle(self):
+        if not self.is_active(): return
+        self._user_paused = not self._user_paused
+        self.state = "paused" if self._user_paused else "playing"
+        print(f"[MUSIC] {'Paused' if self._user_paused else 'Resumed'}", flush=True)
+
+    def set_paused(self, paused):
+        if not self.is_active(): return
+        self._user_paused = paused
+        self.state = "paused" if paused else "playing"
+
+    def duck(self, ducked):
+        """Pause because the assistant needs the speaker or the microphone."""
+        self._ducked = ducked
+        if self.is_active() and not self._user_paused:
+            self.state = "paused" if ducked else "playing"
+
+    def stop(self):
+        self._stop.set()
+        proc, self._proc = self._proc, None
+        if proc:
+            try: proc.terminate()
+            except Exception: pass
+        self.state = "stopped"
+        self.title = ""
+
+    def _worker(self, query):
+        container = proc = None
+        try:
+            try:
+                info = resolve_track(query)
+            except Exception as exc:
+                print(f"[MUSIC] Nothing found for {query!r} ({exc})", flush=True)
+                self.state = "stopped"
+                self.title = ""
+                audio_queue.put(f"I couldn't find {query} to play.")
+                audio_queue.put("[END_OF_RESPONSE]")
+                return
+
+            if self._stop.is_set(): return
+            self.title = (info.get("title") or query).strip()
+            print(f"[MUSIC] {self.title}", flush=True)
+
+            container = av.open(info["url"], timeout=20)
+            audio_stream = container.streams.audio[0]
+            resampler = av.AudioResampler(format="s16", layout="stereo", rate=MUSIC_SAMPLE_RATE)
+
+            proc = subprocess.Popen(
+                ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(MUSIC_SAMPLE_RATE), "-c", "2"],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL
+            )
+            self._proc = proc
+            self.state = "paused" if self._should_hold() else "playing"
+
+            for frame in container.decode(audio_stream):
+                if self._stop.is_set(): break
+                while self._should_hold() and not self._stop.is_set():
+                    time.sleep(0.1)
+                if self._stop.is_set(): break
+
+                for chunk in resampler.resample(frame):
+                    proc.stdin.write(chunk.to_ndarray().tobytes())
+            if not self._stop.is_set():
+                print(f"[MUSIC] Finished: {self.title}", flush=True)
+
+        except (BrokenPipeError, OSError):
+            pass                                    # stopped mid-write
+        except Exception as exc:
+            print(f"[MUSIC ERROR] {exc}", flush=True)
+        finally:
+            if container:
+                try: container.close()
+                except Exception: pass
+            if proc:
+                try:
+                    proc.stdin.close()
+                    proc.terminate()
+                except Exception: pass
+            if self._proc is proc:
+                self._proc = None
+            self.state = "stopped"
+            self.title = ""
+
+music_player = MusicPlayer()
 
 def fetch_weather():
     """Current conditions from OpenWeatherMap, or None if it is not configured."""
@@ -498,6 +693,8 @@ BLOB_CX, BLOB_CY, BLOB_R = 392, 232, 66
 WAVE_Y, WAVE_BARS, WAVE_BAR_W, WAVE_GAP = 58, 21, 3, 5
 INFO_X0, INFO_Y0, INFO_X1, INFO_Y1 = 16, 104, 234, 340
 CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 90, 10
+MUSIC_X0, MUSIC_Y0, MUSIC_X1, MUSIC_Y1 = 16, 352, 234, 464
+COL_MUSIC = "#34D399"
 MIC_CX, MIC_CY, MIC_R = 330, 392, 26
 STOP_CX, STOP_CY = 454, 392
 COL_STOP = "#FB7185"
@@ -539,6 +736,7 @@ class TutorUI:
         self._build_blob()
         self._build_mode_cards()
         self._build_buttons()
+        self._build_music_panel()
         self._refresh_cards()
 
         self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
@@ -660,6 +858,81 @@ class TutorUI:
         add(c.create_oval(cx - 18, cy - 6, cx + 2, cy + 10, fill=cloud, outline=""))
         add(c.create_oval(cx - 7, cy - 13, cx + 13, cy + 8, fill=cloud, outline=""))
         add(c.create_rectangle(cx - 16, cy + 1, cx + 12, cy + 10, fill=cloud, outline=""))
+
+    def _build_music_panel(self):
+        self._round_rect(MUSIC_X0, MUSIC_Y0, MUSIC_X1, MUSIC_Y1, 18,
+                         fill=COL_PANEL, outline=COL_PANEL_EDGE, width=2)
+        mid = (MUSIC_X0 + MUSIC_X1) / 2
+
+        self.music_head_id = self.canvas.create_text(
+            mid, MUSIC_Y0 + 18, text="NOTHING PLAYING",
+            font=self._font(9, True), fill=COL_TEXT_DIM)
+        self.music_title_id = self.canvas.create_text(
+            mid, MUSIC_Y0 + 44, text="Say \u201cplay hanuman chalisa\u201d",
+            font=self._font(10), fill=COL_TEXT_DIM, width=MUSIC_X1 - MUSIC_X0 - 28,
+            justify="center")
+
+        px, sx, by = mid - 34, mid + 34, MUSIC_Y1 - 26
+        self.play_ring = self.canvas.create_oval(px - 18, by - 18, px + 18, by + 18,
+                                                 fill=COL_PANEL, outline=COL_PANEL_EDGE,
+                                                 width=2, tags="playpause")
+        # Play triangle and pause bars overlap; only one is ever visible.
+        self.play_tri = self.canvas.create_polygon(px - 5, by - 8, px + 8, by, px - 5, by + 8,
+                                                   fill=COL_TEXT_DIM, outline="", tags="playpause")
+        self.pause_bars = [
+            self.canvas.create_rectangle(px - 6, by - 8, px - 2, by + 8,
+                                         fill=COL_TEXT_DIM, outline="", tags="playpause"),
+            self.canvas.create_rectangle(px + 2, by - 8, px + 6, by + 8,
+                                         fill=COL_TEXT_DIM, outline="", tags="playpause")
+        ]
+        self.music_stop_ring = self.canvas.create_oval(sx - 18, by - 18, sx + 18, by + 18,
+                                                       fill=COL_PANEL, outline=COL_PANEL_EDGE,
+                                                       width=2, tags="musicstop")
+        self.music_stop_icon = self.canvas.create_rectangle(sx - 6, by - 6, sx + 6, by + 6,
+                                                            fill=COL_TEXT_DIM, outline="",
+                                                            tags="musicstop")
+        self.canvas.tag_bind("playpause", "<Button-1>", self.toggle_music)
+        self.canvas.tag_bind("musicstop", "<Button-1>", self.stop_music)
+        self._music_shown = None
+        self._refresh_music()
+
+    def _refresh_music(self):
+        state, title = music_player.state, music_player.title
+        if (state, title) == self._music_shown:
+            return
+        self._music_shown = (state, title)
+
+        active = state in ("loading", "playing", "paused")
+        head = {"loading": "FINDING TRACK", "playing": "NOW PLAYING",
+                "paused": "PAUSED"}.get(state, "NOTHING PLAYING")
+        shade = COL_MUSIC if active else _mix(COL_TEXT_DIM, COL_BG, 0.55)
+
+        self.canvas.itemconfig(self.music_head_id, text=head,
+                               fill=COL_MUSIC if active else COL_TEXT_DIM)
+        self.canvas.itemconfig(self.music_title_id,
+                               text=title or "Say \u201cplay hanuman chalisa\u201d",
+                               fill=COL_TEXT if active else COL_TEXT_DIM)
+
+        # Playing -> offer pause; otherwise offer play.
+        playing = state == "playing"
+        self.canvas.itemconfig(self.play_tri, state="hidden" if playing else "normal", fill=shade)
+        for bar in self.pause_bars:
+            self.canvas.itemconfig(bar, state="normal" if playing else "hidden", fill=shade)
+        self.canvas.itemconfig(self.play_ring,
+                               outline=COL_MUSIC if active else COL_PANEL_EDGE)
+        self.canvas.itemconfig(self.music_stop_ring,
+                               outline=COL_MUSIC if active else COL_PANEL_EDGE)
+        self.canvas.itemconfig(self.music_stop_icon, fill=shade)
+
+    def toggle_music(self, event=None):
+        music_player.toggle()
+        self._refresh_music()
+        return "break"
+
+    def stop_music(self, event=None):
+        music_player.stop()
+        self._refresh_music()
+        return "break"
 
     def _build_blob(self):
         self.rings = [self.canvas.create_oval(0, 0, 1, 1, outline=COL_PANEL_EDGE, width=1)
@@ -828,6 +1101,8 @@ class TutorUI:
                                outline=_mix(colour, COL_BG, 0.25 + 0.5 * (1 - pulse)) if listening else "")
         self.canvas.itemconfig(self.mic_ring,
                                outline=colour if listening else COL_PANEL_EDGE)
+
+        self._refresh_music()
 
         talking = playback_active.is_set() or not audio_queue.empty()
         stop_shade = COL_STOP if talking else _mix(COL_TEXT_DIM, COL_BG, 0.55)
@@ -1007,6 +1282,15 @@ LANGUAGE_INSTRUCTIONS = {
                 "for example: 'यह concept बहुत simple है, इसे ऐसे समझो.' NEVER write Hindi words in Latin letters."
 }
 
+MUSIC_REPLIES = {
+    "en": {"play": "Playing {query}.", "stop": "Stopped the music.",
+           "pause": "Paused.", "resume": "Resuming."},
+    "hi": {"play": "{query} चला रहे हैं।", "stop": "संगीत बंद कर दिया।",
+           "pause": "रोक दिया।", "resume": "फिर से चला रहे हैं।"},
+    "hinglish": {"play": "{query} play कर रहे हैं।", "stop": "Music बंद कर दिया।",
+                 "pause": "Pause कर दिया।", "resume": "फिर से play कर रहे हैं।"}
+}
+
 SEARCH_NOTICES = {
     "en": "Let me check the web for {query}.",
     "hi": "एक सेकंड, वेब पर देखते हैं।",
@@ -1100,19 +1384,26 @@ def ai_loop(ui, headless=False):
                 else:
                     ui.set_state("idle")
                     
-                if WAKE_WORD_ENABLED:
-                    print("[STATE] In Standby Mode. Say 'Hey Liza' or tap the screen...", flush=True)
-                    while not wake_event.is_set():
+                music_player.duck(False)          # standby: hand the speaker back
+
+                print("[STATE] In Standby Mode. "
+                      + ("Tap the screen to talk..." if music_player.is_active()
+                         else "Say 'Hey Liza' or tap the screen..." if WAKE_WORD_ENABLED
+                         else "Tap the screen to wake up..."), flush=True)
+
+                while not wake_event.is_set() and not pending_question:
+                    # The wake word cannot run while music plays: the mic would just
+                    # hear the song and every loop would spend a Whisper call on it.
+                    if WAKE_WORD_ENABLED and not music_player.is_active():
                         woke, pending_question, pending_language = listen_for_wake_word(
                             recognizer, mic_device)
                         if woke:
                             break
-                else:
-                    print("[STATE] In Standby Mode. Tap the screen to wake up...", flush=True)
-                    while not wake_event.is_set():
+                    else:
                         time.sleep(0.1)
 
                 wake_event.clear()
+                music_player.duck(True)           # our turn on the speaker and mic
                 session_active = True
                 silence_counter = 0
 
@@ -1207,11 +1498,30 @@ def ai_loop(ui, headless=False):
             stt_language = ""
             stop_playback_event.clear()
 
+        user_language = detect_user_language(text, stt_language)
+
+        # --- MUSIC: handled locally, never reaches the model ---
+        command = detect_music_command(text, music_player.is_active())
+        if command:
+            action, query = command
+            print(f"[MUSIC] Command: {action} {query!r}", flush=True)
+            if action == "play":
+                music_player.play(query)
+                audio_queue.put(MUSIC_REPLIES[user_language]["play"].format(query=query))
+            elif action == "stop":
+                music_player.stop()
+                audio_queue.put(MUSIC_REPLIES[user_language]["stop"])
+            else:
+                music_player.set_paused(action == "pause")
+                audio_queue.put(MUSIC_REPLIES[user_language][action])
+            audio_queue.put("[END_OF_RESPONSE]")
+            session_active = False          # hand the speaker back to the music
+            continue
+
         # --- 2. THINK & STREAM ---
         ui.set_state("thinking")
         mode_instruction = MODE_INSTRUCTIONS.get(ui.current_mode, MODE_INSTRUCTIONS["TUTOR"])
 
-        user_language = detect_user_language(text, stt_language)
         print(f"[LANGUAGE] heard={stt_language or 'n/a'} -> replying in {user_language}", flush=True)
 
         current_time = datetime.now().strftime("%I:%M %p, %A, %B %d, %Y")
