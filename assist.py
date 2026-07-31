@@ -40,6 +40,7 @@ def load_dotenv(path=None):
 os.environ["ORT_LOGGING_LEVEL"] = "3"
 load_dotenv()
 
+import requests
 import speech_recognition as sr
 from groq import Groq
 from cartesia import Cartesia
@@ -72,6 +73,23 @@ VOICE_IDS = {
     "en": os.getenv("CARTESIA_VOICE_ID_EN", "") or CARTESIA_VOICE_ID,
     "hi": os.getenv("CARTESIA_VOICE_ID_HI", "") or CARTESIA_VOICE_ID,
 }
+
+# Wake word. Standby only transcribes when the mic actually hears speech, so a quiet
+# room costs nothing, but a noisy one will spend Whisper calls. Set WAKE_WORD=0 to
+# go back to tap-only waking.
+WAKE_WORD_ENABLED = os.getenv("WAKE_WORD", "1") != "0"
+WAKE_STT_MODEL = os.getenv("WAKE_STT_MODEL", "whisper-large-v3-turbo")
+WAKE_SEED_PROMPT = "Hey Liza. हे लीज़ा।"
+RE_WAKE_WORD = re.compile(
+    r'\b(?:hey|hi|hello|ok|okay|hay|a)?\s*(?:liza|lisa|leeza|lizza|eliza|elisa|lija)\b'
+    r'|(?:हे|अरे|ओके|हाय|सुनो)?\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)',
+    re.IGNORECASE
+)
+
+# Weather panel. The key lives in .env so it never reaches the repo.
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
+WEATHER_CITY = os.getenv("WEATHER_CITY", "Delhi,IN")
+WEATHER_REFRESH_S = int(os.getenv("WEATHER_REFRESH_S", "900"))
 
 wake_event = threading.Event()
 HISTORY_FILE = os.getenv("HISTORY_FILE", "chat_history.json")
@@ -167,7 +185,7 @@ signal.signal(signal.SIGINT, _cleanup)
 def _clear_ui_on_interrupt(ui):
     ui.current_subtitle = ""
     ui.clear_next_word = False
-    refresh = getattr(ui, "_refresh_bubble", None)
+    refresh = getattr(ui, "_refresh_caption", None)
     if refresh: refresh()
 
 def interrupt_playback():
@@ -218,11 +236,11 @@ def detect_tts_language(text):
     """Which Cartesia voice language a sentence should be spoken in."""
     return "hi" if RE_DEVANAGARI.search(text) else "en"
 
-def transcribe(wav_data, prompt, language=None):
+def transcribe(wav_data, prompt, language=None, model=None):
     """Groq STT. With no `language` Whisper auto-detects; pass one to force it."""
     params = {
         "file": ("temp.wav", wav_data),
-        "model": STT_MODEL,
+        "model": model or STT_MODEL,
         "response_format": "verbose_json",
         "temperature": 0.0,
         "prompt": prompt
@@ -231,6 +249,68 @@ def transcribe(wav_data, prompt, language=None):
 
     result = groq_client.audio.transcriptions.create(**params)
     return (result.text or "").strip(), (getattr(result, "language", "") or "")
+
+def listen_for_wake_word(recognizer, mic_device):
+    """True when 'Hey Liza' is heard. recognizer.listen blocks on silence, so audio is
+    only sent to Whisper when somebody actually speaks near the device."""
+    try:
+        with mic_device as source:
+            audio = recognizer.listen(source, timeout=4, phrase_time_limit=4)
+    except sr.WaitTimeoutError:
+        return False
+    except Exception as exc:
+        print(f"[WAKE ERROR] {exc}", flush=True)
+        time.sleep(0.5)
+        return False
+
+    try:
+        wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
+        text, language = transcribe(wav_data, WAKE_SEED_PROMPT, model=WAKE_STT_MODEL)
+        match = RE_WAKE_WORD.search(text) if text else None
+        if match:
+            print(f"[WAKE] Heard: {text}", flush=True)
+            # "Hey Liza, what is photosynthesis?" said in one breath: keep the question
+            # instead of making the student repeat it.
+            question = re.sub(r'\s+', ' ', text[:match.start()] + " " + text[match.end():])
+            question = question.strip(" ,.!?।-")
+            if len(question.split()) < 2:
+                question, language = "", ""
+            return True, question, language
+    except Exception as exc:
+        print(f"[WAKE ERROR] {exc}", flush=True)
+    return False, "", ""
+
+def fetch_weather():
+    """Current conditions from OpenWeatherMap, or None if it is not configured."""
+    if not WEATHER_API_KEY:
+        return None
+
+    response = requests.get(
+        "https://api.openweathermap.org/data/2.5/weather",
+        params={"q": WEATHER_CITY, "appid": WEATHER_API_KEY, "units": "metric"},
+        timeout=10
+    )
+    response.raise_for_status()
+    data = response.json()
+    return {
+        "temp": round(data["main"]["temp"]),
+        "feels": round(data["main"]["feels_like"]),
+        "humidity": data["main"]["humidity"],
+        "desc": data["weather"][0]["main"],
+        "icon": data["weather"][0]["icon"],
+        "city": data["name"]
+    }
+
+def weather_worker():
+    while True:
+        try:
+            reading = fetch_weather()
+            if reading:
+                print(f"[WEATHER] {reading['city']} {reading['temp']}C {reading['desc']}", flush=True)
+                ui_call(lambda r=reading: ui_instance.set_weather(r))
+        except Exception as exc:
+            print(f"[WEATHER ERROR] {exc}", flush=True)
+        time.sleep(WEATHER_REFRESH_S)
 
 def cartesia_voice_id(language):
     voice_id = VOICE_IDS.get(language) or CARTESIA_VOICE_ID
@@ -473,19 +553,14 @@ BLOB_LAYERS = [
 FONT_PREFERENCE = ("Noto Sans", "Noto Sans Devanagari", "Lohit Devanagari",
                    "Mukta", "Samyak Devanagari", "FreeSans", "DejaVu Sans", "Helvetica")
 
-BUBBLE_HINTS = {
-    "idle": "Namaste!\n\nI'm your AI tutor.\nTap anywhere and ask me\nanything, in Hindi or English.",
-    "warmup": "Namaste!\n\nWaking up, one moment...",
-    "listening": "Go ahead, I'm listening.\n\nHindi, English or a mix\nof both is fine.",
-    "thinking": "Let me think about that...",
-    "error": "Something went wrong.\nTap to try again."
-}
-
 BLOB_CX, BLOB_CY, BLOB_R = 392, 232, 66
 WAVE_Y, WAVE_BARS, WAVE_BAR_W, WAVE_GAP = 58, 21, 3, 5
-BUBBLE_X0, BUBBLE_Y0, BUBBLE_X1, BUBBLE_Y1 = 16, 146, 234, 322
+INFO_X0, INFO_Y0, INFO_X1, INFO_Y1 = 16, 104, 234, 340
 CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 90, 10
-MIC_CX, MIC_CY = 392, 396
+MIC_CX, MIC_CY, MIC_R = 330, 392, 26
+STOP_CX, STOP_CY = 454, 392
+CAPTION_Y = 452
+COL_STOP = "#FB7185"
 
 def _mix(colour, target, t):
     """Blend two #rrggbb colours; Tk canvas has no alpha so glows are faked this way."""
@@ -522,16 +597,18 @@ class TutorUI:
 
         self._build_backdrop()
         self._build_header()
-        self._build_bubble()
+        self._build_info_panel()
         self._build_blob()
         self._build_mode_cards()
-        self._build_mic()
+        self._build_buttons()
+        self._build_caption()
         self._refresh_cards()
 
         self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
         self.root.bind("<Button-1>", self.wake_up)
 
         self._animate()
+        self._tick_clock()
 
     # ---------- drawing helpers ----------
     def _pick_font(self):
@@ -579,22 +656,76 @@ class TutorUI:
                 x, WAVE_Y - 2, x + WAVE_BAR_W, WAVE_Y + 2, fill=COL_TEXT_DIM, outline=""))
             x += WAVE_BAR_W + WAVE_GAP
 
-    def _build_bubble(self):
-        self._round_rect(BUBBLE_X0, BUBBLE_Y0, BUBBLE_X1, BUBBLE_Y1, 18,
+    def _build_info_panel(self):
+        self._round_rect(INFO_X0, INFO_Y0, INFO_X1, INFO_Y1, 18,
                          fill=COL_PANEL, outline=COL_PANEL_EDGE, width=2)
-        for i in range(3):
-            cx = BUBBLE_X0 + 22 + i * 12
-            self.canvas.create_oval(cx, BUBBLE_Y0 + 18, cx + 5, BUBBLE_Y0 + 23,
-                                    fill=COL_TEXT_DIM, outline="")
-        # Tail pointing at the blob.
-        self.canvas.create_polygon(
-            BUBBLE_X1 - 1, BUBBLE_Y0 + 58, BUBBLE_X1 + 17, BUBBLE_Y0 + 72,
-            BUBBLE_X1 - 1, BUBBLE_Y0 + 86, fill=COL_PANEL, outline="")
+        mid = (INFO_X0 + INFO_X1) / 2
 
-        self.bubble_text_id = self.canvas.create_text(
-            BUBBLE_X0 + 20, BUBBLE_Y0 + 40, text="", anchor="nw", justify="left",
-            font=self._font(12), fill=COL_TEXT, width=BUBBLE_X1 - BUBBLE_X0 - 38)
-        self._refresh_bubble()
+        self.clock_id = self.canvas.create_text(
+            mid, INFO_Y0 + 46, text="--:--", font=self._font(38, True), fill=COL_TEXT)
+        self.date_id = self.canvas.create_text(
+            mid, INFO_Y0 + 78, text="", font=self._font(10), fill=COL_TEXT_DIM)
+
+        self.canvas.create_line(INFO_X0 + 22, INFO_Y0 + 100, INFO_X1 - 22, INFO_Y0 + 100,
+                                fill=COL_PANEL_EDGE)
+
+        self.weather_glyph = []
+        self.weather_glyph_at = (INFO_X0 + 48, INFO_Y0 + 142)
+        self.temp_id = self.canvas.create_text(
+            INFO_X0 + 86, INFO_Y0 + 132, text="--", anchor="w",
+            font=self._font(26, True), fill=COL_TEXT)
+        self.desc_id = self.canvas.create_text(
+            INFO_X0 + 86, INFO_Y0 + 160, text="", anchor="w",
+            font=self._font(10), fill=COL_TEXT_DIM)
+        self.city_id = self.canvas.create_text(
+            mid, INFO_Y1 - 22, text="Weather unavailable" if not WEATHER_API_KEY else WEATHER_CITY,
+            font=self._font(9), fill=COL_TEXT_DIM)
+        self._draw_weather_glyph("01d")
+
+    def _draw_weather_glyph(self, code):
+        for item in self.weather_glyph:
+            self.canvas.delete(item)
+        self.weather_glyph = []
+
+        cx, cy = self.weather_glyph_at
+        c = self.canvas
+        kind = code[:2]
+        sun = "#FBBF24"
+        cloud = "#94A3B8"
+        add = self.weather_glyph.append
+
+        if kind == "01":                                   # clear
+            add(c.create_oval(cx - 13, cy - 13, cx + 13, cy + 13, fill=sun, outline=""))
+            for i in range(8):
+                a = math.pi * i / 4
+                add(c.create_line(cx + 17 * math.cos(a), cy + 17 * math.sin(a),
+                                  cx + 23 * math.cos(a), cy + 23 * math.sin(a),
+                                  fill=sun, width=2))
+            return
+        if kind == "02":                                   # sun behind cloud
+            add(c.create_oval(cx - 2, cy - 20, cx + 18, cy, fill=sun, outline=""))
+        if kind == "13":                                   # snow
+            for i in range(3):
+                sx = cx - 10 + i * 10
+                add(c.create_line(sx - 4, cy + 12, sx + 4, cy + 20, fill="#E0F2FE", width=2))
+                add(c.create_line(sx + 4, cy + 12, sx - 4, cy + 20, fill="#E0F2FE", width=2))
+        elif kind in ("09", "10"):                         # rain
+            for i in range(3):
+                sx = cx - 10 + i * 10
+                add(c.create_line(sx, cy + 12, sx - 3, cy + 21, fill="#60A5FA", width=2))
+        elif kind == "11":                                 # storm
+            add(c.create_polygon(cx + 2, cy + 10, cx - 6, cy + 22, cx, cy + 22,
+                                 cx - 4, cy + 32, cx + 8, cy + 18, cx + 2, cy + 18,
+                                 fill="#FBBF24", outline=""))
+        elif kind == "50":                                 # mist
+            for i in range(3):
+                add(c.create_line(cx - 16, cy + 4 + i * 7, cx + 16, cy + 4 + i * 7,
+                                  fill=cloud, width=2))
+            return
+
+        add(c.create_oval(cx - 18, cy - 6, cx + 2, cy + 10, fill=cloud, outline=""))
+        add(c.create_oval(cx - 7, cy - 13, cx + 13, cy + 8, fill=cloud, outline=""))
+        add(c.create_rectangle(cx - 16, cy + 1, cx + 12, cy + 10, fill=cloud, outline=""))
 
     def _build_blob(self):
         self.rings = [self.canvas.create_oval(0, 0, 1, 1, outline=COL_PANEL_EDGE, width=1)
@@ -671,23 +802,36 @@ class TutorUI:
             self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.set_mode(idx))
             self.cards.append({"body": body, "title": title, "blurb": blurb, "accent": accent})
 
-    def _build_mic(self):
+    def _build_buttons(self):
+        # Speak
         self.mic_glow = self.canvas.create_oval(MIC_CX - 34, MIC_CY - 34, MIC_CX + 34, MIC_CY + 34,
                                                 fill="", outline="", width=2, tags="mic")
-        self.mic_ring = self.canvas.create_oval(MIC_CX - 26, MIC_CY - 26, MIC_CX + 26, MIC_CY + 26,
+        self.mic_ring = self.canvas.create_oval(MIC_CX - MIC_R, MIC_CY - MIC_R,
+                                                MIC_CX + MIC_R, MIC_CY + MIC_R,
                                                 fill=COL_PANEL, outline=COL_PANEL_EDGE,
                                                 width=2, tags="mic")
-        self.mic_body = self._round_rect(MIC_CX - 5, MIC_CY - 12, MIC_CX + 5, MIC_CY + 2, 5,
-                                         fill=COL_TEXT, outline="", tags="mic")
-        self.mic_arc = self.canvas.create_arc(MIC_CX - 11, MIC_CY - 8, MIC_CX + 11, MIC_CY + 8,
-                                              start=200, extent=140, style="arc",
-                                              outline=COL_TEXT, width=2, tags="mic")
-        self.mic_stem = self.canvas.create_line(MIC_CX, MIC_CY + 8, MIC_CX, MIC_CY + 13,
-                                                fill=COL_TEXT, width=2, tags="mic")
-        self.mic_label = self.canvas.create_text(MIC_CX, MIC_CY + 44, text="TAP TO SPEAK",
-                                                 font=self._font(10, True),
-                                                 fill=COL_TEXT_DIM, tags="mic")
+        self._round_rect(MIC_CX - 5, MIC_CY - 12, MIC_CX + 5, MIC_CY + 2, 5,
+                         fill=COL_TEXT, outline="", tags="mic")
+        self.canvas.create_arc(MIC_CX - 11, MIC_CY - 8, MIC_CX + 11, MIC_CY + 8,
+                               start=200, extent=140, style="arc",
+                               outline=COL_TEXT, width=2, tags="mic")
+        self.canvas.create_line(MIC_CX, MIC_CY + 8, MIC_CX, MIC_CY + 13,
+                                fill=COL_TEXT, width=2, tags="mic")
+        self.canvas.create_text(MIC_CX, MIC_CY + 44, text="TAP TO SPEAK",
+                                font=self._font(10, True), fill=COL_TEXT_DIM, tags="mic")
         self.canvas.tag_bind("mic", "<Button-1>", self.wake_up)
+
+        # Stop: only meaningful while Liza is talking, so it stays dimmed otherwise.
+        self.stop_ring = self.canvas.create_oval(STOP_CX - MIC_R, STOP_CY - MIC_R,
+                                                 STOP_CX + MIC_R, STOP_CY + MIC_R,
+                                                 fill=COL_PANEL, outline=COL_PANEL_EDGE,
+                                                 width=2, tags="stop")
+        self.stop_icon = self._round_rect(STOP_CX - 8, STOP_CY - 8, STOP_CX + 8, STOP_CY + 8, 3,
+                                          fill=COL_TEXT_DIM, outline="", tags="stop")
+        self.stop_label = self.canvas.create_text(STOP_CX, STOP_CY + 44, text="TAP TO STOP",
+                                                  font=self._font(10, True),
+                                                  fill=COL_TEXT_DIM, tags="stop")
+        self.canvas.tag_bind("stop", "<Button-1>", self.stop_speaking)
 
     # ---------- runtime ----------
     def _blob_pts(self, cx, cy, r, phase, wobble):
@@ -751,6 +895,13 @@ class TutorUI:
         self.canvas.itemconfig(self.mic_ring,
                                outline=colour if listening else COL_PANEL_EDGE)
 
+        talking = playback_active.is_set() or not audio_queue.empty()
+        stop_shade = COL_STOP if talking else _mix(COL_TEXT_DIM, COL_BG, 0.55)
+        self.canvas.itemconfig(self.stop_ring,
+                               outline=COL_STOP if talking else COL_PANEL_EDGE)
+        self.canvas.itemconfig(self.stop_icon, fill=stop_shade)
+        self.canvas.itemconfig(self.stop_label, fill=stop_shade)
+
         self.root.after(FRAME_MS, self._animate)
 
     def _draw_face(self, cy, colour, activity):
@@ -797,9 +948,27 @@ class TutorUI:
             self.canvas.itemconfig(card["blurb"],
                                    fill=COL_TEXT if chosen else COL_TEXT_DIM)
 
-    def _refresh_bubble(self):
-        text = self.current_subtitle.strip() or BUBBLE_HINTS.get(self.current_state, "")
-        self.canvas.itemconfig(self.bubble_text_id, text=text)
+    def _build_caption(self):
+        self.caption_id = self.canvas.create_text(
+            UI_W / 2, CAPTION_Y, text="", font=self._font(12), fill=COL_TEXT,
+            width=UI_W - 60, justify="center")
+
+    def _refresh_caption(self):
+        self.canvas.itemconfig(self.caption_id, text=self.current_subtitle.strip())
+
+    def set_weather(self, reading):
+        self.canvas.itemconfig(self.temp_id, text=f"{reading['temp']}\u00b0C")
+        self.canvas.itemconfig(self.desc_id,
+                               text=f"{reading['desc']}, feels {reading['feels']}\u00b0")
+        self.canvas.itemconfig(self.city_id,
+                               text=f"{reading['city']}  \u00b7  {reading['humidity']}% humidity")
+        self._draw_weather_glyph(reading["icon"])
+
+    def _tick_clock(self):
+        now = datetime.now()
+        self.canvas.itemconfig(self.clock_id, text=now.strftime("%H:%M"))
+        self.canvas.itemconfig(self.date_id, text=now.strftime("%A, %d %B"))
+        self.root.after(1000, self._tick_clock)
 
     def push_word(self, word):
         if not playback_active.is_set() and self.current_state in ["idle", "warmup", "listening"]:
@@ -813,7 +982,7 @@ class TutorUI:
 
         if word.endswith(('.', '?', '!', '।')) or len(self.current_subtitle.split()) >= 24:
             self.clear_next_word = True
-        self._refresh_bubble()
+        self._refresh_caption()
 
     def set_state(self, state, caption=None):
         if state not in STATE_STYLE:
@@ -825,11 +994,17 @@ class TutorUI:
         self.current_state = state
         if state in ["idle", "warmup", "listening"]:
             self.current_subtitle = ""
-        self._refresh_bubble()
+        self._refresh_caption()
 
     def wake_up(self, event=None):
         print("[UI] Screen tapped! Waking up...", flush=True)
         wake_event.set()
+
+    def stop_speaking(self, event=None):
+        if playback_active.is_set() or not audio_queue.empty():
+            print("[UI] Stop tapped, cutting the reply short.", flush=True)
+            interrupt_playback()
+        return "break"          # do not let the tap fall through and re-wake her
 
     def set_mode(self, index):
         if index == self.current_mode_index:
@@ -1002,6 +1177,7 @@ def ai_loop(ui, headless=False):
     if not chat_history: chat_history = []
     session_active = False
     silence_counter = 0
+    pending_question = pending_language = ""
 
     while True:
         if not headless:
@@ -1015,11 +1191,18 @@ def ai_loop(ui, headless=False):
                 else:
                     ui.set_state("idle")
                     
-                print("[STATE] In Standby Mode. Tap the screen to wake up...", flush=True)
-                
-                while not wake_event.is_set():
-                    time.sleep(0.1)
-                    
+                if WAKE_WORD_ENABLED:
+                    print("[STATE] In Standby Mode. Say 'Hey Liza' or tap the screen...", flush=True)
+                    while not wake_event.is_set():
+                        woke, pending_question, pending_language = listen_for_wake_word(
+                            recognizer, mic_device)
+                        if woke:
+                            break
+                else:
+                    print("[STATE] In Standby Mode. Tap the screen to wake up...", flush=True)
+                    while not wake_event.is_set():
+                        time.sleep(0.1)
+
                 wake_event.clear()
                 session_active = True
                 silence_counter = 0
@@ -1032,73 +1215,80 @@ def ai_loop(ui, headless=False):
                 time.sleep(0.2)
                 continue
 
-            ui.set_state("listening")
-            print("[STATE] Listening for speech...", flush=True)
+            if pending_question:
+                # Said in the same breath as the wake word, so skip straight to answering.
+                text, stt_language = pending_question, pending_language
+                pending_question = pending_language = ""
+                silence_counter = 0
+                print(f"[TRANSCRIPT] {text}", flush=True)
+            else:
+                ui.set_state("listening")
+                print("[STATE] Listening for speech...", flush=True)
                         
                         
-            with mic_device as source:
-                try:
-                    audio = recognizer.listen(source, timeout=5, phrase_time_limit=25)
-                    wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
-                    silence_counter = 0 # Reset silence timer when sound is heard
+                with mic_device as source:
+                    try:
+                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=25)
+                        wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
+                        silence_counter = 0 # Reset silence timer when sound is heard
                     
-                    dynamic_stt_prompt = STT_SEED_PROMPT
-                    for msg in reversed(chat_history):
-                        if msg["role"] == "assistant":
-                            clean_prompt_text = re.sub(r'EMOTION:\s*\[?[a-zA-Z]+\]?', '', msg["content"])
-                            clean_prompt_text = clean_prompt_text.replace('ANSWER:', '').strip()
-                            # Never prime Whisper with a script it should not be producing,
-                            # otherwise one Urdu reply drags every later turn into Urdu too.
-                            if not RE_UNREADABLE_SCRIPT.search(clean_prompt_text):
-                                dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
-                            break
+                        dynamic_stt_prompt = STT_SEED_PROMPT
+                        for msg in reversed(chat_history):
+                            if msg["role"] == "assistant":
+                                clean_prompt_text = re.sub(r'EMOTION:\s*\[?[a-zA-Z]+\]?', '', msg["content"])
+                                clean_prompt_text = clean_prompt_text.replace('ANSWER:', '').strip()
+                                # Never prime Whisper with a script it should not be producing,
+                                # otherwise one Urdu reply drags every later turn into Urdu too.
+                                if not RE_UNREADABLE_SCRIPT.search(clean_prompt_text):
+                                    dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
+                                break
 
-                    text, stt_language = transcribe(wav_data, dynamic_stt_prompt)
+                        text, stt_language = transcribe(wav_data, dynamic_stt_prompt)
 
-                    # Hindi heard as Urdu (or any other Indic script): re-read the same audio
-                    # forced to Hindi so we get Devanagari the voice can actually speak.
-                    if RE_UNREADABLE_SCRIPT.search(text):
-                        print(f"[STT] Heard '{stt_language}' in an unreadable script, re-reading as Hindi...", flush=True)
-                        text, stt_language = transcribe(wav_data, STT_SEED_PROMPT, language="hi")
+                        # Hindi heard as Urdu (or any other Indic script): re-read the same audio
+                        # forced to Hindi so we get Devanagari the voice can actually speak.
+                        if RE_UNREADABLE_SCRIPT.search(text):
+                            print(f"[STT] Heard '{stt_language}' in an unreadable script, re-reading as Hindi...", flush=True)
+                            text, stt_language = transcribe(wav_data, STT_SEED_PROMPT, language="hi")
 
-                    lower_text = text.lower().strip()
+                        lower_text = text.lower().strip()
 
-                    if lower_text in HALLUCINATIONS or RE_HALLUCINATION.search(lower_text):
-                        text = ""
+                        if lower_text in HALLUCINATIONS or RE_HALLUCINATION.search(lower_text):
+                            text = ""
 
-                    # --- ACOUSTIC ECHO CANCELLATION & INTERRUPTION ---
-                    if playback_active.is_set() and text:
-                        global current_ai_response
-                        ai_words = set(current_ai_response.lower().replace('.', '').replace(',', '').split())
-                        user_words = set(lower_text.replace('.', '').replace(',', '').split())
+                        # --- ACOUSTIC ECHO CANCELLATION & INTERRUPTION ---
+                        if playback_active.is_set() and text:
+                            global current_ai_response
+                            ai_words = set(current_ai_response.lower().replace('.', '').replace(',', '').split())
+                            user_words = set(lower_text.replace('.', '').replace(',', '').split())
                         
-                        if user_words:
-                            overlap = len(user_words.intersection(ai_words))
-                            overlap_ratio = overlap / len(user_words)
+                            if user_words:
+                                overlap = len(user_words.intersection(ai_words))
+                                overlap_ratio = overlap / len(user_words)
                             
-                            if overlap_ratio > 0.4:
-                                print(f"[ECHO DETECTED] Ignoring speaker bleed: {text}", flush=True)
-                                continue 
+                                if overlap_ratio > 0.4:
+                                    print(f"[ECHO DETECTED] Ignoring speaker bleed: {text}", flush=True)
+                                    continue 
                             
-                            print(f"[INTERRUPT DETECTED] User said: {text}", flush=True)
-                            interrupt_playback()
+                                print(f"[INTERRUPT DETECTED] User said: {text}", flush=True)
+                                interrupt_playback()
                     
-                    print(f"[TRANSCRIPT] {text if text else '[empty]'}", flush=True)
-                    if not text: continue
+                        print(f"[TRANSCRIPT] {text if text else '[empty]'}", flush=True)
+                        if not text: continue
                 
-                except sr.WaitTimeoutError:
-                    if playback_active.is_set() or not audio_queue.empty():
-                        continue
+                    except sr.WaitTimeoutError:
+                        if playback_active.is_set() or not audio_queue.empty():
+                            continue
                         
-                    silence_counter += 1
-                    if silence_counter >= 6: # ~30 seconds of quiet thinking time
-                        print("[STATE] No interaction for 30 seconds. Returning to Standby Mode...", flush=True)
-                        session_active = False
-                        silence_counter = 0
-                    continue
-                except Exception as e:
-                    print(f"[STT Error] {e}", flush=True)
-                    continue
+                        silence_counter += 1
+                        if silence_counter >= 6: # ~30 seconds of quiet thinking time
+                            print("[STATE] No interaction for 30 seconds. Returning to Standby Mode...", flush=True)
+                            session_active = False
+                            silence_counter = 0
+                        continue
+                    except Exception as e:
+                        print(f"[STT Error] {e}", flush=True)
+                        continue
         else:
             ui.set_state("idle")
             try: text = input().strip()
@@ -1277,6 +1467,11 @@ if __name__ == "__main__":
 
     player_thread = threading.Thread(target=audio_player_worker, daemon=True)
     player_thread.start()
+
+    if WEATHER_API_KEY:
+        threading.Thread(target=weather_worker, daemon=True).start()
+    else:
+        print("[WARNING] WEATHER_API_KEY is not set; the weather panel will stay blank.", flush=True)
 
     HEADLESS = ("--headless" in sys.argv) or (os.getenv("HEADLESS") == "1")
 
