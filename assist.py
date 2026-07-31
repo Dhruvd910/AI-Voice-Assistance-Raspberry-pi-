@@ -182,12 +182,6 @@ atexit.register(_cleanup)
 signal.signal(signal.SIGTERM, _cleanup)
 signal.signal(signal.SIGINT, _cleanup)
 
-def _clear_ui_on_interrupt(ui):
-    ui.current_subtitle = ""
-    ui.clear_next_word = False
-    refresh = getattr(ui, "_refresh_caption", None)
-    if refresh: refresh()
-
 def interrupt_playback():
     global active_subprocesses
     stop_playback_event.set()
@@ -205,9 +199,6 @@ def interrupt_playback():
 
     # Release the player from the dead response so the next one starts on a fresh pipeline.
     audio_queue.put("[END_OF_RESPONSE]")
-
-    ui_call(lambda: _clear_ui_on_interrupt(ui_instance))
-
 
     stop_playback_event.clear()
 
@@ -360,8 +351,6 @@ def audio_player_worker():
             # "generated" is how many seconds of audio have been handed to aplay so far,
             # so it doubles as the offset of the next sentence on the playback timeline.
             clock = {"start": 0.0, "generated": 0.0}
-            pending_words = []
-            words_lock = threading.Lock()
             generation_done = threading.Event()
             cancelled = threading.Event()
 
@@ -373,8 +362,6 @@ def audio_player_worker():
                     return
 
                 language = detect_tts_language(sentence)
-                offset = clock["generated"]
-                got_timestamps = False
 
                 # `with` so a barge-in releases the HTTP connection instead of leaking it.
                 with cartesia_client.tts.generate_sse(
@@ -383,7 +370,6 @@ def audio_player_worker():
                     voice={"mode": "id", "id": cartesia_voice_id(language)},
                     language=language,
                     output_format={"container": "raw", "encoding": "pcm_s16le", "sample_rate": CARTESIA_SAMPLE_RATE},
-                    add_timestamps=True,
                     speed=CARTESIA_SPEED,
                 ) as stream:
                     for event in stream:
@@ -406,25 +392,8 @@ def audio_player_worker():
                                 break
                             clock["generated"] += len(chunk) / BYTES_PER_SEC
 
-                        elif event_type == "timestamps":
-                            stamps = event.word_timestamps
-                            got_timestamps = True
-                            with words_lock:
-                                pending_words.extend(
-                                    (offset + start, word) for start, word in zip(stamps.start, stamps.words)
-                                )
-
                         elif event_type == "error":
                             print(f"TTS Error: {getattr(event, 'error', event)}", flush=True)
-
-                # Fallback if the model returned audio without timestamps: pace the
-                # words evenly across however long this sentence turned out to be.
-                if not got_timestamps and not cancelled.is_set():
-                    words = sentence.split()
-                    span = max(clock["generated"] - offset, 0.001)
-                    with words_lock:
-                        for i, word in enumerate(words):
-                            pending_words.append((offset + span * i / len(words), word))
 
             def generate_audio():
                 try:
@@ -444,35 +413,8 @@ def audio_player_worker():
                     try: aplay_proc.stdin.close()
                     except Exception: pass
 
-            def push_subtitles():
-                def flush_word():
-                    word = pending_words.pop(0)[1]
-                    ui_call(lambda x=word: ui_instance.push_word(x))
-
-                while not (stop_playback_event.is_set() or cancelled.is_set()):
-                    if clock["start"]:
-                        elapsed = time.time() - clock["start"]
-                        with words_lock:
-                            while pending_words and pending_words[0][0] <= elapsed:
-                                flush_word()
-
-                    if generation_done.is_set():
-                        with words_lock:
-                            if not pending_words or not clock["start"]:
-                                break
-                        # Audio finished but words are still queued: dump the rest.
-                        if (time.time() - clock["start"]) > clock["generated"] + 2.0:
-                            with words_lock:
-                                while pending_words:
-                                    flush_word()
-                            break
-
-                    time.sleep(0.05)
-
             generator_thread = threading.Thread(target=generate_audio, daemon=True)
-            subtitle_thread = threading.Thread(target=push_subtitles, daemon=True)
             generator_thread.start()
-            subtitle_thread.start()
             audio_queue.task_done()
 
             while True:
@@ -490,7 +432,6 @@ def audio_player_worker():
 
             sentence_queue.put(None)
             generator_thread.join()
-            subtitle_thread.join()
             aplay_proc.wait()
 
         except Exception as e:
@@ -547,8 +488,8 @@ BLOB_LAYERS = [
     (0.66, -0.22, -13, -15)
 ]
 
-# The Pi image ships with DejaVu only, which has no Devanagari glyphs, so Hindi
-# subtitles render as boxes until a font covering it is installed:
+# Nothing on screen is Hindi today, but prefer a family that covers Devanagari so
+# any Hindi text added later is readable. Install one with:
 #   sudo apt install fonts-noto-devanagari
 FONT_PREFERENCE = ("Noto Sans", "Noto Sans Devanagari", "Lohit Devanagari",
                    "Mukta", "Samyak Devanagari", "FreeSans", "DejaVu Sans", "Helvetica")
@@ -559,7 +500,6 @@ INFO_X0, INFO_Y0, INFO_X1, INFO_Y1 = 16, 104, 234, 340
 CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 90, 10
 MIC_CX, MIC_CY, MIC_R = 330, 392, 26
 STOP_CX, STOP_CY = 454, 392
-CAPTION_Y = 452
 COL_STOP = "#FB7185"
 
 def _mix(colour, target, t):
@@ -585,8 +525,6 @@ class TutorUI:
         self.current_mode = self.modes[0]
         self.current_state = "warmup"
 
-        self.current_subtitle = ""
-        self.clear_next_word = False
         self.phase = 0.0
         self.frame = 0
 
@@ -601,7 +539,6 @@ class TutorUI:
         self._build_blob()
         self._build_mode_cards()
         self._build_buttons()
-        self._build_caption()
         self._refresh_cards()
 
         self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
@@ -621,9 +558,6 @@ class TutorUI:
 
         for name in FONT_PREFERENCE:
             if name.lower() in available:
-                if name in ("DejaVu Sans", "Helvetica"):
-                    print("[UI] No Devanagari font found; Hindi subtitles will show as boxes. "
-                          "Fix with: sudo apt install fonts-noto-devanagari", flush=True)
                 return name
         return "Helvetica"
 
@@ -948,14 +882,6 @@ class TutorUI:
             self.canvas.itemconfig(card["blurb"],
                                    fill=COL_TEXT if chosen else COL_TEXT_DIM)
 
-    def _build_caption(self):
-        self.caption_id = self.canvas.create_text(
-            UI_W / 2, CAPTION_Y, text="", font=self._font(12), fill=COL_TEXT,
-            width=UI_W - 60, justify="center")
-
-    def _refresh_caption(self):
-        self.canvas.itemconfig(self.caption_id, text=self.current_subtitle.strip())
-
     def set_weather(self, reading):
         self.canvas.itemconfig(self.temp_id, text=f"{reading['temp']}\u00b0C")
         self.canvas.itemconfig(self.desc_id,
@@ -970,20 +896,6 @@ class TutorUI:
         self.canvas.itemconfig(self.date_id, text=now.strftime("%A, %d %B"))
         self.root.after(1000, self._tick_clock)
 
-    def push_word(self, word):
-        if not playback_active.is_set() and self.current_state in ["idle", "warmup", "listening"]:
-            return
-
-        if self.clear_next_word:
-            self.current_subtitle = ""
-            self.clear_next_word = False
-
-        self.current_subtitle += word + " "
-
-        if word.endswith(('.', '?', '!', '।')) or len(self.current_subtitle.split()) >= 24:
-            self.clear_next_word = True
-        self._refresh_caption()
-
     def set_state(self, state, caption=None):
         if state not in STATE_STYLE:
             state = "idle"
@@ -992,9 +904,6 @@ class TutorUI:
             return
 
         self.current_state = state
-        if state in ["idle", "warmup", "listening"]:
-            self.current_subtitle = ""
-        self._refresh_caption()
 
     def wake_up(self, event=None):
         print("[UI] Screen tapped! Waking up...", flush=True)
