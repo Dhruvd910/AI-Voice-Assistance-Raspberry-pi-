@@ -14,7 +14,6 @@ import threading
 import re
 import ctypes
 import traceback
-import shutil
 from datetime import datetime
 
 
@@ -43,33 +42,36 @@ load_dotenv()
 
 import speech_recognition as sr
 from groq import Groq
+from cartesia import Cartesia
 from ddgs import DDGS
 
 # 1. The Ears & Brain (Groq API)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+# 2. The Voice (Cartesia API)
+CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
+cartesia_client = Cartesia(api_key=CARTESIA_API_KEY or None)
+
 # ==========================================
 # Configuration & Setup
 # ==========================================
-PIPER_MODEL_PATH = os.getenv("PIPER_MODEL_PATH", "/home/pi/test/piper/en_US-lessac-medium.onnx")
-ACTIVE_PIPER_MODEL = PIPER_MODEL_PATH
+# Speech-to-text: no fixed language, so Whisper auto-detects Hindi vs English.
+STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
 
-try:
-    RAM_DISK_PATH = os.getenv("RAM_DISK_PATH", "/dev/shm")
-    if os.path.exists(RAM_DISK_PATH):
-        model_name = os.path.basename(PIPER_MODEL_PATH)
-        json_name = model_name + ".json"
-        ram_model = os.path.join(RAM_DISK_PATH, model_name)
-        ram_json = os.path.join(RAM_DISK_PATH, json_name)
-        
-        if not os.path.exists(ram_model):
-            print("[OPTIMIZATION] Moving voice model to RAM...", flush=True)
-            shutil.copy(PIPER_MODEL_PATH, ram_model)
-            shutil.copy(PIPER_MODEL_PATH + ".json", ram_json)
-        ACTIVE_PIPER_MODEL = ram_model
-except Exception as e:
-    pass
+# Text-to-speech: one Cartesia voice speaks both languages, switched per sentence.
+CARTESIA_MODEL = os.getenv("CARTESIA_MODEL", "sonic-3.5")
+CARTESIA_SAMPLE_RATE = int(os.getenv("CARTESIA_SAMPLE_RATE", "22050"))
+CARTESIA_SPEED = os.getenv("CARTESIA_SPEED", "fast")  # slow | normal | fast
+BYTES_PER_SEC = CARTESIA_SAMPLE_RATE * 2  # 16-bit mono
+
+# Set CARTESIA_VOICE_ID to a multilingual voice, or give Hindi and English their
+# own voices. Run `python assist.py --list-voices` to see what your key can use.
+CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
+VOICE_IDS = {
+    "en": os.getenv("CARTESIA_VOICE_ID_EN", "") or CARTESIA_VOICE_ID,
+    "hi": os.getenv("CARTESIA_VOICE_ID_HI", "") or CARTESIA_VOICE_ID,
+}
 
 wake_event = threading.Event()
 HISTORY_FILE = os.getenv("HISTORY_FILE", "chat_history.json")
@@ -89,7 +91,9 @@ PREFERRED_MIC_NAMES = ["USB PnP Sound Device", "USB Audio", "Audio"]
 RE_ANSWER_PREFIX = re.compile(r'ANSWER:\s*')
 RE_GREETING_PREFIX = re.compile(r'^\s*(?:"|\')?\s*(hi there|hello there|hi|hello|hey|greetings)\b[,!.:\s-]*', re.IGNORECASE)
 RE_EMOJI = re.compile(r'[\U00010000-\U0010ffff]')
-RE_SENTENCE_SPLIT = re.compile(r'(?<=[.?!])\s+')
+RE_SENTENCE_SPLIT = re.compile(r'(?<=[.?!।])\s+')
+RE_DEVANAGARI = re.compile(r'[ऀ-ॿ]')
+RE_LATIN_WORD = re.compile(r'[A-Za-z]{2,}')
 
 # Silence C-Level Warnings
 ALSA_HANDLER_FUNC = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p)
@@ -159,8 +163,6 @@ signal.signal(signal.SIGINT, _cleanup)
 def _clear_ui_on_interrupt(ui):
     ui.current_subtitle = ""
     ui.clear_next_word = False
-    try: ui.face_canvas.itemconfig(ui.transcript_text_id, text="", state="hidden")
-    except Exception: pass
 
 def interrupt_playback():
     global active_subprocesses
@@ -176,14 +178,56 @@ def interrupt_playback():
         try: audio_queue.get_nowait()
         except Exception: pass
         audio_queue.task_done()
-        
-    if ui_instance:
-        ui_instance.root.after(0, lambda: _clear_ui_on_interrupt(ui_instance))
-        
+
+    # Release the player from the dead response so the next one starts on a fresh pipeline.
+    audio_queue.put("[END_OF_RESPONSE]")
+
+    ui_call(lambda: _clear_ui_on_interrupt(ui_instance))
+
+
     stop_playback_event.clear()
 
 # ==========================================
-# Bulletproof Audio + Byte-Synced Subtitles
+# Language Routing (Hindi / English / Hinglish)
+# ==========================================
+def detect_user_language(text, stt_language=None):
+    """What the student just spoke, used to steer the reply: 'hi', 'en' or 'hinglish'."""
+    has_devanagari = bool(RE_DEVANAGARI.search(text))
+    has_latin_words = bool(RE_LATIN_WORD.search(text))
+    stt_language = (stt_language or "").strip().lower()
+    stt_says_hindi = stt_language.startswith("hi") or stt_language == "hindi"
+
+    if has_devanagari and has_latin_words: return "hinglish"
+    if has_devanagari: return "hi"
+    # Whisper heard Hindi but wrote it in Latin letters, i.e. romanised Hinglish.
+    if stt_says_hindi: return "hinglish"
+    return "en"
+
+def detect_tts_language(text):
+    """Which Cartesia voice language a sentence should be spoken in."""
+    return "hi" if RE_DEVANAGARI.search(text) else "en"
+
+def cartesia_voice_id(language):
+    voice_id = VOICE_IDS.get(language) or CARTESIA_VOICE_ID
+    if not voice_id:
+        raise RuntimeError("No Cartesia voice configured. Set CARTESIA_VOICE_ID in .env "
+                           "(run `python assist.py --list-voices` to pick one).")
+    return voice_id
+
+def list_cartesia_voices(query=""):
+    """Print the voices this API key can use, so you can copy an ID into .env."""
+    page = cartesia_client.voices.list(limit=100, q=query) if query else cartesia_client.voices.list(limit=100)
+    for voice in page:
+        print(f"{voice.id}  [{voice.language}]  {voice.name}", flush=True)
+
+def ui_call(callback):
+    """Run a UI update on the Tk thread. No-op when headless."""
+    if ui_instance is None: return
+    root = getattr(ui_instance, "root", None)
+    if root is not None: root.after(0, callback)
+
+# ==========================================
+# Bulletproof Audio + Word-Timestamped Subtitles
 # ==========================================
 def audio_player_worker():
     global active_subprocesses
@@ -198,123 +242,150 @@ def audio_player_worker():
             continue
 
         playback_active.set()
-        shuttle_text_queue = queue.Queue()
-        shuttle_text_queue.put(first_item)
+        sentence_queue = queue.Queue()
+        sentence_queue.put(first_item)
 
-        piper_cmd = [
-            "/home/pi/test/piper/piper", "--model", ACTIVE_PIPER_MODEL, 
-            "--output_raw", "-", "--quiet", "--length_scale", "0.85", "--sentence_silence", "0.2"
-        ]
-        
         try:
-            piper_proc = subprocess.Popen(piper_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            aplay_proc = subprocess.Popen(["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", "22050", "-c", "1"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
-            active_subprocesses = [piper_proc, aplay_proc]
-            
-            def shuttle_audio():
-                first_chunk = True
-                total_bytes_generated = 0
-                start_time = 0
-                BYTES_PER_SEC = 44100
-                BYTES_PER_CHAR = 2600 
-                
-                word_queue = []
-                cost_accumulator = 0
-                piper_done = False
-                
-                try:
-                    while True:
-                        if not piper_done:
-                            chunk = piper_proc.stdout.read(4096)
-                            if chunk:
-                                if first_chunk:
-                                    start_time = time.time()
-                                    if ui_instance is not None: 
-                                        ui_instance.root.after(0, lambda: ui_instance.set_state("speaking"))
-                                    first_chunk = False
-                                
+            aplay_proc = subprocess.Popen(
+                ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(CARTESIA_SAMPLE_RATE), "-c", "1"],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL
+            )
+            active_subprocesses = [aplay_proc]
+
+            # "generated" is how many seconds of audio have been handed to aplay so far,
+            # so it doubles as the offset of the next sentence on the playback timeline.
+            clock = {"start": 0.0, "generated": 0.0}
+            pending_words = []
+            words_lock = threading.Lock()
+            generation_done = threading.Event()
+            cancelled = threading.Event()
+
+            def speak_sentence(sentence):
+                language = detect_tts_language(sentence)
+                offset = clock["generated"]
+                got_timestamps = False
+
+                # `with` so a barge-in releases the HTTP connection instead of leaking it.
+                with cartesia_client.tts.generate_sse(
+                    model_id=CARTESIA_MODEL,
+                    transcript=sentence,
+                    voice={"mode": "id", "id": cartesia_voice_id(language)},
+                    language=language,
+                    output_format={"container": "raw", "encoding": "pcm_s16le", "sample_rate": CARTESIA_SAMPLE_RATE},
+                    add_timestamps=True,
+                    speed=CARTESIA_SPEED,
+                ) as stream:
+                    for event in stream:
+                        if stop_playback_event.is_set() or cancelled.is_set(): break
+                        event_type = getattr(event, "type", "")
+
+                        if event_type == "chunk":
+                            chunk = event.audio
+                            if not chunk: continue
+                            if not clock["start"]:
+                                clock["start"] = time.time()
+                                ui_call(lambda: ui_instance.set_state("speaking"))
+
+                            try:
                                 aplay_proc.stdin.write(chunk)
                                 aplay_proc.stdin.flush()
-                                total_bytes_generated += len(chunk)
-                            else:
-                                piper_done = True
-                                try: aplay_proc.stdin.close() 
-                                except: pass
-                        
-                        while not shuttle_text_queue.empty():
-                            new_sentence = shuttle_text_queue.get_nowait()
-                            if new_sentence == "[END_OF_RESPONSE]": break
-                            word_queue.extend(new_sentence.split())
-                        
-                        if not first_chunk:
-                            bytes_played = min((time.time() - start_time) * BYTES_PER_SEC, total_bytes_generated)
-                            
-                            while word_queue:
-                                next_word = word_queue[0]
-                                word_cost = len(next_word) * BYTES_PER_CHAR
-                                if next_word.endswith(('.', ',', '?', '!')): word_cost += 0
-                                
-                                if bytes_played >= (cost_accumulator + word_cost):
-                                    w = word_queue.pop(0)
-                                    cost_accumulator += word_cost
-                                    if ui_instance: 
-                                        ui_instance.root.after(0, lambda x=w: ui_instance.push_word(x))
-                                else:
-                                    break 
-                                    
-                        if piper_done and not word_queue:
-                            break 
-                        
-                        if piper_done and word_queue:
-                            if (time.time() - start_time) > (total_bytes_generated / BYTES_PER_SEC) + 6.0:
-                                while word_queue:
-                                    w = word_queue.pop(0)
-                                    if ui_instance: 
-                                        ui_instance.root.after(0, lambda x=w: ui_instance.push_word(x))
+                            except (BrokenPipeError, ValueError, OSError):
+                                # aplay was killed by a barge-in: abandon the rest of this response.
+                                cancelled.set()
                                 break
-                            time.sleep(0.05)
-                except Exception: pass
+                            clock["generated"] += len(chunk) / BYTES_PER_SEC
+
+                        elif event_type == "timestamps":
+                            stamps = event.word_timestamps
+                            got_timestamps = True
+                            with words_lock:
+                                pending_words.extend(
+                                    (offset + start, word) for start, word in zip(stamps.start, stamps.words)
+                                )
+
+                        elif event_type == "error":
+                            print(f"TTS Error: {getattr(event, 'error', event)}", flush=True)
+
+                # Fallback if the model returned audio without timestamps: pace the
+                # words evenly across however long this sentence turned out to be.
+                if not got_timestamps and not cancelled.is_set():
+                    words = sentence.split()
+                    span = max(clock["generated"] - offset, 0.001)
+                    with words_lock:
+                        for i, word in enumerate(words):
+                            pending_words.append((offset + span * i / len(words), word))
+
+            def generate_audio():
+                try:
+                    while True:
+                        sentence = sentence_queue.get()
+                        if sentence is None: break
+                        if stop_playback_event.is_set() or cancelled.is_set(): break
+
+                        print(f"Liza (speaking): {sentence}", flush=True)
+                        try:
+                            speak_sentence(sentence)
+                        except Exception as exc:
+                            if not (stop_playback_event.is_set() or cancelled.is_set()):
+                                print(f"TTS Error: {exc}", flush=True)
                 finally:
+                    generation_done.set()
                     try: aplay_proc.stdin.close()
-                    except: pass
+                    except Exception: pass
 
-            shuttle_thread = threading.Thread(target=shuttle_audio, daemon=True)
-            shuttle_thread.start()
+            def push_subtitles():
+                def flush_word():
+                    word = pending_words.pop(0)[1]
+                    ui_call(lambda x=word: ui_instance.push_word(x))
 
-            print(f"Liza (speaking): {first_item}", flush=True)
-            piper_proc.stdin.write((first_item + "\n").encode("utf-8"))
-            piper_proc.stdin.flush()
+                while not (stop_playback_event.is_set() or cancelled.is_set()):
+                    if clock["start"]:
+                        elapsed = time.time() - clock["start"]
+                        with words_lock:
+                            while pending_words and pending_words[0][0] <= elapsed:
+                                flush_word()
+
+                    if generation_done.is_set():
+                        with words_lock:
+                            if not pending_words or not clock["start"]:
+                                break
+                        # Audio finished but words are still queued: dump the rest.
+                        if (time.time() - clock["start"]) > clock["generated"] + 2.0:
+                            with words_lock:
+                                while pending_words:
+                                    flush_word()
+                            break
+
+                    time.sleep(0.05)
+
+            generator_thread = threading.Thread(target=generate_audio, daemon=True)
+            subtitle_thread = threading.Thread(target=push_subtitles, daemon=True)
+            generator_thread.start()
+            subtitle_thread.start()
             audio_queue.task_done()
 
             while True:
                 sentence = audio_queue.get()
                 if sentence is None: break
                 if sentence == "[END_OF_RESPONSE]":
-                    shuttle_text_queue.put("[END_OF_RESPONSE]")
                     audio_queue.task_done()
                     break
                 if stop_playback_event.is_set():
                     audio_queue.task_done()
                     break
-                    
-                print(f"Liza (speaking): {sentence}", flush=True)
-                try:
-                    shuttle_text_queue.put(sentence)
-                    piper_proc.stdin.write((sentence + "\n").encode("utf-8"))
-                    piper_proc.stdin.flush()
-                except Exception: pass
+
+                sentence_queue.put(sentence)
                 audio_queue.task_done()
 
-            piper_proc.stdin.close()
-            shuttle_thread.join()
+            sentence_queue.put(None)
+            generator_thread.join()
+            subtitle_thread.join()
             aplay_proc.wait()
-            piper_proc.wait()
 
         except Exception as e:
             print(f"TTS Error: {e}", flush=True)
         finally:
-            if ui_instance is not None:
-                ui_instance.root.after(0, lambda: ui_instance.set_state("idle"))
+            ui_call(lambda: ui_instance.set_state("idle"))
             active_subprocesses.clear()
             playback_active.clear()
 
@@ -345,11 +416,6 @@ class TutorUI:
         self.intro_text_id = self.face_canvas.create_text(
             400, 65, text="Tap anywhere to wake me up!", font=("Helvetica", 20, "bold"), fill="#2C3E50", state="hidden"
         )
-        self.transcript_text_id = self.face_canvas.create_text(
-            400, 45, text="", font=("Helvetica", 14, "bold"), fill="#2C3E50", 
-            width=700, justify="center", anchor="n", state="hidden"
-        )
-
         self.current_subtitle = ""
         self.clear_next_word = False
 
@@ -411,9 +477,6 @@ class TutorUI:
             self.clear_next_word = False
 
         self.current_subtitle += word + " "
-        try:
-            self.face_canvas.itemconfig(self.transcript_text_id, text=self.current_subtitle.strip(), state="normal")
-        except Exception: pass
 
         if word.endswith(('.', '?', '!')) or len(self.current_subtitle.split()) >= 16:
             self.clear_next_word = True
@@ -440,8 +503,6 @@ class TutorUI:
 
         if state in ["idle", "warmup", "listening"]:
             self.current_subtitle = ""
-            try: self.face_canvas.itemconfig(self.transcript_text_id, text="", state="hidden")
-            except Exception: pass
 
     # FIX: No matter what state the UI is in, a tap wakes her up instantly!
     def wake_up(self, event):
@@ -470,6 +531,27 @@ class HeadlessUI:
 # ==========================================
 # Core AI Functions
 # ==========================================
+# Bilingual seed so Whisper is not biased towards English on the first turn.
+STT_SEED_PROMPT = "Hey Liza, explain the concept clearly. नमस्ते लीज़ा, यह concept समझाओ।"
+
+# Whisper invents these out of silence, in both languages.
+HALLUCINATIONS = {
+    "thank you.", "thank you", "thanks.", "thanks", "thanks for watching.",
+    "you", "why?", ".", "bye.", "[empty]", "",
+    "so,", "so.", "so",
+    "i'm not sure if i can do it.", "i'm not sure.", "i'm not sure",
+    "so, i'm going to go to the next slide.", "i'm going to go to the next slide.",
+    "i'm not sure what you're doing.", "i'm not sure if you're a cat.",
+    "yes.", "yeah.", "okay.",
+    "धन्यवाद।", "धन्यवाद", "शुक्रिया।", "शुक्रिया", "नमस्ते।", "नमस्कार।",
+    "जी हाँ।", "हाँ।", "जी।", "ठीक है।", "अच्छा।", "।"
+}
+RE_HALLUCINATION = re.compile(
+    r'three, four|assistant is a professor|avoid casual|thanks for watching|'
+    r'सब्सक्राइब करें|वीडियो पसंद आया',
+    re.IGNORECASE
+)
+
 def clean_text_for_tts(text):
     clean = re.sub(r'VISUAL:.*', '', text, flags=re.IGNORECASE)
     clean = re.sub(r'EMOTION:.*', '', clean, flags=re.IGNORECASE)
@@ -490,6 +572,23 @@ MODE_INSTRUCTIONS = {
     - IF INCORRECT OR INCOMPLETE: Sentence 1: Gently point out the specific mistake or missing detail. Sentence 2: Tell them exactly which area they need to focus on or correct."""
 }
 
+LANGUAGE_INSTRUCTIONS = {
+    "en": "DETECTED LANGUAGE: ENGLISH. Reply in English only.",
+
+    "hi": "DETECTED LANGUAGE: HINDI. Reply in Hindi, written in Devanagari script only. "
+          "NEVER write Hindi words in Latin letters. Common English technical terms may stay in Latin script.",
+
+    "hinglish": "DETECTED LANGUAGE: HINGLISH (Hindi mixed with English). Reply in the same natural Hinglish mix. "
+                "CRITICAL SCRIPT RULE: write every Hindi word in Devanagari and keep English words in Latin script, "
+                "for example: 'यह concept बहुत simple है, इसे ऐसे समझो.' NEVER write Hindi words in Latin letters."
+}
+
+SEARCH_NOTICES = {
+    "en": "Let me check the web for {query}.",
+    "hi": "एक सेकंड, वेब पर देखते हैं।",
+    "hinglish": "एक सेकंड, web पर check करते हैं।"
+}
+
 UNIVERSAL_SYSTEM_PROMPT = """You are "Liza", an advanced, highly capable AI Assistant. You have LIVE internet access.
 CURRENT SYSTEM TIME & DATE: {system_time}
 
@@ -499,14 +598,22 @@ CURRENT SYSTEM TIME & DATE: {system_time}
 {domain_guidelines}
 
 ============================================================
-2. UNIVERSAL BEHAVIORAL MATRIX
+2. LANGUAGE MIRRORING (CRITICAL OVERRIDE)
+============================================================
+{language_guidelines}
+- Your answer is read aloud by a voice that picks its language from the script you write in, so the script rule above is not cosmetic. Getting it wrong makes you unintelligible.
+- Mirror the student every single turn. If they switch language mid-conversation, you switch on your very next reply, no matter what language the earlier turns used.
+- NEVER mention language, script or translation. NEVER repeat the same answer in a second language.
+
+============================================================
+3. UNIVERSAL BEHAVIORAL MATRIX
 ============================================================
 - The STT Forgiveness Rule (CRITICAL): The user is speaking through a microphone. Ignore all typos, phonetic misspellings, and grammar issues. NEVER correct the user. Just infer the meaning and answer.
 - The Time Override: You already know the exact time and date from the SYSTEM TIME provided above. DO NOT search the web for the time or date. 
 - The Knowledge Fallback: You MUST NEVER say "I don't have real-time access", "I cannot browse the internet", or "I am an AI". 
 
 ============================================================
-3. SEARCH PROTOCOL (STRICT)
+4. SEARCH PROTOCOL (STRICT)
 ============================================================
 If you need to trigger a search, you MUST NOT use the EMOTION or ANSWER tags. You must bypass normal conversation and output EXACTLY AND ONLY this:
 SEARCH: <your optimized query>
@@ -518,7 +625,7 @@ Your Output: SEARCH: current temperature in New Delhi weather
 DO NOT add conversational filler. ONLY output the SEARCH tag.
 
 ============================================================
-4. VOICE & FORMATTING CONSTRAINTS
+5. VOICE & FORMATTING CONSTRAINTS
 ============================================================
 - You are a VOICE assistant. Your output must be spoken aloud.
 - DO NOT use bullet points, numbered lists, markdown formatting, or complex punctuation.
@@ -593,7 +700,7 @@ def ai_loop(ui, headless=False):
                     wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
                     silence_counter = 0 # Reset silence timer when sound is heard
                     
-                    dynamic_stt_prompt = "Hey Liza. Explain the concept clearly."
+                    dynamic_stt_prompt = STT_SEED_PROMPT
                     for msg in reversed(chat_history):
                         if msg["role"] == "assistant":
                             clean_prompt_text = re.sub(r'EMOTION:\s*\[?[a-zA-Z]+\]?', '', msg["content"])
@@ -601,30 +708,23 @@ def ai_loop(ui, headless=False):
                             dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
                             break
 
+                    # No `language` argument: Whisper detects Hindi vs English on its own,
+                    # and verbose_json reports back what it heard.
                     transcription = groq_client.audio.transcriptions.create(
                         file=("temp.wav", wav_data),
-                        model="whisper-large-v3-turbo", 
-                        response_format="text",
-                        language="en",
+                        model=STT_MODEL,
+                        response_format="verbose_json",
                         temperature=0.0,
                         prompt=dynamic_stt_prompt
                     )
-                    
-                    text = transcription.strip()
+
+                    text = (transcription.text or "").strip()
+                    stt_language = getattr(transcription, "language", "") or ""
                     lower_text = text.lower().strip()
-                    hallucinations = [
-                        "thank you.", "thank you", "thanks.", "thanks", "thanks for watching.", 
-                        "you", "why?", ".", "bye.", "[empty]", "", 
-                        "so,", "so.", "so", 
-                        "i'm not sure if i can do it.", "i'm not sure.", "i'm not sure",
-                        "so, i'm going to go to the next slide.", "i'm going to go to the next slide.",
-                        "i'm not sure what you're doing.", "i'm not sure if you're a cat.",
-                        "yes.", "yeah.", "okay."
-                    ]
-                    
-                    if lower_text in hallucinations or "three, four" in lower_text or "assistant is a professor" in lower_text or "avoid casual" in lower_text:
+
+                    if lower_text in HALLUCINATIONS or RE_HALLUCINATION.search(lower_text):
                         text = ""
-                    
+
                     # --- ACOUSTIC ECHO CANCELLATION & INTERRUPTION ---
                     if playback_active.is_set() and text:
                         global current_ai_response
@@ -664,15 +764,23 @@ def ai_loop(ui, headless=False):
             except EOFError: break
             if not text: continue
             if text.lower() in ("exit", "quit"): break
+            stt_language = ""
             stop_playback_event.clear()
 
         # --- 2. THINK & STREAM ---
         ui.set_state("thinking")
         mode_instruction = MODE_INSTRUCTIONS.get(ui.current_mode, MODE_INSTRUCTIONS["TUTOR"])
-        
+
+        user_language = detect_user_language(text, stt_language)
+        print(f"[LANGUAGE] heard={stt_language or 'n/a'} -> replying in {user_language}", flush=True)
+
         current_time = datetime.now().strftime("%I:%M %p, %A, %B %d, %Y")
-        dynamic_system_prompt = UNIVERSAL_SYSTEM_PROMPT.format(domain_guidelines=mode_instruction, system_time=current_time)
-        
+        dynamic_system_prompt = UNIVERSAL_SYSTEM_PROMPT.format(
+            domain_guidelines=mode_instruction,
+            language_guidelines=LANGUAGE_INSTRUCTIONS[user_language],
+            system_time=current_time
+        )
+
         if chat_history and chat_history[0].get("role") == "system":
             chat_history[0]["content"] = dynamic_system_prompt
         else:
@@ -743,13 +851,12 @@ def ai_loop(ui, headless=False):
                         search_query = search_query.replace('[', '').replace(']', '').strip()
                         
                         clean_speech_query = clean_text_for_tts(search_query)
-                        search_msg = f"Let me check the web for {clean_speech_query}."
+                        search_msg = SEARCH_NOTICES[user_language].format(query=clean_speech_query)
                         audio_queue.put(search_msg)
-                        audio_queue.put("[END_OF_RESPONSE]") 
-                        
-                        if ui_instance is not None:
-                            ui_instance.root.after(0, lambda: ui_instance.set_state("thinking", f"Searching for: {search_query}..."))
-                        
+                        audio_queue.put("[END_OF_RESPONSE]")
+
+                        ui_call(lambda: ui_instance.set_state("thinking", f"Searching for: {search_query}..."))
+
                         search_context = ""
                         try:
                             with DDGS() as ddgs:
@@ -772,7 +879,7 @@ def ai_loop(ui, headless=False):
                         chat_history.append({"role": "assistant", "content": full_response})
                         chat_history.append({
                             "role": "user", 
-                            "content": f"Here are the live web search results:\n{search_context}\n\nBased ONLY on this information, answer the question. If the results do not contain the answer, just say 'I couldn't find the exact data online right now.' DO NOT guess or change the subject. Provide the final spoken answer starting with EMOTION: and ANSWER:"
+                            "content": f"Here are the live web search results:\n{search_context}\n\nBased ONLY on this information, answer the question. If the results do not contain the answer, just say 'I couldn't find the exact data online right now.' DO NOT guess or change the subject. The results may be in English, but you MUST still obey the LANGUAGE MIRRORING rules and answer in the student's language and script. Provide the final spoken answer starting with EMOTION: and ANSWER:"
                         })
                         stream_hf(is_search_loop=True)
                         chat_history.pop() 
@@ -813,6 +920,17 @@ def ai_loop(ui, headless=False):
 # Main Execution
 # ==========================================
 if __name__ == "__main__":
+    if "--list-voices" in sys.argv:
+        args = sys.argv[sys.argv.index("--list-voices") + 1:]
+        list_cartesia_voices(args[0] if args else "")
+        sys.exit(0)
+
+    if not CARTESIA_API_KEY:
+        print("[WARNING] CARTESIA_API_KEY is not set. Liza will not be able to speak.", flush=True)
+    if not CARTESIA_VOICE_ID and not all(VOICE_IDS.values()):
+        print("[WARNING] No Cartesia voice configured. Set CARTESIA_VOICE_ID in .env "
+              "(see `python assist.py --list-voices`).", flush=True)
+
     player_thread = threading.Thread(target=audio_player_worker, daemon=True)
     player_thread.start()
 
