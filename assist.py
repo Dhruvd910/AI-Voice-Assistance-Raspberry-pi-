@@ -97,6 +97,7 @@ WEATHER_CITY = os.getenv("WEATHER_CITY", "Delhi,IN")
 WEATHER_REFRESH_S = int(os.getenv("WEATHER_REFRESH_S", "900"))
 
 wake_event = threading.Event()
+sleep_event = threading.Event()   # 'stop listening': drop the session, go to standby
 HISTORY_FILE = os.getenv("HISTORY_FILE", "chat_history.json")
 MAX_HISTORY_TURNS = 6
 
@@ -326,36 +327,74 @@ def detect_music_command(text, music_active):
 
 YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True,
             "noplaylist": True, "format": "bestaudio[abr<=96]/bestaudio/best"}
+MUSIC_TRIES = 4
+
+RE_TITLE_SPLIT = re.compile(r'\s*[|｜]\s*')
+
+def pretty_title(title, limit=48):
+    """YouTube titles are full of emoji, channel names and '| Official Video' tails.
+    Keep the part before the first bar so the widget shows the song, not the noise."""
+    text = RE_EMOJI.sub('', title or '').strip()
+    head = RE_TITLE_SPLIT.split(text)[0].strip()
+    text = re.sub(r'\s+', ' ', head or text)
+    if len(text) > limit:
+        text = text[:limit - 1].rstrip(" ,-") + "…"
+    return text
+
+def _title_score(query, title):
+    """Fraction of the words asked for that appear in a candidate's title."""
+    wanted = set(re.findall(r'\w+', query.lower()))
+    if not wanted:
+        return 0.0
+    have = set(re.findall(r'\w+', (title or "").lower()))
+    return len(wanted & have) / len(wanted)
+
+def _playable(info):
+    """A search hit is only useful if it actually carries an audio stream."""
+    if not isinstance(info, dict): return False
+    if info.get("is_live"): return False          # live streams stall the decoder
+    return bool(info.get("url"))
 
 def resolve_track(query):
-    """Find a track and return yt-dlp's info for it.
+    """Find something playable for `query`, or None.
 
     DuckDuckGo is tried first, but it rate-limits hard and raises rather than
-    returning an empty list, so YouTube's own search is the fallback. Without it
-    the feature simply stops working whenever DDG decides to throttle.
+    returning an empty list, so YouTube's own search is the fallback. Several
+    candidates are attempted because the top hit is regularly a live stream, a
+    region-blocked upload or an entry with no audio stream, and one bad hit used
+    to mean nothing played at all.
     """
-    target = ""
+    candidates = []
     try:
         with DDGS() as ddgs:
-            for result in ddgs.videos(query, max_results=8):
+            for result in ddgs.videos(query, max_results=10):
                 url = result.get("content") or ""
                 if "youtube.com/watch" in url or "youtu.be/" in url:
-                    target = url
-                    break
+                    candidates.append((url, result.get("title") or ""))
     except Exception as exc:
         print(f"[MUSIC] DuckDuckGo unavailable ({exc})", flush=True)
 
-    if not target:
-        print("[MUSIC] Falling back to YouTube search", flush=True)
-        target = f"ytsearch1:{query}"
+    # Prefer the hits whose title actually looks like what was asked for.
+    candidates.sort(key=lambda c: -_title_score(query, c[1]))
+    targets = [url for url, _ in candidates[:MUSIC_TRIES]]
+    targets.append(f"ytsearch{MUSIC_TRIES}:{query}")
 
-    with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-        info = ydl.extract_info(target, download=False)
+    for target in targets:
+        try:
+            with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+                info = ydl.extract_info(target, download=False)
+        except Exception as exc:
+            print(f"[MUSIC] Candidate failed ({str(exc)[:90]})", flush=True)
+            continue
 
-    entries = info.get("entries") if isinstance(info, dict) else None
-    if entries:
-        info = entries[0]
-    return info
+        entries = info.get("entries") if isinstance(info, dict) else None
+        for candidate in (entries or [info]):
+            if _playable(candidate):
+                return candidate
+            if candidate:
+                print(f"[MUSIC] Skipping {candidate.get('title', '?')[:40]!r} "
+                      f"(live or no audio)", flush=True)
+    return None
 
 class MusicPlayer:
     """Streams YouTube audio to aplay. Decoding happens in-process through PyAV,
@@ -364,6 +403,7 @@ class MusicPlayer:
     def __init__(self):
         self.state = "stopped"          # stopped | loading | playing | paused
         self.title = ""
+        self.last_query = ""            # so the play button can restart a finished track
         self._stop = threading.Event()
         self._user_paused = False
         self._ducked = False
@@ -381,12 +421,18 @@ class MusicPlayer:
         self._stop.clear()
         self._user_paused = False
         self._ducked = False
-        self.title = query
+        self.title = pretty_title(query)
+        self.last_query = query
         self.state = "loading"
         threading.Thread(target=self._worker, args=(query,), daemon=True).start()
 
     def toggle(self):
-        if not self.is_active(): return
+        """Pause, resume, or replay the last track once it has finished or been stopped."""
+        if not self.is_active():
+            if self.last_query:
+                print(f"[MUSIC] Replaying {self.last_query!r}", flush=True)
+                self.play(self.last_query)
+            return
         self._user_paused = not self._user_paused
         self.state = "paused" if self._user_paused else "playing"
         print(f"[MUSIC] {'Paused' if self._user_paused else 'Resumed'}", flush=True)
@@ -403,6 +449,7 @@ class MusicPlayer:
             self.state = "paused" if ducked else "playing"
 
     def stop(self):
+        """Ends playback but keeps last_query, so the play button can start it again."""
         self._stop.set()
         proc, self._proc = self._proc, None
         if proc:
@@ -417,7 +464,11 @@ class MusicPlayer:
             try:
                 info = resolve_track(query)
             except Exception as exc:
-                print(f"[MUSIC] Nothing found for {query!r} ({exc})", flush=True)
+                print(f"[MUSIC] Search failed for {query!r} ({exc})", flush=True)
+                info = None
+
+            if not info:
+                print(f"[MUSIC] Nothing playable found for {query!r}", flush=True)
                 self.state = "stopped"
                 self.title = ""
                 audio_queue.put(f"I couldn't find {query} to play.")
@@ -425,8 +476,8 @@ class MusicPlayer:
                 return
 
             if self._stop.is_set(): return
-            self.title = (info.get("title") or query).strip()
-            print(f"[MUSIC] {self.title}", flush=True)
+            self.title = pretty_title(info.get("title") or query)
+            print(f"[MUSIC] {info.get('title', query)}", flush=True)
 
             container = av.open(info["url"], timeout=20)
             audio_stream = container.streams.audio[0]
@@ -687,8 +738,8 @@ BLOB_LAYERS = [
     (0.66, -0.22, -13, -15)
 ]
 
-# Nothing on screen is Hindi today, but prefer a family that covers Devanagari so
-# any Hindi text added later is readable. Install one with:
+# Music titles are regularly Devanagari, and the stock Pi image ships DejaVu only,
+# which has no Devanagari glyphs, so those titles render as boxes until you run:
 #   sudo apt install fonts-noto-devanagari
 FONT_PREFERENCE = ("Noto Sans", "Noto Sans Devanagari", "Lohit Devanagari",
                    "Mukta", "Samyak Devanagari", "FreeSans", "DejaVu Sans", "Helvetica")
@@ -699,8 +750,9 @@ INFO_X0, INFO_Y0, INFO_X1, INFO_Y1 = 16, 104, 234, 340
 CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 90, 10
 MUSIC_X0, MUSIC_Y0, MUSIC_X1, MUSIC_Y1 = 16, 352, 234, 464
 COL_MUSIC = "#34D399"
-MIC_CX, MIC_CY, MIC_R = 330, 392, 26
-STOP_CX, STOP_CY = 454, 392
+MIC_CX, MIC_CY, MIC_R = 292, 392, 24
+SLEEP_CX = 392
+STOP_CX, STOP_CY = 492, 392
 COL_STOP = "#FB7185"
 
 def _mix(colour, target, t):
@@ -760,6 +812,9 @@ class TutorUI:
 
         for name in FONT_PREFERENCE:
             if name.lower() in available:
+                if name in ("DejaVu Sans", "Helvetica"):
+                    print("[UI] No Devanagari font installed; Hindi song titles will show as "
+                          "boxes. Fix with: sudo apt install fonts-noto-devanagari", flush=True)
                 return name
         return "Helvetica"
 
@@ -872,8 +927,8 @@ class TutorUI:
             mid, MUSIC_Y0 + 18, text="NOTHING PLAYING",
             font=self._font(9, True), fill=COL_TEXT_DIM)
         self.music_title_id = self.canvas.create_text(
-            mid, MUSIC_Y0 + 44, text="Say \u201cplay hanuman chalisa\u201d",
-            font=self._font(10), fill=COL_TEXT_DIM, width=MUSIC_X1 - MUSIC_X0 - 28,
+            mid, MUSIC_Y0 + 46, text="Say \u201cplay hanuman chalisa\u201d",
+            font=self._font(10), fill=COL_TEXT_DIM, width=MUSIC_X1 - MUSIC_X0 - 24,
             justify="center")
 
         px, sx, by = mid - 34, mid + 34, MUSIC_Y1 - 26
@@ -915,7 +970,8 @@ class TutorUI:
                                fill=COL_MUSIC if active else COL_TEXT_DIM)
         self.canvas.itemconfig(self.music_title_id,
                                text=title or "Say \u201cplay hanuman chalisa\u201d",
-                               fill=COL_TEXT if active else COL_TEXT_DIM)
+                               fill=COL_TEXT if active else COL_TEXT_DIM,
+                               font=self._font(10 if len(title) < 30 else 9))
 
         # Playing -> offer pause; otherwise offer play.
         playing = state == "playing"
@@ -1028,9 +1084,27 @@ class TutorUI:
                                outline=COL_TEXT, width=2, tags="mic")
         self.canvas.create_line(MIC_CX, MIC_CY + 8, MIC_CX, MIC_CY + 13,
                                 fill=COL_TEXT, width=2, tags="mic")
-        self.canvas.create_text(MIC_CX, MIC_CY + 44, text="TAP TO SPEAK",
-                                font=self._font(10, True), fill=COL_TEXT_DIM, tags="mic")
+        self.canvas.create_text(MIC_CX, MIC_CY + 42, text="TAP TO SPEAK",
+                                font=self._font(9, True), fill=COL_TEXT_DIM, tags="mic")
         self.canvas.tag_bind("mic", "<Button-1>", self.wake_up)
+
+        # Stop listening: drop the session and go back to standby.
+        self.sleep_ring = self.canvas.create_oval(SLEEP_CX - MIC_R, MIC_CY - MIC_R,
+                                                  SLEEP_CX + MIC_R, MIC_CY + MIC_R,
+                                                  fill=COL_PANEL, outline=COL_PANEL_EDGE,
+                                                  width=2, tags="sleep")
+        self._round_rect(SLEEP_CX - 5, MIC_CY - 12, SLEEP_CX + 5, MIC_CY + 2, 5,
+                         fill=COL_TEXT_DIM, outline="", tags="sleep")
+        self.canvas.create_arc(SLEEP_CX - 11, MIC_CY - 8, SLEEP_CX + 11, MIC_CY + 8,
+                               start=200, extent=140, style="arc",
+                               outline=COL_TEXT_DIM, width=2, tags="sleep")
+        self.sleep_slash = self.canvas.create_line(SLEEP_CX - 13, MIC_CY + 12,
+                                                   SLEEP_CX + 13, MIC_CY - 14,
+                                                   fill=COL_STOP, width=3, tags="sleep")
+        self.sleep_label = self.canvas.create_text(SLEEP_CX, MIC_CY + 42, text="STOP LISTENING",
+                                                   font=self._font(9, True),
+                                                   fill=COL_TEXT_DIM, tags="sleep")
+        self.canvas.tag_bind("sleep", "<Button-1>", self.stop_listening)
 
         # Stop: only meaningful while Liza is talking, so it stays dimmed otherwise.
         self.stop_ring = self.canvas.create_oval(STOP_CX - MIC_R, STOP_CY - MIC_R,
@@ -1039,8 +1113,8 @@ class TutorUI:
                                                  width=2, tags="stop")
         self.stop_icon = self._round_rect(STOP_CX - 8, STOP_CY - 8, STOP_CX + 8, STOP_CY + 8, 3,
                                           fill=COL_TEXT_DIM, outline="", tags="stop")
-        self.stop_label = self.canvas.create_text(STOP_CX, STOP_CY + 44, text="TAP TO STOP",
-                                                  font=self._font(10, True),
+        self.stop_label = self.canvas.create_text(STOP_CX, STOP_CY + 42, text="TAP TO STOP",
+                                                  font=self._font(9, True),
                                                   fill=COL_TEXT_DIM, tags="stop")
         self.canvas.tag_bind("stop", "<Button-1>", self.stop_speaking)
 
@@ -1188,6 +1262,11 @@ class TutorUI:
         print("[UI] Screen tapped! Waking up...", flush=True)
         wake_event.set()
 
+    def stop_listening(self, event=None):
+        print("[UI] Stop listening, going back to standby.", flush=True)
+        sleep_event.set()
+        return "break"          # do not let the tap fall through and re-wake her
+
     def stop_speaking(self, event=None):
         if playback_active.is_set() or not audio_queue.empty():
             print("[UI] Stop tapped, cutting the reply short.", flush=True)
@@ -1264,7 +1343,7 @@ MATCH THE LENGTH TO THE QUESTION. This is the most important rule:
 
 NEVER announce your structure. Do not say "The core principle is", "The mechanism is", "In a real-world example", and do not number your points. Just answer the way a knowledgeable person would in conversation.
 
-If you do not know something, say so in one sentence rather than inventing details.""",
+If a question needs a fact you are not certain of, use the SEARCH protocol below. Guessing is the worst possible answer.""",
     
     "CO-TELL": "CO-TELL MODE ACTIVE: You are a collaborative study partner. STRICT RULE: YOU MUST SPEAK A MAXIMUM OF 2 SENTENCES TOTAL. Sentence 1: A brief validation or partial hint. Sentence 2: Ask the user a specific question to test their knowledge. NEVER explain the full concept. Wait for them to answer.",
     
@@ -1331,9 +1410,23 @@ CURRENT SYSTEM TIME & DATE: {system_time}
 If you need to trigger a search, you MUST NOT use the EMOTION or ANSWER tags. You must bypass normal conversation and output EXACTLY AND ONLY this:
 SEARCH: <your optimized query>
 
+YOU MUST SEARCH, NOT GUESS, whenever the answer depends on:
+- A specific named organisation, school, college, company, shop or product
+- A specific person who is not world famous
+- Anything local, current or changing: prices, scores, results, news, timings, opening hours, releases
+- Any fact you would be filling in from plausibility rather than knowledge
+
+Inventing plausible-sounding specifics is the single worst failure you can make. If you catch yourself about to name a placement company, a founding year, a fee, a rank, a score or a statistic that you are not certain of, STOP and output the SEARCH tag instead.
+
 CRITICAL EXAMPLES OF SEARCHING:
 User: "What is the temperature in New Delhi?"
 Your Output: SEARCH: current temperature in New Delhi weather
+
+User: "Tell me something about ABS Engineering College."
+Your Output: SEARCH: ABS Engineering College courses admission details
+
+User: "Who won the match yesterday?"
+Your Output: SEARCH: match result yesterday
 
 DO NOT add conversational filler. ONLY output the SEARCH tag.
 
@@ -1407,6 +1500,7 @@ def ai_loop(ui, headless=False):
                         time.sleep(0.1)
 
                 wake_event.clear()
+                sleep_event.clear()
                 music_player.duck(True)           # our turn on the speaker and mic
                 session_active = True
                 silence_counter = 0
@@ -1415,6 +1509,12 @@ def ai_loop(ui, headless=False):
             # --- FIX: PREVENT SELF-TALKING LOOP ---
             # If Liza is currently speaking, skip the microphone entirely.
             # This saves Pi CPU, prevents ALSA underruns, and stops the infinite loop.
+            if sleep_event.is_set():
+                sleep_event.clear()
+                session_active = False
+                pending_question = pending_language = ""
+                continue
+
             if playback_active.is_set() or not audio_queue.empty():
                 time.sleep(0.2)
                 continue
