@@ -122,6 +122,9 @@ RE_LATIN_WORD = re.compile(r'[A-Za-z]{2,}')
 # writes it in Arabic script, which neither voice can read. Same for the other Indic
 # scripts it falls back to. Detecting these lets us re-read the audio as Hindi.
 RE_UNREADABLE_SCRIPT = re.compile(r'[؀-ۿݐ-ݿঀ-෿ﭐ-﷿ﹰ-﻿]')
+# Whisper sometimes returns nothing but zero-width joiners or direction marks. They are
+# invisible, so the transcript looks like real speech and gets answered as if it were.
+RE_INVISIBLE = re.compile(r'[​-‏‪-‮⁠-⁯﻿]')
 
 # Silence C-Level Warnings
 ALSA_HANDLER_FUNC = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p)
@@ -286,10 +289,25 @@ def listen_for_wake_word(recognizer, mic_device):
 # ==========================================
 # English puts the verb first ("play hanuman chalisa"), Hindi puts it last
 # ("hanuman chalisa bajao"), so both orders are matched.
+#
+# Whisper writes the English word "play" in Devanagari when the speaker is talking
+# Hindi, and it is not consistent about which spelling: प्ले, प्रे and प्लै have all
+# come back from the same request. Those have to be accepted as leading verbs too,
+# or a Hindi speaker asking for a song never triggers playback at all.
+PLAY_VERBS_LEADING = (r'play|put\s+on|start\s+playing|bajao|chalao|lagao'
+                      r'|प्ले|प्रे|प्लै|प्लेय|बजाओ|चलाओ|लगाओ')
+PLAY_VERBS_TRAILING = (r'baja\s*do|bajao|chala\s*do|chalao|laga\s*do|lagao'
+                       r'|बजा\s*दो|बजाओ|चला\s*दो|चलाओ|लगा\s*दो|लगाओ')
+
 RE_MUSIC_PLAY = re.compile(
-    r'^(?:please\s+|zara\s+|ज़रा\s+)?(?:play|put\s+on|start\s+playing)\s+(?P<a>.{2,80}?)[\s,.!?।]*$'
-    r'|^(?P<b>.{2,80}?)\s+(?:baja\s*do|bajao|chala\s*do|chalao|laga\s*do|lagao)[\s,.!?।]*$'
-    r'|^(?P<c>.{2,80}?)\s+(?:बजा\s*दो|बजाओ|चला\s*दो|चलाओ|लगा\s*दो|लगाओ)[\s,.!?।]*$',
+    rf'^(?:please\s+|zara\s+|ज़रा\s+)?(?:{PLAY_VERBS_LEADING})\s+(?P<a>.{{2,80}}?)[\s,.!?।]*$'
+    rf'|^(?P<b>.{{2,80}}?)\s+(?:{PLAY_VERBS_TRAILING})[\s,.!?।]*$',
+    re.IGNORECASE
+)
+
+# "play tum hi ho by arijit singh on youtube" -> the trailing platform is noise.
+RE_MUSIC_TAIL = re.compile(
+    r'\s*(?:on\s+(?:youtube|yt|spotify)|ओन\s*यूट्यूब|यूट्यूब\s*(?:पर|से)?|यू\s*ट्यूब\s*(?:पर|से)?)\s*$',
     re.IGNORECASE
 )
 RE_MUSIC_STOP = re.compile(
@@ -321,6 +339,7 @@ def detect_music_command(text, music_active):
         return None
 
     query = next((g for g in match.groups() if g), "").strip(" ,.!?।")
+    query = RE_MUSIC_TAIL.sub("", query).strip(" ,.!?।")
     if not query or query.lower() in MUSIC_STOPWORDS:
         return None
     return ("play", query)
@@ -1295,7 +1314,8 @@ class HeadlessUI:
 # Core AI Functions
 # ==========================================
 # Bilingual seed so Whisper is not biased towards English on the first turn.
-STT_SEED_PROMPT = "Hey Liza, explain the concept clearly. नमस्ते लीज़ा, यह concept समझाओ।"
+STT_SEED_PROMPT = ("Hey Liza, explain the concept clearly. नमस्ते लीज़ा, यह concept समझाओ। "
+                   "Play Tum Hi Ho by Arijit Singh. हनुमान चालीसा बजाओ।")
 
 # Whisper invents these out of silence, in both languages.
 HALLUCINATIONS = {
@@ -1405,7 +1425,24 @@ CURRENT SYSTEM TIME & DATE: {system_time}
 - The Knowledge Fallback: You MUST NEVER say "I don't have real-time access", "I cannot browse the internet", or "I am an AI". 
 
 ============================================================
-4. SEARCH PROTOCOL (STRICT)
+4. MUSIC PROTOCOL (STRICT)
+============================================================
+If the student is asking you to PLAY a song, bhajan, mantra, aarti or any music, you MUST bypass normal conversation and output EXACTLY AND ONLY this:
+MUSIC: <song name and artist>
+
+The microphone mangles these requests badly, so read through the noise: "pili kong hihobay arijit singh" is "play Tum Hi Ho by Arijit Singh", and "प्ले हनुमान चालिजा" is "play Hanuman Chalisa". If the student clearly wants to hear something, emit the MUSIC tag.
+
+NEVER tell a student to search YouTube themselves, and never explain how to find a song. You can play it. Emit the tag.
+
+CRITICAL EXAMPLES:
+User: "play tum hi ho by arijit singh on youtube"
+Your Output: MUSIC: Tum Hi Ho Arijit Singh
+
+User: "प्रे हनुमान चालीसा"
+Your Output: MUSIC: Hanuman Chalisa
+
+============================================================
+5. SEARCH PROTOCOL (STRICT)
 ============================================================
 If you need to trigger a search, you MUST NOT use the EMOTION or ANSWER tags. You must bypass normal conversation and output EXACTLY AND ONLY this:
 SEARCH: <your optimized query>
@@ -1431,7 +1468,7 @@ Your Output: SEARCH: match result yesterday
 DO NOT add conversational filler. ONLY output the SEARCH tag.
 
 ============================================================
-5. VOICE & FORMATTING CONSTRAINTS
+6. VOICE & FORMATTING CONSTRAINTS
 ============================================================
 - You are a VOICE assistant. Your output must be spoken aloud.
 - Stop talking the moment the question is answered. A short answer is a good answer; padding a one-line reply into a paragraph is a failure, not thoroughness.
@@ -1544,10 +1581,17 @@ def ai_loop(ui, headless=False):
                                 # Never prime Whisper with a script it should not be producing,
                                 # otherwise one Urdu reply drags every later turn into Urdu too.
                                 if not RE_UNREADABLE_SCRIPT.search(clean_prompt_text):
-                                    dynamic_stt_prompt = " ".join(clean_prompt_text.split()[-40:])
+                                    recent = " ".join(clean_prompt_text.split()[-30:])
+                                    # Keep the seed alongside it, otherwise Whisper loses the
+                                    # music vocabulary as soon as there is any chat history.
+                                    dynamic_stt_prompt = f"{STT_SEED_PROMPT} {recent}"
                                 break
 
                         text, stt_language = transcribe(wav_data, dynamic_stt_prompt)
+
+                        # A transcript of nothing but zero-width marks is silence, not a
+                        # question, so strip them before anything else looks at the text.
+                        text = RE_INVISIBLE.sub("", text).strip()
 
                         # Hindi heard as Urdu (or any other Indic script): re-read the same audio
                         # forced to Hindi so we get Devanagari the voice can actually speak.
@@ -1659,6 +1703,7 @@ def ai_loop(ui, headless=False):
                     full_response = ""
                     emotion_parsed = False
                     is_searching = False
+                    is_music = False
 
                     for chunk in response_stream:
                         if stop_playback_event.is_set():
@@ -1668,10 +1713,17 @@ def ai_loop(ui, headless=False):
                         if delta is None: continue
                         full_response += delta
 
+                        if "MUSIC:" in full_response:
+                            is_music = True
+                            continue
+
                         if "SEARCH:" in full_response:
                             is_searching = True
                             continue
                         
+                        if is_music:
+                            continue
+
                         if not is_searching and not emotion_parsed:
                             if "ANSWER:" in full_response:
                                 emotion_parsed = True
@@ -1692,6 +1744,21 @@ def ai_loop(ui, headless=False):
 
                                 clean = clean_text_for_tts(new_sentences)
                                 if clean: audio_queue.put(clean)
+
+                    if is_music:
+                        song = full_response.split("MUSIC:")[1].strip()
+                        song = re.sub(r'(?:EMOTION|ANSWER):.*', '', song, flags=re.IGNORECASE)
+                        song = song.replace('[', '').replace(']', '').strip(" \"'.,!?।")
+                        if song:
+                            print(f"[MUSIC] Model resolved request to {song!r}", flush=True)
+                            music_player.play(song)
+                            audio_queue.put(MUSIC_REPLIES[user_language]["play"].format(query=song))
+                        else:
+                            audio_queue.put("I couldn't work out what to play.")
+                        if not is_search_loop:
+                            result_holder['status'] = 'music'
+                            result_holder['text'] = full_response
+                        return
 
                     if not is_searching:
                         if not emotion_parsed: buffer = full_response 
@@ -1761,9 +1828,13 @@ def ai_loop(ui, headless=False):
                 audio_queue.put("I'm having trouble thinking right now.")
             else:
                 if result_holder.get('status') == 'error': raise RuntimeError(result_holder.get('error'))
-                full_response = result_holder.get('text', '').strip()
-                chat_history.append({"role": "assistant", "content": full_response})
-                chat_history = trim_history(chat_history)
+                if result_holder.get('status') == 'music':
+                    chat_history.pop()          # keep the mangled request out of the history
+                    session_active = False      # hand the speaker back to the music
+                else:
+                    full_response = result_holder.get('text', '').strip()
+                    chat_history.append({"role": "assistant", "content": full_response})
+                    chat_history = trim_history(chat_history)
 
         except Exception as e:
             print(f"HF API Error: {e}", flush=True)
