@@ -316,6 +316,16 @@ RE_MUSIC_STOP = re.compile(
 )
 RE_MUSIC_PAUSE = re.compile(r'\b(?:pause|hold\s+on|wait)\b|रोक(?:िए)?\s*ज़रा|पॉज़', re.IGNORECASE)
 RE_MUSIC_RESUME = re.compile(r'\b(?:resume|continue|carry\s+on|play\s+again|unpause)\b|फिर\s*से\s*चला|जारी\s*रखो', re.IGNORECASE)
+# "stop Liza" / "लीज़ा रुको": dismiss her by voice. The name is required so this never
+# collides with "stop the music", which is a different command.
+RE_STOP_ASSISTANT = re.compile(
+    r'\b(?:stop|quiet|sleep|bas|chup)\b[\s,]*\b(?:liza|lisa|leeza|lizza|eliza)\b'
+    r'|\b(?:liza|lisa|leeza|lizza|eliza)\b[\s,]*\b(?:stop|quiet|sleep|bas|chup|band\s*kar)'
+    r'|(?:रुको|रुक\s*जाओ|बस|चुप|बंद\s*करो)\s*(?:लीज़ा|लिज़ा|लीजा|लिजा)'
+    r'|(?:लीज़ा|लिज़ा|लीजा|लिजा)[\s,]*(?:रुको|रुक\s*जाओ|बस|चुप|बंद\s*करो)',
+    re.IGNORECASE
+)
+
 # A question is never a music command, even if it happens to end in a play verb.
 RE_QUESTION = re.compile(r'\?|\bwh(?:at|y|o|en|ere|ich)\b|\bhow\b|\bkya\b|\bkyu|\bkaise\b|क्या|क्यों|कैसे|कौन', re.IGNORECASE)
 
@@ -724,9 +734,9 @@ COL_TEXT_DIM = "#8B84B8"
 
 MODE_ACCENTS = {"TUTOR": "#A855F7", "CO-TELL": "#38BDF8", "RE-TELL": "#F59E0B"}
 MODE_BLURBS = {
-    "TUTOR": "Concepts explained\nstep by step.",
-    "CO-TELL": "We talk it through\ntogether.",
-    "RE-TELL": "You teach me,\nI correct you."
+    "TUTOR": "Ask anything and get a\nclear, direct answer with\nan example.",
+    "CO-TELL": "We work through it\ntogether. I hint, you\nthink it out.",
+    "RE-TELL": "You explain it back to\nme and I correct what\nyou missed."
 }
 MODE_INTROS = {
     "TUTOR": "You are in tutor mode.",
@@ -765,8 +775,8 @@ FONT_PREFERENCE = ("Noto Sans", "Noto Sans Devanagari", "Lohit Devanagari",
 
 BLOB_CX, BLOB_CY, BLOB_R = 392, 232, 66
 WAVE_Y, WAVE_BARS, WAVE_BAR_W, WAVE_GAP = 58, 21, 3, 5
-INFO_X0, INFO_Y0, INFO_X1, INFO_Y1 = 16, 104, 234, 340
-CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 90, 10
+INFO_X0, INFO_Y0, INFO_X1, INFO_Y1 = 16, 48, 234, 340
+CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 130, 10
 MUSIC_X0, MUSIC_Y0, MUSIC_X1, MUSIC_Y1 = 16, 352, 234, 464
 COL_MUSIC = "#34D399"
 MIC_CX, MIC_CY, MIC_R = 292, 392, 24
@@ -815,7 +825,7 @@ class TutorUI:
         self._refresh_cards()
 
         self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
-        self.root.bind("<Button-1>", self.wake_up)
+        self.root.bind("<Button-1>", self._tap_anywhere)
 
         self._animate()
         self._tick_clock()
@@ -872,23 +882,23 @@ class TutorUI:
         mid = (INFO_X0 + INFO_X1) / 2
 
         self.clock_id = self.canvas.create_text(
-            mid, INFO_Y0 + 46, text="--:--", font=self._font(38, True), fill=COL_TEXT)
+            mid, INFO_Y0 + 62, text="--:--", font=self._font(40, True), fill=COL_TEXT)
         self.date_id = self.canvas.create_text(
-            mid, INFO_Y0 + 78, text="", font=self._font(10), fill=COL_TEXT_DIM)
+            mid, INFO_Y0 + 98, text="", font=self._font(10), fill=COL_TEXT_DIM)
 
-        self.canvas.create_line(INFO_X0 + 22, INFO_Y0 + 100, INFO_X1 - 22, INFO_Y0 + 100,
+        self.canvas.create_line(INFO_X0 + 22, INFO_Y0 + 130, INFO_X1 - 22, INFO_Y0 + 130,
                                 fill=COL_PANEL_EDGE)
 
         self.weather_glyph = []
-        self.weather_glyph_at = (INFO_X0 + 48, INFO_Y0 + 142)
+        self.weather_glyph_at = (INFO_X0 + 48, INFO_Y0 + 196)
         self.temp_id = self.canvas.create_text(
-            INFO_X0 + 86, INFO_Y0 + 132, text="--", anchor="w",
-            font=self._font(26, True), fill=COL_TEXT)
+            INFO_X0 + 88, INFO_Y0 + 186, text="--", anchor="w",
+            font=self._font(28, True), fill=COL_TEXT)
         self.desc_id = self.canvas.create_text(
-            INFO_X0 + 86, INFO_Y0 + 160, text="", anchor="w",
+            INFO_X0 + 88, INFO_Y0 + 216, text="", anchor="w",
             font=self._font(10), fill=COL_TEXT_DIM)
         self.city_id = self.canvas.create_text(
-            mid, INFO_Y1 - 22, text="Weather unavailable" if not WEATHER_API_KEY else WEATHER_CITY,
+            mid, INFO_Y1 - 28, text="Weather unavailable" if not WEATHER_API_KEY else WEATHER_CITY,
             font=self._font(9), fill=COL_TEXT_DIM)
         self._draw_weather_glyph("01d")
 
@@ -1076,12 +1086,12 @@ class TutorUI:
 
             body = self._round_rect(CARD_X0, y0, CARD_X1, y1, 12,
                                     fill=COL_PANEL, outline=COL_PANEL_EDGE, width=2, tags=tag)
-            glyph = self._mode_glyph(mode, CARD_X0 + 34, y0 + CARD_H / 2, accent)
-            title = self.canvas.create_text(CARD_X0 + 62, y0 + 26, text=f"{mode} MODE",
-                                            anchor="w", font=self._font(12, True),
+            glyph = self._mode_glyph(mode, CARD_X0 + 38, y0 + 44, accent)
+            title = self.canvas.create_text(CARD_X0 + 68, y0 + 44, text=f"{mode} MODE",
+                                            anchor="w", font=self._font(13, True),
                                             fill=accent, tags=tag)
-            blurb = self.canvas.create_text(CARD_X0 + 62, y0 + 50, text=MODE_BLURBS[mode],
-                                            anchor="w", justify="left",
+            blurb = self.canvas.create_text(CARD_X0 + 22, y0 + 70, text=MODE_BLURBS[mode],
+                                            anchor="nw", justify="left",
                                             font=self._font(9), fill=COL_TEXT_DIM, tags=tag)
             for item in glyph:
                 self.canvas.itemconfig(item, tags=tag)
@@ -1276,6 +1286,15 @@ class TutorUI:
             return
 
         self.current_state = state
+
+    # Tapping these must never wake her; STOP LISTENING setting wake_event on the way
+    # through is what made the session restart a moment after it was dismissed.
+    NON_WAKE_TAGS = ("sleep", "stop", "playpause", "musicstop")
+
+    def _tap_anywhere(self, event=None):
+        if any(tag in self.NON_WAKE_TAGS for tag in self.canvas.gettags("current")):
+            return
+        self.wake_up(event)
 
     def wake_up(self, event=None):
         print("[UI] Screen tapped! Waking up...", flush=True)
@@ -1548,8 +1567,10 @@ def ai_loop(ui, headless=False):
             # This saves Pi CPU, prevents ALSA underruns, and stops the infinite loop.
             if sleep_event.is_set():
                 sleep_event.clear()
+                wake_event.clear()      # a tap on the button must not double as a wake
                 session_active = False
                 pending_question = pending_language = ""
+                interrupt_playback()
                 continue
 
             if playback_active.is_set() or not audio_queue.empty():
@@ -1647,6 +1668,13 @@ def ai_loop(ui, headless=False):
             stop_playback_event.clear()
 
         user_language = detect_user_language(text, stt_language)
+
+        # --- "stop Liza": go quiet and back to standby ---
+        if RE_STOP_ASSISTANT.search(text):
+            print("[STATE] Dismissed by voice, returning to standby.", flush=True)
+            interrupt_playback()
+            session_active = False
+            continue
 
         # --- MUSIC: handled locally, never reaches the model ---
         command = detect_music_command(text, music_player.is_active())
