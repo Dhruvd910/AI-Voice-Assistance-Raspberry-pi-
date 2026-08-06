@@ -48,6 +48,14 @@ from groq import Groq
 from cartesia import Cartesia
 from ddgs import DDGS
 
+# Pillow turns decoded frames into something Tk can blit. Without it video is still
+# played, but only its sound: there is no other way to get pixels onto the canvas.
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
 # 1. The Ears & Brain (Groq API)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 groq_client = Groq(api_key=GROQ_API_KEY)
@@ -82,14 +90,44 @@ VOICE_IDS = {
 WAKE_WORD_ENABLED = os.getenv("WAKE_WORD", "1") != "0"
 WAKE_STT_MODEL = os.getenv("WAKE_STT_MODEL", "whisper-large-v3-turbo")
 WAKE_SEED_PROMPT = "Hey Liza. हे लीज़ा।"
+# Spelt phonetically rather than listed. Over music the seed prompt has to be
+# dropped (it makes Whisper hear the name in the music), and unseeded it writes
+# whatever it likes: Liza, Lisa, Leeza and Leiser have all come back from the same
+# word. The shape is l + vowels + s/z/j + vowel, with the handful of ordinary
+# English words that fit that shape excluded so they cannot wake her by accident.
+WAKE_NAME = r'e?l[aeiy]{1,3}[szj][aeiou]{1,2}r?'
+WAKE_NOT_NAME = r'laser|lazer|lease|leaser|liaise|lager'
 RE_WAKE_WORD = re.compile(
-    r'\b(?:hey|hi|hello|ok|okay|hay|a)?\s*(?:liza|lisa|leeza|lizza|eliza|elisa|lija)\b'
-    r'|(?:हे|अरे|ओके|हाय|सुनो)?\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)',
+    rf'\b(?:hey|hi|hello|ok|okay|hay)?\s*\b(?!(?:{WAKE_NOT_NAME})\b)(?:{WAKE_NAME})\b'
+    # "hey Liza" said quickly comes back as one word, "Heliz", and the boundary
+    # between greeting and name never appears for the branch above to find. The
+    # greeting has to be spelt out here, which is also what keeps this safe.
+    rf'|\b(?:hey|hay|hei|hi|he)l[aeiy]{{1,3}}[szj][aeiou]{{0,2}}r?\b'
+    rf'|(?:हे|अरे|ओके|हाय|सुनो)?\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा|लीज़र|लाइज़ा|लिसा)',
     re.IGNORECASE
 )
 
 # Music playback sample rate. PyAV decodes YouTube audio and pipes raw PCM to aplay.
 MUSIC_SAMPLE_RATE = int(os.getenv("MUSIC_SAMPLE_RATE", "44100"))
+
+# Video playback. This box has no mpv, ffmpeg or browser, so frames are decoded in
+# process by PyAV and blitted onto the Tk canvas, exactly like the music path already
+# does for audio. A Pi 4 decodes and scales 360p H.264 at roughly 90fps, so a 30fps
+# video has headroom; anything larger does not, which is why the format preference
+# below asks YouTube for the small muxed stream first.
+VIDEO_ENABLED = os.getenv("VIDEO", "1") != "0"
+# Frames arriving faster than this are dropped rather than drawn: Tk, not the decoder,
+# is the bottleneck, and drawing every frame of a 60fps upload just builds latency.
+VIDEO_MAX_FPS = float(os.getenv("VIDEO_MAX_FPS", "30"))
+
+# Barge-in: keep an ear open while Liza is talking or media is playing, so "stop" is
+# heard mid-sentence instead of after it. This spends a Whisper call every few seconds
+# for as long as something is playing, so set BARGE_IN=0 to trade it back for quota.
+BARGE_IN_ENABLED = os.getenv("BARGE_IN", "1") != "0"
+
+# How long the microphone stays open once the wake word has paused a track. Short
+# on purpose: the student is watching a frozen picture until they speak or it ends.
+MEDIA_SILENCE_S = float(os.getenv("MEDIA_SILENCE_S", "3"))
 
 # Weather panel. The key lives in .env so it never reaches the repo.
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
@@ -106,6 +144,9 @@ playback_active = threading.Event()
 stop_playback_event = threading.Event()
 active_subprocesses = []
 subprocess_lock = threading.Lock()
+# The main loop and the barge-in listener share one microphone, and PyAudio does not
+# survive two threads opening the same device at once.
+mic_lock = threading.Lock()
 ui_instance = None
 HEADLESS_MODE = False
 current_ai_response = ""
@@ -179,6 +220,13 @@ def get_microphone_device(mic_index=None):
 
 def _cleanup(*_args):
     stop_playback_event.set()
+    # The players run aplay outside active_subprocesses, so ending the process
+    # without this leaves music or a video still coming out of the speaker.
+    for name in ("music_player", "video_player"):
+        player = globals().get(name)
+        if player is not None:
+            try: player.stop()
+            except Exception: pass
     with subprocess_lock:
         for proc in active_subprocesses:
             try: proc.terminate()
@@ -250,15 +298,21 @@ def transcribe(wav_data, prompt, language=None, model=None):
     result = groq_client.audio.transcriptions.create(**params)
     return (result.text or "").strip(), (getattr(result, "language", "") or "")
 
-def listen_for_wake_word(recognizer, mic_device):
+def listen_for_wake_word(recognizer, mic_device, over_media=False):
     """(heard, question, language). recognizer.listen blocks on silence, so audio is
     only sent to Whisper when somebody actually speaks near the device.
 
     Every path must return the full triple: the caller unpacks it, and a silent room
     takes the timeout branch every few seconds.
+
+    `over_media` means the microphone is listening past a track that is playing out
+    of the speaker beside it. The seed prompt is dropped for those: priming Whisper
+    with "Hey Liza" while it is being fed music is how it starts hearing "Hey Liza"
+    in the music, and a false wake there interrupts whatever is playing.
     """
     try:
-        with mic_device as source:
+        # The barge-in listener shares this device; only one of us may hold it open.
+        with mic_lock, mic_device as source:
             audio = recognizer.listen(source, timeout=4, phrase_time_limit=4)
     except sr.WaitTimeoutError:
         return False, "", ""
@@ -269,7 +323,10 @@ def listen_for_wake_word(recognizer, mic_device):
 
     try:
         wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
-        text, language = transcribe(wav_data, WAKE_SEED_PROMPT, model=WAKE_STT_MODEL)
+        if over_media:
+            text, language = transcribe_command(wav_data), ""
+        else:
+            text, language = transcribe(wav_data, WAKE_SEED_PROMPT, model=WAKE_STT_MODEL)
         match = RE_WAKE_WORD.search(text) if text else None
         if match:
             print(f"[WAKE] Heard: {text}", flush=True)
@@ -316,26 +373,137 @@ RE_MUSIC_STOP = re.compile(
 )
 RE_MUSIC_PAUSE = re.compile(r'\b(?:pause|hold\s+on|wait)\b|रोक(?:िए)?\s*ज़रा|पॉज़', re.IGNORECASE)
 RE_MUSIC_RESUME = re.compile(r'\b(?:resume|continue|carry\s+on|play\s+again|unpause)\b|फिर\s*से\s*चला|जारी\s*रखो', re.IGNORECASE)
-# "stop Liza" / "लीज़ा रुको": dismiss her by voice. The name is required so this never
-# collides with "stop the music", which is a different command.
-RE_STOP_ASSISTANT = re.compile(
-    r'\b(?:stop|quiet|sleep|bas|chup)\b[\s,]*\b(?:liza|lisa|leeza|lizza|eliza)\b'
-    r'|\b(?:liza|lisa|leeza|lizza|eliza)\b[\s,]*\b(?:stop|quiet|sleep|bas|chup|band\s*kar)'
-    r'|(?:रुको|रुक\s*जाओ|बस|चुप|बंद\s*करो)\s*(?:लीज़ा|लिज़ा|लीजा|लिजा)'
-    r'|(?:लीज़ा|लिज़ा|लीजा|लिजा)[\s,]*(?:रुको|रुक\s*जाओ|बस|चुप|बंद\s*करो)',
+
+# ==========================================
+# Interruption commands
+# ==========================================
+# Four different "stop"s, and they must not be confused for each other:
+#   stop listening -> go back to standby until the wake word or a tap
+#   stop Liza      -> shut up, but keep listening
+#   close video    -> drop the video overlay
+#   stop music     -> stop the track
+# Word boundaries keep "listening" from matching the name "Liza", and the name is
+# required for the assistant command so it never swallows "stop the music".
+# Same phonetic spelling as the wake word: "stop Liza" reaches us through the same
+# unseeded transcription, so it sees the same spread of spellings.
+LIZA_NAME = rf'(?:(?!(?:{WAKE_NOT_NAME})\b){WAKE_NAME}|लीज़ा|लिज़ा|लीजा|लिजा|लीसा|लीज़र)'
+VIDEO_WORD = r'(?:video|vedio|veedio|movie|clip|वीडियो|विडियो|वीडीयो)'
+MUSIC_WORD = r'(?:music|song|songs|track|gaana|gana|गाना|गाने|संगीत|म्यूज़िक|म्यूजिक)'
+BAND_KARO = r'(?:band|bandh)\s*(?:kar\w*|karo|do)'
+# Whisper spells this inconsistently, especially with a soundtrack behind the
+# speaker: the same "बंद करो" comes back as बंड, बन्द or बँद from one take to the next.
+BAND_DEV = r'(?:बंद|बन्द|बंड|बण्ड|बँद|बद)'
+
+RE_STOP_LISTENING = re.compile(
+    rf'\b(?:stop|quit|end|finish|cancel)\s+(?:the\s+)?listen\w*'
+    rf'|\bstop\s+listen'
+    rf'|\b(?:go\s+to\s+sleep|go\s+sleep|sleep\s+now|goodbye|good\s*bye|bye\s+liza)\b'
+    rf'|\b(?:sunna|sunana)\s*(?:band|bandh)\w*|\bso\s*ja(?:o|iye)?\b'
+    rf'|सुन(?:ना)?\s*{BAND_DEV}|सो\s*जा(?:ओ|इए)?|{BAND_DEV}\s*करो\s*सुनना',
     re.IGNORECASE
 )
+# "stop Liza" / "लीज़ा रुको": silence her, but stay in the conversation.
+RE_STOP_ASSISTANT = re.compile(
+    rf'\b(?:stop|quiet|silence|shut\s*up|sleep|bas|chup|ruko)\b[\s,]*{LIZA_NAME}\b'
+    rf'|{LIZA_NAME}\b[\s,]*(?:stop|quiet|silence|shut\s*up|sleep|bas|chup|ruko|{BAND_KARO})'
+    rf'|(?:रुको|रुक\s*जाओ|बस|चुप|{BAND_DEV}\s*करो)\s*{LIZA_NAME}'
+    rf'|{LIZA_NAME}[\s,]*(?:रुको|रुक\s*जाओ|बस|चुप|{BAND_DEV}\s*करो)',
+    re.IGNORECASE
+)
+RE_STOP_VIDEO = re.compile(
+    rf'\b(?:close|stop|exit|quit|end|hide|off|{BAND_KARO})\s+(?:the\s+|this\s+|that\s+)?{VIDEO_WORD}\b'
+    rf'|\b{VIDEO_WORD}\s+(?:ko\s+)?(?:{BAND_KARO}|close|stop|off|hata\s*do|bandh)'
+    rf'|{VIDEO_WORD}\s*(?:को\s*)?(?:{BAND_DEV}|रोक|हटा)'
+    rf'|(?:{BAND_DEV}|रोक\w*|हटा\w*)\s*(?:करो\s*|दो\s*)?{VIDEO_WORD}',
+    re.IGNORECASE
+)
+RE_STOP_MUSIC = re.compile(
+    rf'\b(?:close|stop|turn\s+off|shut\s+off|shut|end|{BAND_KARO})\s+(?:the\s+|this\s+)?{MUSIC_WORD}\b'
+    rf'|\b{MUSIC_WORD}\s+(?:ko\s+)?(?:{BAND_KARO}|stop|off|close)'
+    rf'|{MUSIC_WORD}\s*(?:को\s*)?(?:{BAND_DEV}|रोक)'
+    rf'|(?:{BAND_DEV}|रोक\w*)\s*(?:करो\s*|दो\s*)?{MUSIC_WORD}',
+    re.IGNORECASE
+)
+# A bare "stop" with nothing else in the utterance. Whatever is currently making
+# noise is what it means, so it is resolved at the call site rather than here.
+RE_STOP_BARE = re.compile(
+    rf'^\s*(?:just\s+|please\s+|ab\s+)?'
+    rf'(?:stop(?:\s+it|\s+now|\s+please)?|quiet|silence|shut\s*up|enough|ruko|ruk\s*jao|bas|chup'
+    rf'|{BAND_KARO}|रुको|रुक\s*जाओ|बस|चुप|{BAND_DEV}\s*(?:करो|कर\s*दो)|रोको|रोक\s*दो)'
+    rf'\s*[.!?।]*\s*$',
+    re.IGNORECASE
+)
+
+def detect_interrupt(text):
+    """Which 'stop' the student meant, or None.
+
+    Order matters: the specific commands are tried before the bare one, so
+    "stop listening" is never mistaken for "stop [whatever is playing]".
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+    if RE_STOP_LISTENING.search(stripped): return "stop_listening"
+    if RE_STOP_VIDEO.search(stripped): return "stop_video"
+    if RE_STOP_MUSIC.search(stripped): return "stop_music"
+    if RE_STOP_ASSISTANT.search(stripped): return "stop_assistant"
+    if RE_STOP_BARE.match(stripped): return "stop_bare"
+    return None
 
 # A question is never a music command, even if it happens to end in a play verb.
 RE_QUESTION = re.compile(r'\?|\bwh(?:at|y|o|en|ere|ich)\b|\bhow\b|\bkya\b|\bkyu|\bkaise\b|क्या|क्यों|कैसे|कौन', re.IGNORECASE)
 
 MUSIC_STOPWORDS = {"music", "song", "songs", "a song", "some music", "something",
                    "gaana", "gana", "गाना", "संगीत", "कुछ"}
+VIDEO_STOPWORDS = {"video", "a video", "some video", "movie", "clip", "वीडियो", "विडियो"}
 
-def detect_music_command(text, music_active):
-    """('play', query) | ('stop'|'pause'|'resume', '') | None."""
+# "play video of the solar system" is a video; "play tum hi ho" is a song. The only
+# thing separating them is the word "video", so it decides which player gets the
+# request, and then has to come back out of the search query: YouTube should be
+# searched for "the solar system", not "video of the solar system".
+RE_VIDEO_MARK = re.compile(VIDEO_WORD, re.IGNORECASE)
+RE_VIDEO_STRIP_LEAD = re.compile(
+    rf'^(?:me\s+|us\s+|mujhe\s+|हमें\s+|मुझे\s+)?(?:a\s+|an\s+|the\s+|some\s+|one\s+|any\s+)?'
+    rf'{VIDEO_WORD}s?\s*(?:of|for|about|on|named|called|titled|wala|वाला)?\s*',
+    re.IGNORECASE
+)
+RE_VIDEO_STRIP_TAIL = re.compile(
+    rf'\s*(?:ka|ki|ke|का|की|के)?\s*{VIDEO_WORD}s?\s*$', re.IGNORECASE)
+# "play video on youtube of black holes" puts the platform in the middle of the
+# sentence, where the trailing-tail strip cannot reach it.
+RE_PLATFORM_ANY = re.compile(
+    r'\b(?:on\s+)?(?:youtube|yt|spotify)\b|यूट्यूब|यू\s*ट्यूब', re.IGNORECASE)
+RE_LEAD_CONNECTIVE = re.compile(r'^\s*(?:of|about|for|on)\s+', re.IGNORECASE)
+
+# "show me the solar system", "solar system dikhao". Only consulted once the word
+# "video" is already in the sentence, because on its own "show me X" is far more
+# often a question than a request to play something.
+SHOW_VERBS_LEADING = r'show|open|display|dikhao|dikha\s*do|दिखाओ|दिखा\s*दो|ओपन|खोलो'
+SHOW_VERBS_TRAILING = r'dikhao|dikha\s*do|dikhaiye|दिखाओ|दिखा\s*दो|दिखाइए'
+RE_VIDEO_SHOW = re.compile(
+    rf'^(?:please\s+|zara\s+|ज़रा\s+)?(?:{SHOW_VERBS_LEADING})\s+(?P<a>.{{2,80}}?)[\s,.!?।]*$'
+    rf'|^(?P<b>.{{2,80}}?)\s+(?:{SHOW_VERBS_TRAILING})[\s,.!?।]*$',
+    re.IGNORECASE
+)
+
+def _clean_query(match, tail_re=None):
+    query = next((g for g in match.groups() if g), "").strip(" ,.!?।")
+    query = RE_MUSIC_TAIL.sub("", query).strip(" ,.!?।")
+    if tail_re:
+        query = tail_re.sub("", query).strip(" ,.!?।")
+    return query
+
+def detect_media_command(text, music_active, video_active):
+    """('play'|'play_video', query) | ('stop'|'stop_video'|'pause'|'resume', '') | None.
+
+    Only the lenient, context-dependent readings live here: a bare "turn it off"
+    means the music when music is playing and nothing at all when it is not. The
+    explicit commands ("stop the music", "close the video") are matched earlier by
+    detect_interrupt, which does not need anything to be playing to understand them.
+    """
     stripped = text.strip()
 
+    if video_active and RE_MUSIC_STOP.search(stripped): return ("stop_video", "")
     if music_active:
         if RE_MUSIC_STOP.search(stripped): return ("stop", "")
         if RE_MUSIC_PAUSE.search(stripped): return ("pause", "")
@@ -344,18 +512,42 @@ def detect_music_command(text, music_active):
     if RE_QUESTION.search(stripped):
         return None
 
+    wants_video = bool(RE_VIDEO_MARK.search(stripped))
+
     match = RE_MUSIC_PLAY.match(stripped)
+    # "show me a video of X" never reaches the play verbs, so give it its own pass.
+    if not match and wants_video:
+        match = RE_VIDEO_SHOW.match(stripped)
     if not match:
         return None
 
-    query = next((g for g in match.groups() if g), "").strip(" ,.!?।")
-    query = RE_MUSIC_TAIL.sub("", query).strip(" ,.!?।")
+    if wants_video:
+        query = _clean_query(match, RE_VIDEO_STRIP_TAIL)
+        query = RE_VIDEO_STRIP_LEAD.sub("", query)
+        query = RE_PLATFORM_ANY.sub(" ", query)
+        query = RE_LEAD_CONNECTIVE.sub("", re.sub(r'\s+', ' ', query).strip())
+        query = query.strip(" ,.!?।")
+        if not query or query.lower() in VIDEO_STOPWORDS:
+            return None
+        return ("play_video", query)
+
+    query = _clean_query(match)
     if not query or query.lower() in MUSIC_STOPWORDS:
         return None
     return ("play", query)
 
 YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True,
-            "noplaylist": True, "format": "bestaudio[abr<=96]/bestaudio/best"}
+            "noplaylist": True, "ignoreerrors": True,
+            "format": "bestaudio[abr<=96]/bestaudio/best"}
+
+# Video wants sound and pictures from one stream. YouTube's muxed format 18 (360p
+# H.264 + AAC) is asked for by name first: the separate DASH streams are mostly AV1,
+# which this Pi decodes far too slowly, and pairing a video-only with an audio-only
+# stream would mean syncing two containers. Everything after "18/" is a fallback for
+# uploads that no longer carry it.
+YDL_VIDEO_OPTS = dict(YDL_OPTS, format=(
+    "18/best[height<=480][vcodec^=avc1][acodec!=none]"
+    "/best[height<=480][acodec!=none]/best[height<=720][acodec!=none]"))
 MUSIC_TRIES = 4
 
 RE_TITLE_SPLIT = re.compile(r'\s*[|｜]\s*')
@@ -384,7 +576,7 @@ def _playable(info):
     if info.get("is_live"): return False          # live streams stall the decoder
     return bool(info.get("url"))
 
-def resolve_track(query):
+def resolve_track(query, want_video=False):
     """Find something playable for `query`, or None.
 
     DuckDuckGo is tried first, but it rate-limits hard and raises rather than
@@ -393,6 +585,7 @@ def resolve_track(query):
     region-blocked upload or an entry with no audio stream, and one bad hit used
     to mean nothing played at all.
     """
+    options = YDL_VIDEO_OPTS if want_video else YDL_OPTS
     candidates = []
     try:
         with DDGS() as ddgs:
@@ -401,7 +594,8 @@ def resolve_track(query):
                 if "youtube.com/watch" in url or "youtu.be/" in url:
                     candidates.append((url, result.get("title") or ""))
     except Exception as exc:
-        print(f"[MUSIC] DuckDuckGo unavailable ({exc})", flush=True)
+        print(f"[MEDIA] DuckDuckGo unavailable ({exc}); falling back to YouTube search",
+              flush=True)
 
     # Prefer the hits whose title actually looks like what was asked for.
     candidates.sort(key=lambda c: -_title_score(query, c[1]))
@@ -410,19 +604,21 @@ def resolve_track(query):
 
     for target in targets:
         try:
-            with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+            with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(target, download=False)
         except Exception as exc:
-            print(f"[MUSIC] Candidate failed ({str(exc)[:90]})", flush=True)
+            print(f"[MEDIA] Candidate failed ({str(exc)[:90]})", flush=True)
             continue
 
+        # ignoreerrors turns a dead video into None instead of an exception, so a
+        # single unavailable hit no longer throws away the whole batch of results.
         entries = info.get("entries") if isinstance(info, dict) else None
         for candidate in (entries or [info]):
             if _playable(candidate):
                 return candidate
             if candidate:
-                print(f"[MUSIC] Skipping {candidate.get('title', '?')[:40]!r} "
-                      f"(live or no audio)", flush=True)
+                print(f"[MEDIA] Skipping {candidate.get('title', '?')[:40]!r} "
+                      f"(live or no stream)", flush=True)
     return None
 
 class MusicPlayer:
@@ -550,6 +746,418 @@ class MusicPlayer:
 
 music_player = MusicPlayer()
 
+def _fit_box(src_w, src_h, box_w, box_h):
+    """Largest size that fits the screen without distorting the picture."""
+    if not src_w or not src_h:
+        return box_w, box_h
+    scale = min(box_w / src_w, box_h / src_h)
+    # swscale wants even dimensions; odd ones make it pad and tear the image.
+    return max(2, int(src_w * scale) & ~1), max(2, int(src_h * scale) & ~1)
+
+class VideoPlayer:
+    """Plays a YouTube video full screen.
+
+    There is no mpv, ffmpeg, omxplayer or browser on this box, so nothing can be
+    handed a URL. Instead one muxed stream is demuxed in process: audio goes to
+    aplay exactly as music does, and video frames are scaled by swscale and blitted
+    onto a Tk overlay. aplay is what keeps time -- writing to a full pipe blocks
+    until the speaker has caught up -- so frames are paced against the wall clock
+    and any that fall behind are dropped rather than shown late.
+    """
+
+    def __init__(self):
+        self.state = "stopped"          # stopped | loading | playing | paused
+        self.title = ""
+        self.last_query = ""
+        self._stop = threading.Event()
+        self._ducked = False
+        self._proc = None
+
+    def is_active(self):
+        return self.state in ("loading", "playing", "paused")
+
+    def _should_hold(self):
+        # Her voice, or the microphone being open for the student, both silence it.
+        return self._ducked or playback_active.is_set()
+
+    def duck(self, ducked):
+        """Pause because the assistant has taken the speaker or the microphone.
+
+        The picture freezes rather than closing: the student asked for this video
+        and is only interrupting it, so it has to be there to go back to.
+        """
+        if self._ducked == ducked:
+            return
+        self._ducked = ducked
+        if self.is_active():
+            self.state = "paused" if ducked else "playing"
+            ui_call(lambda p=ducked: ui_instance.set_video_paused(p))
+
+    def can_show(self):
+        """Audio-only playback would be a confusing way to answer 'play a video',
+        so the request is refused up front when the screen cannot show one."""
+        return VIDEO_ENABLED and PIL_AVAILABLE and not HEADLESS_MODE
+
+    def play(self, query):
+        self.stop()
+        music_player.stop()             # one thing on the speaker at a time
+        self._stop.clear()
+        self._ducked = False
+        self.title = pretty_title(query)
+        self.last_query = query
+        self.state = "loading"
+        ui_call(lambda t=self.title: ui_instance.show_video(t))
+        threading.Thread(target=self._worker, args=(query,), daemon=True).start()
+
+    def stop(self):
+        if self.state == "stopped":
+            return
+        print("[VIDEO] Stopped", flush=True)
+        self._stop.set()
+        proc, self._proc = self._proc, None
+        if proc:
+            try: proc.terminate()
+            except Exception: pass
+        self.state = "stopped"
+        self.title = ""
+        ui_call(lambda: ui_instance.hide_video())
+
+    def _fail(self, message):
+        self.state = "stopped"
+        self.title = ""
+        ui_call(lambda: ui_instance.hide_video())
+        audio_queue.put(message)
+        audio_queue.put("[END_OF_RESPONSE]")
+
+    def _worker(self, query):
+        container = proc = None
+        try:
+            try:
+                info = resolve_track(query, want_video=True)
+            except Exception as exc:
+                print(f"[VIDEO] Search failed for {query!r} ({exc})", flush=True)
+                info = None
+
+            if not info:
+                print(f"[VIDEO] Nothing playable found for {query!r}", flush=True)
+                self._fail(f"I couldn't find a video of {query}.")
+                return
+            if self._stop.is_set(): return
+
+            self.title = pretty_title(info.get("title") or query)
+            print(f"[VIDEO] {info.get('title', query)}", flush=True)
+            ui_call(lambda t=self.title: ui_instance.set_video_title(t))
+
+            container = av.open(info["url"], timeout=20)
+            if not container.streams.video:
+                self._fail(f"I couldn't play a video of {query}.")
+                return
+
+            v_stream = container.streams.video[0]
+            v_stream.thread_type = "AUTO"          # use all four cores to decode
+            a_stream = container.streams.audio[0] if container.streams.audio else None
+
+            width, height = _fit_box(v_stream.width, v_stream.height, UI_W, UI_H)
+            print(f"[VIDEO] {v_stream.width}x{v_stream.height} -> {width}x{height}", flush=True)
+
+            resampler = None
+            if a_stream:
+                proc = subprocess.Popen(
+                    ["aplay", "-q", "-t", "raw", "-f", "S16_LE",
+                     "-r", str(MUSIC_SAMPLE_RATE), "-c", "2"],
+                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL
+                )
+                self._proc = proc
+                resampler = av.AudioResampler(format="s16", layout="stereo",
+                                              rate=MUSIC_SAMPLE_RATE)
+
+            self.state = "paused" if self._should_hold() else "playing"
+            streams = [s for s in (v_stream, a_stream) if s is not None]
+            time_base = float(v_stream.time_base or 0) or 1 / 30
+            start = None
+            min_gap = 1.0 / VIDEO_MAX_FPS if VIDEO_MAX_FPS > 0 else 0.0
+            last_drawn = 0.0
+            dropped = shown = 0
+
+            for packet in container.demux(*streams):
+                if self._stop.is_set(): break
+                if packet.dts is None: continue     # flush packet at end of stream
+
+                # Her voice, or an open microphone, wins over the video exactly as
+                # it does over music. The time spent held is added back to the clock
+                # afterwards, or every frame after the pause would count as late and
+                # be dropped in a rush to catch up.
+                if self._should_hold():
+                    held_from = time.monotonic()
+                    while self._should_hold() and not self._stop.is_set():
+                        time.sleep(0.1)
+                    if start is not None:
+                        start += time.monotonic() - held_from
+
+                if a_stream is not None and packet.stream is a_stream:
+                    for frame in packet.decode():
+                        if self._stop.is_set(): break
+                        for chunk in resampler.resample(frame):
+                            proc.stdin.write(chunk.to_ndarray().tobytes())
+                    continue
+
+                for frame in packet.decode():
+                    if self._stop.is_set(): break
+                    if start is None:
+                        start = time.monotonic()
+
+                    stamp = float(frame.pts) * time_base if frame.pts is not None else 0.0
+                    lag = (time.monotonic() - start) - stamp
+
+                    # Ahead of the sound: wait for it. The cap keeps a bad timestamp
+                    # from parking the decoder for a minute.
+                    if lag < -0.005:
+                        time.sleep(min(-lag, 0.5))
+                        lag = 0.0
+                    # Behind, or drawing faster than Tk can keep up: skip this one.
+                    elif lag > 0.25:
+                        dropped += 1
+                        continue
+
+                    now = time.monotonic()
+                    if now - last_drawn < min_gap:
+                        dropped += 1
+                        continue
+                    last_drawn = now
+
+                    picture = frame.reformat(width=width, height=height, format="rgb24")
+                    ui_call_video_frame((width, height), picture.to_ndarray().tobytes())
+                    shown += 1
+
+            if not self._stop.is_set():
+                print(f"[VIDEO] Finished: {self.title} ({shown} frames, {dropped} dropped)",
+                      flush=True)
+
+        except (BrokenPipeError, OSError):
+            pass                                    # stopped mid-write
+        except Exception as exc:
+            print(f"[VIDEO ERROR] {exc}", flush=True)
+        finally:
+            if container:
+                try: container.close()
+                except Exception: pass
+            if proc:
+                try:
+                    proc.stdin.close()
+                    proc.terminate()
+                except Exception: pass
+            if self._proc is proc:
+                self._proc = None
+            # A video that ran to its end closes the overlay by itself; one that was
+            # stopped already had it closed by stop().
+            if not self._stop.is_set():
+                self.state = "stopped"
+                self.title = ""
+                ui_call(lambda: ui_instance.hide_video())
+
+video_player = VideoPlayer()
+
+def _is_echo(text):
+    """True when what the microphone picked up is Liza's own voice coming back
+    out of the speaker, rather than the student saying something."""
+    global current_ai_response
+    heard = set(re.findall(r'\w+', text.lower()))
+    spoken = set(re.findall(r'\w+', current_ai_response.lower()))
+    if not heard or not spoken:
+        return False
+    return len(heard & spoken) / len(heard) > 0.4
+
+def handle_interrupt(action, language=None):
+    """Carry out one of detect_interrupt's verdicts.
+
+    Returns "" when the utterance was not a command after all, otherwise what was
+    acted on: "assistant", "media" or "sleep". Callers use that to decide whether
+    to keep listening afterwards -- stopping a track should hand the speaker back
+    and go quiet, not leave her standing there with the microphone open.
+
+    `language` opts into a spoken confirmation, which suits a command she was
+    already listening for and not one snatched out of the middle of playback.
+    """
+    speaking = playback_active.is_set() or not audio_queue.empty()
+
+    if action == "stop_bare":
+        # A bare "stop" is a panic button: silence everything that is making a
+        # noise, not merely the loudest of them. Stopping only her voice used to
+        # leave the music ducked rather than stopped, and ducked music comes
+        # straight back the moment the session ends and the speaker is released.
+        stopped = ""
+        if video_player.is_active():
+            video_player.stop()
+            stopped = "media"
+        if music_player.is_active():
+            music_player.stop()
+            stopped = "media"
+        if speaking:
+            print("[STATE] Told to be quiet.", flush=True)
+            interrupt_playback()
+            stopped = stopped or "assistant"
+        return stopped
+
+    if action == "stop_listening":
+        print("[STATE] Told to stop listening; back to standby.", flush=True)
+        interrupt_playback()
+        video_player.stop()
+        sleep_event.set()
+        return "sleep"
+
+    if action == "stop_video":
+        video_player.stop()
+        if language: audio_queue.put(MEDIA_REPLIES[language]["video_stop"])
+        return "media"
+
+    if action == "stop_music":
+        music_player.stop()
+        if language: audio_queue.put(MEDIA_REPLIES[language]["stop"])
+        return "media"
+
+    if action == "stop_assistant":
+        # Only her voice stops here. She stays awake and listening, which is what
+        # separates this from "stop listening". Any music was ducked while she
+        # spoke, so it is released rather than left silently paused.
+        print("[STATE] Told to be quiet.", flush=True)
+        interrupt_playback()
+        return "assistant"
+
+    return ""
+
+# How sure Whisper has to be that it heard a person before a stop command counts.
+# The microphone sits next to the speaker, so while something plays it is listening
+# to a soundtrack, and Whisper answers non-speech audio by inventing sentences.
+# These two scores are what separate a dreamt-up command from a spoken one.
+BARGE_MAX_NO_SPEECH = float(os.getenv("BARGE_MAX_NO_SPEECH", "0.35"))
+BARGE_MIN_LOGPROB = float(os.getenv("BARGE_MIN_LOGPROB", "-0.75"))
+# The speaker drowns the room, so a command has to be a little louder than the music
+# before it is worth sending anywhere. Multiplies the threshold the room calibrated
+# to. Kept gentle on purpose: this only saves Whisper calls, while the scores above
+# are what actually reject the music, and a high bar here would mean having to shout.
+BARGE_MEDIA_GAIN = float(os.getenv("BARGE_MEDIA_GAIN", "1.8"))
+
+def _segment_value(segment, key):
+    """Groq returns segments as dicts on some versions and objects on others."""
+    if isinstance(segment, dict):
+        return segment.get(key)
+    return getattr(segment, key, None)
+
+def _command_call(wav_data, language=None):
+    params = {
+        "file": ("temp.wav", wav_data),
+        "model": WAKE_STT_MODEL,
+        "response_format": "verbose_json",
+        "temperature": 0.0,
+    }
+    if language: params["language"] = language
+    return groq_client.audio.transcriptions.create(**params)
+
+def _sounds_like_speech(result, text):
+    segments = getattr(result, "segments", None) or []
+    for segment in segments:
+        no_speech = _segment_value(segment, "no_speech_prob")
+        logprob = _segment_value(segment, "avg_logprob")
+        if no_speech is not None and no_speech > BARGE_MAX_NO_SPEECH:
+            print(f"[MIC] Not speech ({no_speech:.2f}), ignoring: {text}", flush=True)
+            return False
+        if logprob is not None and logprob < BARGE_MIN_LOGPROB:
+            print(f"[MIC] Low confidence ({logprob:.2f}), ignoring: {text}", flush=True)
+            return False
+    return True
+
+def transcribe_command(wav_data):
+    """Transcribe a short barge-in capture, or return "" if it was not speech.
+
+    Deliberately passes NO prompt. Seeding this with the stop commands taught
+    Whisper to hand them straight back whenever it was given music to listen to:
+    every track stopped itself within seconds of starting, because the microphone
+    hears the speaker.
+    """
+    result = _command_call(wav_data)
+    text = (result.text or "").strip()
+    if not text:
+        return ""
+
+    # Hindi heard as Urdu, the same way the main loop sees it. Without the re-read
+    # "बंद करो" comes back as "بند کرو" and matches no command at all, so spoken
+    # Hindi could never stop anything.
+    if RE_UNREADABLE_SCRIPT.search(text):
+        result = _command_call(wav_data, language="hi")
+        text = (result.text or "").strip()
+        if not text:
+            return ""
+
+    return text if _sounds_like_speech(result, text) else ""
+
+def barge_in_worker(mic_device, energy_threshold):
+    """Listens for "stop" while Liza is talking, and only then.
+
+    The main loop ignores the microphone while she speaks, because it would
+    otherwise hear the speaker and answer itself, which is why a command used to go
+    unheard until the sentence had finished. This thread covers that stretch and
+    acts only on stop commands, so a mis-hear costs nothing.
+
+    Music and video are deliberately not covered: the microphone stays shut for
+    those, and the wake word in the standby loop is the only way back in. Listening
+    through a whole track meant transcribing it, which cost a Whisper call every few
+    seconds and gave Whisper thousands of chances to imagine a stop command.
+    """
+    recognizer = sr.Recognizer()
+    recognizer.dynamic_energy_threshold = False
+    # This thread only ever listens while something is playing, so the bar is set
+    # above the speaker for its whole life rather than being toggled per burst.
+    recognizer.energy_threshold = energy_threshold * BARGE_MEDIA_GAIN
+    recognizer.pause_threshold = 0.6            # commands are short; react quickly
+    recognizer.non_speaking_duration = 0.3
+
+    while True:
+        if not playback_active.is_set():
+            time.sleep(0.25)
+            continue
+
+        if not mic_lock.acquire(timeout=0.5):
+            continue
+        try:
+            with mic_device as source:
+                audio = recognizer.listen(source, timeout=2, phrase_time_limit=4)
+        except sr.WaitTimeoutError:
+            continue
+        except Exception as exc:
+            print(f"[BARGE-IN ERROR] {exc}", flush=True)
+            time.sleep(0.5)
+            continue
+        finally:
+            mic_lock.release()
+
+        try:
+            wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
+            text = RE_INVISIBLE.sub("", transcribe_command(wav_data)).strip()
+            if not text:
+                continue
+
+            # The same inventions the main loop already knows to throw away.
+            if text.lower() in HALLUCINATIONS or RE_HALLUCINATION.search(text.lower()):
+                print(f"[BARGE-IN] Hallucination, ignoring: {text}", flush=True)
+                continue
+
+            action = detect_interrupt(text)
+            if not action:
+                continue
+
+            # Her own words must not be able to stop her. Short commands skip this
+            # check: "stop" is one word, so it overlaps almost any sentence she is
+            # in the middle of speaking, and the check would swallow every one.
+            if (playback_active.is_set() and len(text.split()) >= 3
+                    and _is_echo(text)):
+                print(f"[BARGE-IN] Ignoring speaker bleed: {text}", flush=True)
+                continue
+
+            print(f"[BARGE-IN] Heard {text!r} -> {action}", flush=True)
+            handle_interrupt(action)
+        except Exception as exc:
+            print(f"[BARGE-IN ERROR] {exc}", flush=True)
+
 def fetch_weather():
     """Current conditions from OpenWeatherMap, or None if it is not configured."""
     if not WEATHER_API_KEY:
@@ -600,6 +1208,13 @@ def ui_call(callback):
     if ui_instance is None: return
     root = getattr(ui_instance, "root", None)
     if root is not None: root.after(0, callback)
+
+def ui_call_video_frame(size, data):
+    """Hand a decoded frame to the UI. Deliberately not routed through ui_call:
+    frames arrive 30 times a second and must not queue up behind each other."""
+    if ui_instance is None: return
+    push = getattr(ui_instance, "push_video_frame", None)
+    if push is not None: push(size, data)
 
 # ==========================================
 # Bulletproof Audio + Word-Timestamped Subtitles
@@ -733,11 +1348,6 @@ COL_TEXT = "#EDEAFF"
 COL_TEXT_DIM = "#8B84B8"
 
 MODE_ACCENTS = {"TUTOR": "#A855F7", "CO-TELL": "#38BDF8", "RE-TELL": "#F59E0B"}
-MODE_BLURBS = {
-    "TUTOR": "Ask anything and get a\nclear, direct answer with\nan example.",
-    "CO-TELL": "We work through it\ntogether. I hint, you\nthink it out.",
-    "RE-TELL": "You explain it back to\nme and I correct what\nyou missed."
-}
 MODE_INTROS = {
     "TUTOR": "You are in tutor mode.",
     "CO-TELL": "You are in co-tell mode. Let's study together!",
@@ -776,13 +1386,19 @@ FONT_PREFERENCE = ("Noto Sans", "Noto Sans Devanagari", "Lohit Devanagari",
 BLOB_CX, BLOB_CY, BLOB_R = 392, 232, 66
 WAVE_Y, WAVE_BARS, WAVE_BAR_W, WAVE_GAP = 58, 21, 3, 5
 INFO_X0, INFO_Y0, INFO_X1, INFO_Y1 = 16, 48, 234, 340
-CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 130, 10
+# The cards carry a glyph and a name only. They used to explain each mode in three
+# lines of small print, which nobody reads twice and which crowded the column.
+CARD_X0, CARD_X1, CARD_Y0, CARD_H, CARD_GAP = 548, 786, 48, 62, 9
 MUSIC_X0, MUSIC_Y0, MUSIC_X1, MUSIC_Y1 = 16, 352, 234, 464
 COL_MUSIC = "#34D399"
-MIC_CX, MIC_CY, MIC_R = 292, 392, 24
-SLEEP_CX = 392
-STOP_CX, STOP_CY = 492, 392
+COL_VIDEO = "#38BDF8"
 COL_STOP = "#FB7185"
+COL_MIC = "#22D3EE"
+COL_SLEEP = "#8B5CF6"
+# Full-width pills down the rest of the mode column. Round enough to read as
+# buttons at arm's length on a 5-inch panel, and tall enough to hit with a thumb.
+BTN_X0, BTN_X1 = 548, 786
+BTN_Y0, BTN_H, BTN_GAP = 278, 52, 13
 
 def _mix(colour, target, t):
     """Blend two #rrggbb colours; Tk canvas has no alpha so glows are faked this way."""
@@ -822,6 +1438,7 @@ class TutorUI:
         self._build_mode_cards()
         self._build_buttons()
         self._build_music_panel()
+        self._build_video_overlay()
         self._refresh_cards()
 
         self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
@@ -1023,6 +1640,102 @@ class TutorUI:
         self._refresh_music()
         return "break"
 
+    # ---------- full-screen video ----------
+    def _build_video_overlay(self):
+        """A black frame covering the whole window, hidden until a video plays.
+
+        It is a separate widget rather than a canvas item so that showing it also
+        hides the animated blob underneath: while a video is on screen the whole
+        Tk canvas stops being redrawn, which is CPU this Pi needs for decoding.
+        """
+        self.video_visible = False
+        self._video_photo = None
+        self._video_frame = None
+        self._video_title = ""
+        self._video_draw_queued = False
+        self._video_lock = threading.Lock()
+
+        self.video_frame_widget = tk.Frame(self.root, bg="#000000",
+                                           width=UI_W, height=UI_H)
+        self.video_label = tk.Label(self.video_frame_widget, bg="#000000", bd=0,
+                                    highlightthickness=0)
+        self.video_label.place(relx=0.5, rely=0.5, anchor="center")
+        self.video_caption = tk.Label(self.video_frame_widget, bg="#000000",
+                                      fg=COL_TEXT_DIM, bd=0,
+                                      font=self._font(10, True), text="")
+        self.video_caption.place(relx=0.5, y=UI_H - 16, anchor="s")
+
+        # Anywhere on the video closes it, matching the "tap to wake" idiom.
+        for widget in (self.video_frame_widget, self.video_label, self.video_caption):
+            widget.bind("<Button-1>", self.close_video)
+
+    def show_video(self, title=""):
+        self.video_visible = True
+        self._video_photo = None
+        self._video_frame = None
+        self._video_title = title or ""
+        self.video_label.configure(image="", text="Loading video…",
+                                   fg=COL_TEXT_DIM, font=self._font(12))
+        self.video_caption.configure(text=self._video_title, fg=COL_TEXT_DIM)
+        self.video_frame_widget.place(x=0, y=0, width=UI_W, height=UI_H)
+        self.video_frame_widget.lift()
+
+    def set_video_title(self, title):
+        self._video_title = title or ""
+        if self.video_visible:
+            self.video_caption.configure(text=self._video_title)
+
+    def set_video_paused(self, paused):
+        """The picture freezes when she takes the microphone, so say why."""
+        if not self.video_visible:
+            return
+        self.video_caption.configure(
+            text="PAUSED · LISTENING" if paused else self._video_title,
+            fg=COL_MIC if paused else COL_TEXT_DIM)
+
+    def hide_video(self):
+        self.video_visible = False
+        self.video_frame_widget.place_forget()
+        self.video_label.configure(image="")
+        self._video_photo = None
+        self._video_frame = None
+
+    def close_video(self, event=None):
+        video_player.stop()
+        return "break"          # a tap on the video must not also wake her
+
+    def push_video_frame(self, size, data):
+        """Called from the decoder thread. Latest frame wins: if Tk has not drawn
+        the previous one yet, this overwrites it instead of queueing another
+        redraw, so a slow frame can never build a backlog of stale pictures."""
+        with self._video_lock:
+            self._video_frame = (size, data)
+            if self._video_draw_queued:
+                return
+            self._video_draw_queued = True
+        ui_call(self._draw_video_frame)
+
+    def _draw_video_frame(self):
+        with self._video_lock:
+            frame = self._video_frame
+            self._video_draw_queued = False
+        if frame is None or not self.video_visible:
+            return
+
+        size, data = frame
+        try:
+            image = Image.frombytes("RGB", size, data)
+            # Repainting the existing photo is markedly cheaper than building a new
+            # one 30 times a second, so it is only rebuilt when the size changes.
+            if (self._video_photo is None
+                    or (self._video_photo.width(), self._video_photo.height()) != size):
+                self._video_photo = ImageTk.PhotoImage(image)
+                self.video_label.configure(image=self._video_photo, text="")
+            else:
+                self._video_photo.paste(image)
+        except Exception as exc:
+            print(f"[VIDEO UI ERROR] {exc}", flush=True)
+
     def _build_blob(self):
         self.rings = [self.canvas.create_oval(0, 0, 1, 1, outline=COL_PANEL_EDGE, width=1)
                       for _ in range(3)]
@@ -1083,69 +1796,115 @@ class TutorUI:
             y1 = y0 + CARD_H
             accent = MODE_ACCENTS[mode]
             tag = f"mode{i}"
+            mid_y = (y0 + y1) / 2
 
             body = self._round_rect(CARD_X0, y0, CARD_X1, y1, 12,
                                     fill=COL_PANEL, outline=COL_PANEL_EDGE, width=2, tags=tag)
-            glyph = self._mode_glyph(mode, CARD_X0 + 38, y0 + 44, accent)
-            title = self.canvas.create_text(CARD_X0 + 68, y0 + 44, text=f"{mode} MODE",
+            glyph = self._mode_glyph(mode, CARD_X0 + 34, mid_y, accent)
+            title = self.canvas.create_text(CARD_X0 + 64, mid_y, text=f"{mode} MODE",
                                             anchor="w", font=self._font(13, True),
                                             fill=accent, tags=tag)
-            blurb = self.canvas.create_text(CARD_X0 + 22, y0 + 70, text=MODE_BLURBS[mode],
-                                            anchor="nw", justify="left",
-                                            font=self._font(9), fill=COL_TEXT_DIM, tags=tag)
             for item in glyph:
                 self.canvas.itemconfig(item, tags=tag)
             self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.set_mode(idx))
-            self.cards.append({"body": body, "title": title, "blurb": blurb, "accent": accent})
+            self.cards.append({"body": body, "title": title, "accent": accent})
+
+    # ---------- buttons ----------
+    def _icon_mic(self, cx, cy, tag):
+        """Microphone: capsule, cradle arc, stand."""
+        return [
+            self._round_rect(cx - 4, cy - 9, cx + 4, cy + 2, 4, fill="", outline="", tags=tag),
+            self.canvas.create_arc(cx - 8, cy - 6, cx + 8, cy + 6, start=200, extent=140,
+                                   style="arc", outline="", width=2, tags=tag),
+            self.canvas.create_line(cx, cy + 6, cx, cy + 10, fill="", width=2, tags=tag),
+        ]
+
+    def _icon_mic_off(self, cx, cy, tag):
+        items = self._icon_mic(cx, cy, tag)
+        # The slash is what makes this read as "off" rather than "on".
+        items.append(self.canvas.create_line(cx - 10, cy + 9, cx + 10, cy - 11,
+                                             fill="", width=2, tags=tag))
+        return items
+
+    def _icon_stop(self, cx, cy, tag):
+        return [self._round_rect(cx - 7, cy - 7, cx + 7, cy + 7, 3,
+                                 fill="", outline="", tags=tag)]
 
     def _build_buttons(self):
-        # Speak
-        self.mic_glow = self.canvas.create_oval(MIC_CX - 34, MIC_CY - 34, MIC_CX + 34, MIC_CY + 34,
-                                                fill="", outline="", width=2, tags="mic")
-        self.mic_ring = self.canvas.create_oval(MIC_CX - MIC_R, MIC_CY - MIC_R,
-                                                MIC_CX + MIC_R, MIC_CY + MIC_R,
-                                                fill=COL_PANEL, outline=COL_PANEL_EDGE,
-                                                width=2, tags="mic")
-        self._round_rect(MIC_CX - 5, MIC_CY - 12, MIC_CX + 5, MIC_CY + 2, 5,
-                         fill=COL_TEXT, outline="", tags="mic")
-        self.canvas.create_arc(MIC_CX - 11, MIC_CY - 8, MIC_CX + 11, MIC_CY + 8,
-                               start=200, extent=140, style="arc",
-                               outline=COL_TEXT, width=2, tags="mic")
-        self.canvas.create_line(MIC_CX, MIC_CY + 8, MIC_CX, MIC_CY + 13,
-                                fill=COL_TEXT, width=2, tags="mic")
-        self.canvas.create_text(MIC_CX, MIC_CY + 42, text="TAP TO SPEAK",
-                                font=self._font(9, True), fill=COL_TEXT_DIM, tags="mic")
-        self.canvas.tag_bind("mic", "<Button-1>", self.wake_up)
+        """Three pill buttons filling the rest of the mode column.
 
-        # Stop listening: drop the session and go back to standby.
-        self.sleep_ring = self.canvas.create_oval(SLEEP_CX - MIC_R, MIC_CY - MIC_R,
-                                                  SLEEP_CX + MIC_R, MIC_CY + MIC_R,
-                                                  fill=COL_PANEL, outline=COL_PANEL_EDGE,
-                                                  width=2, tags="sleep")
-        self._round_rect(SLEEP_CX - 5, MIC_CY - 12, SLEEP_CX + 5, MIC_CY + 2, 5,
-                         fill=COL_TEXT_DIM, outline="", tags="sleep")
-        self.canvas.create_arc(SLEEP_CX - 11, MIC_CY - 8, SLEEP_CX + 11, MIC_CY + 8,
-                               start=200, extent=140, style="arc",
-                               outline=COL_TEXT_DIM, width=2, tags="sleep")
-        self.sleep_slash = self.canvas.create_line(SLEEP_CX - 13, MIC_CY + 12,
-                                                   SLEEP_CX + 13, MIC_CY - 14,
-                                                   fill=COL_STOP, width=3, tags="sleep")
-        self.sleep_label = self.canvas.create_text(SLEEP_CX, MIC_CY + 42, text="STOP LISTENING",
-                                                   font=self._font(9, True),
-                                                   fill=COL_TEXT_DIM, tags="sleep")
-        self.canvas.tag_bind("sleep", "<Button-1>", self.stop_listening)
+        Each one keeps its own item ids so _animate can recolour it: the icons are
+        drawn with empty fills here and get their colour from the state pass, which
+        is also what dims a button that would do nothing if pressed.
+        """
+        specs = [
+            ("mic",   "TAP TO SPEAK",   COL_MIC,   self._icon_mic,     self.wake_up),
+            ("sleep", "STOP LISTENING", COL_SLEEP, self._icon_mic_off, self.stop_listening),
+            ("stop",  "STOP TALKING",   COL_STOP,  self._icon_stop,    self.stop_speaking),
+        ]
 
-        # Stop: only meaningful while Liza is talking, so it stays dimmed otherwise.
-        self.stop_ring = self.canvas.create_oval(STOP_CX - MIC_R, STOP_CY - MIC_R,
-                                                 STOP_CX + MIC_R, STOP_CY + MIC_R,
-                                                 fill=COL_PANEL, outline=COL_PANEL_EDGE,
-                                                 width=2, tags="stop")
-        self.stop_icon = self._round_rect(STOP_CX - 8, STOP_CY - 8, STOP_CX + 8, STOP_CY + 8, 3,
-                                          fill=COL_TEXT_DIM, outline="", tags="stop")
-        self.stop_label = self.canvas.create_text(STOP_CX, STOP_CY + 42, text="TAP TO STOP",
-                                                  font=self._font(9, True),
-                                                  fill=COL_TEXT_DIM, tags="stop")
-        self.canvas.tag_bind("stop", "<Button-1>", self.stop_speaking)
+        self.buttons = {}
+        for index, (tag, label, accent, draw_icon, handler) in enumerate(specs):
+            y0 = BTN_Y0 + index * (BTN_H + BTN_GAP)
+            y1 = y0 + BTN_H
+            mid_y = (y0 + y1) / 2
+
+            body = self._round_rect(BTN_X0, y0, BTN_X1, y1, BTN_H / 2,
+                                    fill=COL_PANEL, outline=COL_PANEL_EDGE,
+                                    width=2, tags=tag)
+            halo = self._round_rect(BTN_X0 - 3, y0 - 3, BTN_X1 + 3, y1 + 3, (BTN_H + 6) / 2,
+                                    fill="", outline="", width=2, tags=tag)
+            self.canvas.tag_lower(halo, body)
+            icon = draw_icon(BTN_X0 + 34, mid_y, tag)
+            text = self.canvas.create_text(BTN_X0 + 62, mid_y, text=label, anchor="w",
+                                           font=self._font(11, True), fill=COL_TEXT_DIM,
+                                           tags=tag)
+
+            self.canvas.tag_bind(tag, "<ButtonPress-1>",
+                                 lambda e, t=tag: self._press_button(t, True))
+            self.canvas.tag_bind(tag, "<ButtonRelease-1>",
+                                 lambda e, t=tag: self._press_button(t, False))
+            self.canvas.tag_bind(tag, "<Button-1>", handler, add="+")
+
+            self.buttons[tag] = {"body": body, "halo": halo, "icon": icon, "text": text,
+                                 "accent": accent, "pressed": False}
+
+    def _press_button(self, tag, down):
+        """Visible feedback on touch, so a press never feels like it was missed."""
+        button = self.buttons.get(tag)
+        if button is None: return
+        button["pressed"] = down
+        self._refresh_buttons()      # repaint them all, so enabled states stay right
+
+    def _paint_button(self, tag, enabled=True, active=False):
+        """One button's colours for the current frame.
+
+        enabled=False means pressing it would do nothing right now, so it fades
+        back to the panel; active is the pulsing "this is what is happening" look.
+        """
+        button = self.buttons[tag]
+        accent = button["accent"]
+        pressed = button["pressed"]
+
+        if not enabled:
+            body_fill, edge, ink = COL_PANEL, COL_PANEL_EDGE, _mix(COL_TEXT_DIM, COL_BG, 0.5)
+        elif pressed:
+            body_fill, edge, ink = _mix(accent, COL_BG, 0.55), accent, COL_TEXT
+        elif active:
+            body_fill, edge, ink = _mix(accent, COL_BG, 0.72), accent, COL_TEXT
+        else:
+            body_fill, edge, ink = COL_PANEL, _mix(accent, COL_BG, 0.45), accent
+
+        self.canvas.itemconfig(button["body"], fill=body_fill, outline=edge)
+        self.canvas.itemconfig(button["text"], fill=ink)
+        for item in button["icon"]:
+            # An arc drawn in "arc" style is stroked, so its colour is the outline;
+            # lines and filled shapes both take it on the fill.
+            if self.canvas.type(item) == "arc":
+                self.canvas.itemconfig(item, outline=ink)
+            else:
+                self.canvas.itemconfig(item, fill=ink)
+        return button
 
     # ---------- runtime ----------
     def _blob_pts(self, cx, cy, r, phase, wobble):
@@ -1159,6 +1918,13 @@ class TutorUI:
         return pts
 
     def _animate(self):
+        # The video covers every one of these shapes, so redrawing them is pure
+        # waste at the exact moment the decoder wants the CPU. Keep the loop alive
+        # at a slow tick so it resumes the moment the video goes away.
+        if self.video_visible:
+            self.root.after(FRAME_MS * 4, self._animate)
+            return
+
         label, colour, wobble, speed, activity = STATE_STYLE.get(
             self.current_state, STATE_STYLE["idle"])
         self.phase += speed
@@ -1202,23 +1968,30 @@ class TutorUI:
         self.canvas.itemconfig(self.state_text_id, text=label,
                                fill=_mix(colour, COL_TEXT, 0.35))
 
-        pulse = 0.5 + 0.5 * math.sin(self.phase * 1.6)
-        listening = self.current_state == "listening"
-        self.canvas.itemconfig(self.mic_glow,
-                               outline=_mix(colour, COL_BG, 0.25 + 0.5 * (1 - pulse)) if listening else "")
-        self.canvas.itemconfig(self.mic_ring,
-                               outline=colour if listening else COL_PANEL_EDGE)
-
         self._refresh_music()
-
-        talking = playback_active.is_set() or not audio_queue.empty()
-        stop_shade = COL_STOP if talking else _mix(COL_TEXT_DIM, COL_BG, 0.55)
-        self.canvas.itemconfig(self.stop_ring,
-                               outline=COL_STOP if talking else COL_PANEL_EDGE)
-        self.canvas.itemconfig(self.stop_icon, fill=stop_shade)
-        self.canvas.itemconfig(self.stop_label, fill=stop_shade)
+        self._refresh_buttons()
 
         self.root.after(FRAME_MS, self._animate)
+
+    def _refresh_buttons(self):
+        """Each button shows whether pressing it would do anything right now."""
+        listening = self.current_state == "listening"
+        talking = playback_active.is_set() or not audio_queue.empty()
+        awake = listening or talking or self.current_state == "thinking"
+
+        self._paint_button("mic", enabled=True, active=listening)
+        # Nothing to stop listening to until she is actually awake.
+        self._paint_button("sleep", enabled=awake, active=False)
+        self._paint_button("stop", enabled=talking, active=talking)
+
+        # A soft pulse around the live button, so "she is listening" reads from
+        # across the room rather than needing the label to be studied.
+        pulse = 0.5 + 0.5 * math.sin(self.phase * 1.6)
+        for tag, lit in (("mic", listening), ("stop", talking)):
+            button = self.buttons[tag]
+            self.canvas.itemconfig(
+                button["halo"],
+                outline=_mix(button["accent"], COL_BG, 0.30 + 0.55 * (1 - pulse)) if lit else "")
 
     def _draw_face(self, cy, colour, activity):
         dx, dy = self.eye_offset
@@ -1261,8 +2034,8 @@ class TutorUI:
                                    fill=_mix(accent, COL_BG, 0.86) if chosen else COL_PANEL,
                                    outline=accent if chosen else COL_PANEL_EDGE,
                                    width=2 if chosen else 1)
-            self.canvas.itemconfig(card["blurb"],
-                                   fill=COL_TEXT if chosen else COL_TEXT_DIM)
+            self.canvas.itemconfig(card["title"],
+                                   fill=accent if chosen else _mix(accent, COL_BG, 0.35))
 
     def set_weather(self, reading):
         self.canvas.itemconfig(self.temp_id, text=f"{reading['temp']}\u00b0C")
@@ -1326,8 +2099,20 @@ class TutorUI:
         self.set_mode((self.current_mode_index + 1) % len(self.modes))
 
 class HeadlessUI:
-    def __init__(self): self.current_state = "idle"
+    def __init__(self):
+        self.current_state = "idle"
+        self.current_mode = "TUTOR"
+        self.video_visible = False
+
     def set_state(self, state_type, caption=None): self.current_state = state_type
+
+    # There is no screen to draw on; VideoPlayer.can_show() refuses video before it
+    # gets this far, and these keep any stray call from raising.
+    def show_video(self, title=""): pass
+    def set_video_title(self, title): pass
+    def set_video_paused(self, paused): pass
+    def hide_video(self): pass
+    def push_video_frame(self, size, data): pass
 
 # ==========================================
 # Core AI Functions
@@ -1404,13 +2189,20 @@ LANGUAGE_INSTRUCTIONS = {
                 "for example: 'यह concept बहुत simple है, इसे ऐसे समझो.' NEVER write Hindi words in Latin letters."
 }
 
-MUSIC_REPLIES = {
+MEDIA_REPLIES = {
     "en": {"play": "Playing {query}.", "stop": "Stopped the music.",
-           "pause": "Paused.", "resume": "Resuming."},
+           "pause": "Paused.", "resume": "Resuming.",
+           "video": "Playing a video of {query}.", "video_stop": "Closed the video.",
+           "no_video": "I can't show video on this screen, sorry."},
     "hi": {"play": "{query} चला रहे हैं।", "stop": "संगीत बंद कर दिया।",
-           "pause": "रोक दिया।", "resume": "फिर से चला रहे हैं।"},
+           "pause": "रोक दिया।", "resume": "फिर से चला रहे हैं।",
+           "video": "{query} का वीडियो चला रहे हैं।", "video_stop": "वीडियो बंद कर दिया।",
+           "no_video": "इस स्क्रीन पर वीडियो नहीं दिखा सकते।"},
     "hinglish": {"play": "{query} play कर रहे हैं।", "stop": "Music बंद कर दिया।",
-                 "pause": "Pause कर दिया।", "resume": "फिर से play कर रहे हैं।"}
+                 "pause": "Pause कर दिया।", "resume": "फिर से play कर रहे हैं।",
+                 "video": "{query} का video play कर रहे हैं।",
+                 "video_stop": "Video बंद कर दिया।",
+                 "no_video": "इस screen पर video नहीं दिखा सकते।"}
 }
 
 SEARCH_NOTICES = {
@@ -1444,14 +2236,19 @@ CURRENT SYSTEM TIME & DATE: {system_time}
 - The Knowledge Fallback: You MUST NEVER say "I don't have real-time access", "I cannot browse the internet", or "I am an AI". 
 
 ============================================================
-4. MUSIC PROTOCOL (STRICT)
+4. MEDIA PROTOCOL (STRICT)
 ============================================================
 If the student is asking you to PLAY a song, bhajan, mantra, aarti or any music, you MUST bypass normal conversation and output EXACTLY AND ONLY this:
 MUSIC: <song name and artist>
 
-The microphone mangles these requests badly, so read through the noise: "pili kong hihobay arijit singh" is "play Tum Hi Ho by Arijit Singh", and "प्ले हनुमान चालिजा" is "play Hanuman Chalisa". If the student clearly wants to hear something, emit the MUSIC tag.
+If the student asks to WATCH or SEE something, or says the word "video", they want a video instead. Output EXACTLY AND ONLY this:
+VIDEO: <what the video should show>
 
-NEVER tell a student to search YouTube themselves, and never explain how to find a song. You can play it. Emit the tag.
+The difference matters: MUSIC plays sound only, VIDEO fills the screen with a picture. Listen for the word "video", "dekhna", "dikhao" or "watch" to tell them apart. Strip the word "video" itself out of the tag: it is a search term, not part of the subject.
+
+The microphone mangles these requests badly, so read through the noise: "pili kong hihobay arijit singh" is "play Tum Hi Ho by Arijit Singh", and "प्ले हनुमान चालिजा" is "play Hanuman Chalisa". If the student clearly wants to hear or watch something, emit the tag.
+
+NEVER tell a student to search YouTube themselves, and never explain how to find a song or a video. You can play it. Emit the tag.
 
 CRITICAL EXAMPLES:
 User: "play tum hi ho by arijit singh on youtube"
@@ -1459,6 +2256,12 @@ Your Output: MUSIC: Tum Hi Ho Arijit Singh
 
 User: "प्रे हनुमान चालीसा"
 Your Output: MUSIC: Hanuman Chalisa
+
+User: "play video of the solar system"
+Your Output: VIDEO: solar system explained
+
+User: "मुझे प्रकाश संश्लेषण का वीडियो दिखाओ"
+Your Output: VIDEO: photosynthesis explained in Hindi
 
 ============================================================
 5. SEARCH PROTOCOL (STRICT)
@@ -1514,10 +2317,18 @@ def ai_loop(ui, headless=False):
         print("Calibrating room acoustics...")
         recognizer.pause_threshold = 1.5
         recognizer.non_speaking_duration = 0.5
-        with mic_device as source:
+        with mic_lock, mic_device as source:
             recognizer.adjust_for_ambient_noise(source, duration=1.5)
             recognizer.dynamic_energy_threshold = False
             if recognizer.energy_threshold < 1500: recognizer.energy_threshold = 1500
+        quiet_room_threshold = recognizer.energy_threshold
+
+        # Started only now, so it inherits the threshold this room was calibrated to.
+        if BARGE_IN_ENABLED:
+            threading.Thread(target=barge_in_worker,
+                             args=(mic_device, recognizer.energy_threshold),
+                             daemon=True).start()
+            print("[STATE] Barge-in listening enabled.", flush=True)
 
     chat_history = load_history()
     if not chat_history: chat_history = []
@@ -1537,27 +2348,39 @@ def ai_loop(ui, headless=False):
                 else:
                     ui.set_state("idle")
                     
-                music_player.duck(False)          # standby: hand the speaker back
+                # Standby releases the speaker: anything that was paused for the
+                # conversation picks up where it left off.
+                music_player.duck(False)
+                video_player.duck(False)
 
                 print("[STATE] In Standby Mode. "
-                      + ("Tap the screen to talk..." if music_player.is_active()
-                         else "Say 'Hey Liza' or tap the screen..." if WAKE_WORD_ENABLED
+                      + ("Say 'Hey Liza' or tap the screen..." if WAKE_WORD_ENABLED
                          else "Tap the screen to wake up..."), flush=True)
 
                 while not wake_event.is_set() and not pending_question:
-                    # The wake word cannot run while music plays: the mic would just
-                    # hear the song and every loop would spend a Whisper call on it.
-                    if WAKE_WORD_ENABLED and not music_player.is_active():
-                        woke, pending_question, pending_language = listen_for_wake_word(
-                            recognizer, mic_device)
-                        if woke:
-                            break
-                    else:
+                    if not WAKE_WORD_ENABLED:
                         time.sleep(0.1)
+                        continue
 
+                    # While a track plays, the wake word is the only way in. Ask for
+                    # a louder voice then, since the speaker is holding the room
+                    # above the quiet-room threshold all by itself.
+                    over_media = music_player.is_active() or video_player.is_active()
+                    recognizer.energy_threshold = (quiet_room_threshold * BARGE_MEDIA_GAIN
+                                                   if over_media else quiet_room_threshold)
+
+                    woke, pending_question, pending_language = listen_for_wake_word(
+                        recognizer, mic_device, over_media=over_media)
+                    if woke:
+                        break
+
+                recognizer.energy_threshold = quiet_room_threshold
                 wake_event.clear()
                 sleep_event.clear()
-                music_player.duck(True)           # our turn on the speaker and mic
+                # Our turn on the speaker and the microphone: whatever is playing
+                # holds until the conversation is over.
+                music_player.duck(True)
+                video_player.duck(True)
                 session_active = True
                 silence_counter = 0
 
@@ -1585,79 +2408,89 @@ def ai_loop(ui, headless=False):
                 print(f"[TRANSCRIPT] {text}", flush=True)
             else:
                 ui.set_state("listening")
-                print("[STATE] Listening for speech...", flush=True)
-                        
-                        
-                with mic_device as source:
-                    try:
-                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=25)
-                        wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
-                        silence_counter = 0 # Reset silence timer when sound is heard
-                    
-                        dynamic_stt_prompt = STT_SEED_PROMPT
-                        for msg in reversed(chat_history):
-                            if msg["role"] == "assistant":
-                                clean_prompt_text = re.sub(r'EMOTION:\s*\[?[a-zA-Z]+\]?', '', msg["content"])
-                                clean_prompt_text = clean_prompt_text.replace('ANSWER:', '').strip()
-                                # Never prime Whisper with a script it should not be producing,
-                                # otherwise one Urdu reply drags every later turn into Urdu too.
-                                if not RE_UNREADABLE_SCRIPT.search(clean_prompt_text):
-                                    recent = " ".join(clean_prompt_text.split()[-30:])
-                                    # Keep the seed alongside it, otherwise Whisper loses the
-                                    # music vocabulary as soon as there is any chat history.
-                                    dynamic_stt_prompt = f"{STT_SEED_PROMPT} {recent}"
-                                break
+                # Something is paused waiting for this, so the microphone gives it
+                # back quickly instead of sitting open for the usual half minute.
+                media_waiting = music_player.is_active() or video_player.is_active()
+                listen_timeout = MEDIA_SILENCE_S if media_waiting else 5
+                print(f"[STATE] Listening for speech..."
+                      f"{' (media paused)' if media_waiting else ''}", flush=True)
 
-                        text, stt_language = transcribe(wav_data, dynamic_stt_prompt)
+                try:
+                    # Held only for the recording itself: the barge-in listener needs
+                    # the device back the moment Liza starts speaking again.
+                    with mic_lock, mic_device as source:
+                        audio = recognizer.listen(source, timeout=listen_timeout,
+                                                  phrase_time_limit=25)
 
-                        # A transcript of nothing but zero-width marks is silence, not a
-                        # question, so strip them before anything else looks at the text.
-                        text = RE_INVISIBLE.sub("", text).strip()
+                    wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
+                    silence_counter = 0 # Reset silence timer when sound is heard
 
-                        # Hindi heard as Urdu (or any other Indic script): re-read the same audio
-                        # forced to Hindi so we get Devanagari the voice can actually speak.
-                        if RE_UNREADABLE_SCRIPT.search(text):
-                            print(f"[STT] Heard '{stt_language}' in an unreadable script, re-reading as Hindi...", flush=True)
-                            text, stt_language = transcribe(wav_data, STT_SEED_PROMPT, language="hi")
+                    dynamic_stt_prompt = STT_SEED_PROMPT
+                    for msg in reversed(chat_history):
+                        if msg["role"] == "assistant":
+                            clean_prompt_text = re.sub(r'EMOTION:\s*\[?[a-zA-Z]+\]?', '', msg["content"])
+                            clean_prompt_text = clean_prompt_text.replace('ANSWER:', '').strip()
+                            # Never prime Whisper with a script it should not be producing,
+                            # otherwise one Urdu reply drags every later turn into Urdu too.
+                            if not RE_UNREADABLE_SCRIPT.search(clean_prompt_text):
+                                recent = " ".join(clean_prompt_text.split()[-30:])
+                                # Keep the seed alongside it, otherwise Whisper loses the
+                                # music vocabulary as soon as there is any chat history.
+                                dynamic_stt_prompt = f"{STT_SEED_PROMPT} {recent}"
+                            break
 
-                        lower_text = text.lower().strip()
+                    text, stt_language = transcribe(wav_data, dynamic_stt_prompt)
 
-                        if lower_text in HALLUCINATIONS or RE_HALLUCINATION.search(lower_text):
-                            text = ""
+                    # A transcript of nothing but zero-width marks is silence, not a
+                    # question, so strip them before anything else looks at the text.
+                    text = RE_INVISIBLE.sub("", text).strip()
 
-                        # --- ACOUSTIC ECHO CANCELLATION & INTERRUPTION ---
-                        if playback_active.is_set() and text:
-                            global current_ai_response
-                            ai_words = set(current_ai_response.lower().replace('.', '').replace(',', '').split())
-                            user_words = set(lower_text.replace('.', '').replace(',', '').split())
-                        
-                            if user_words:
-                                overlap = len(user_words.intersection(ai_words))
-                                overlap_ratio = overlap / len(user_words)
-                            
-                                if overlap_ratio > 0.4:
-                                    print(f"[ECHO DETECTED] Ignoring speaker bleed: {text}", flush=True)
-                                    continue 
-                            
-                                print(f"[INTERRUPT DETECTED] User said: {text}", flush=True)
-                                interrupt_playback()
-                    
-                        print(f"[TRANSCRIPT] {text if text else '[empty]'}", flush=True)
-                        if not text: continue
-                
-                    except sr.WaitTimeoutError:
-                        if playback_active.is_set() or not audio_queue.empty():
+                    # Hindi heard as Urdu (or any other Indic script): re-read the same audio
+                    # forced to Hindi so we get Devanagari the voice can actually speak.
+                    if RE_UNREADABLE_SCRIPT.search(text):
+                        print(f"[STT] Heard '{stt_language}' in an unreadable script, re-reading as Hindi...", flush=True)
+                        text, stt_language = transcribe(wav_data, STT_SEED_PROMPT, language="hi")
+
+                    lower_text = text.lower().strip()
+
+                    if lower_text in HALLUCINATIONS or RE_HALLUCINATION.search(lower_text):
+                        text = ""
+
+                    # --- ACOUSTIC ECHO CANCELLATION & INTERRUPTION ---
+                    if playback_active.is_set() and text:
+                        if _is_echo(text):
+                            print(f"[ECHO DETECTED] Ignoring speaker bleed: {text}", flush=True)
                             continue
-                        
-                        silence_counter += 1
-                        if silence_counter >= 6: # ~30 seconds of quiet thinking time
-                            print("[STATE] No interaction for 30 seconds. Returning to Standby Mode...", flush=True)
-                            session_active = False
-                            silence_counter = 0
+
+                        print(f"[INTERRUPT DETECTED] User said: {text}", flush=True)
+                        interrupt_playback()
+
+                    print(f"[TRANSCRIPT] {text if text else '[empty]'}", flush=True)
+                    if not text: continue
+
+                except sr.WaitTimeoutError:
+                    if playback_active.is_set() or not audio_queue.empty():
                         continue
-                    except Exception as e:
-                        print(f"[STT Error] {e}", flush=True)
+
+                    # Nothing said while a track waits: give it the speaker back
+                    # immediately rather than making the student sit through the
+                    # full standby timeout with the picture frozen.
+                    if media_waiting:
+                        print(f"[STATE] Silent for {MEDIA_SILENCE_S}s, resuming playback...",
+                              flush=True)
+                        session_active = False
+                        silence_counter = 0
                         continue
+
+                    silence_counter += 1
+                    if silence_counter >= 6: # ~30 seconds of quiet thinking time
+                        print("[STATE] No interaction for 30 seconds. Returning to Standby Mode...", flush=True)
+                        session_active = False
+                        silence_counter = 0
+                    continue
+                except Exception as e:
+                    print(f"[STT Error] {e}", flush=True)
+                    continue
         else:
             ui.set_state("idle")
             try: text = input().strip()
@@ -1669,29 +2502,51 @@ def ai_loop(ui, headless=False):
 
         user_language = detect_user_language(text, stt_language)
 
-        # --- "stop Liza": go quiet and back to standby ---
-        if RE_STOP_ASSISTANT.search(text):
-            print("[STATE] Dismissed by voice, returning to standby.", flush=True)
-            interrupt_playback()
-            session_active = False
-            continue
+        # --- STOP commands: never reach the model ---
+        # The barge-in listener catches these mid-playback; this is the same
+        # decision for the ordinary case where she was already waiting for a turn.
+        # "stop listening" leaves sleep_event set for the top of the loop to act on,
+        # so the button and the spoken command drop the session by the same path.
+        interrupt = detect_interrupt(text)
+        if interrupt:
+            outcome = handle_interrupt(interrupt, language=user_language)
+            if outcome == "media":
+                # Silencing a track ends the turn. Staying in the session would
+                # leave her listening at somebody who only wanted quiet -- and the
+                # wake word fires on "stop the music, Liza", so this path is
+                # reached by a plain request to stop, not just mid-conversation.
+                audio_queue.put("[END_OF_RESPONSE]")
+                session_active = False
+                continue
+            if outcome:
+                continue
 
-        # --- MUSIC: handled locally, never reaches the model ---
-        command = detect_music_command(text, music_player.is_active())
+        # --- MUSIC & VIDEO: handled locally, never reach the model ---
+        command = detect_media_command(text, music_player.is_active(),
+                                       video_player.is_active())
         if command:
             action, query = command
-            print(f"[MUSIC] Command: {action} {query!r}", flush=True)
-            if action == "play":
+            print(f"[MEDIA] Command: {action} {query!r}", flush=True)
+            if action == "play_video":
+                if not video_player.can_show():
+                    audio_queue.put(MEDIA_REPLIES[user_language]["no_video"])
+                else:
+                    video_player.play(query)
+                    audio_queue.put(MEDIA_REPLIES[user_language]["video"].format(query=query))
+            elif action == "play":
                 music_player.play(query)
-                audio_queue.put(MUSIC_REPLIES[user_language]["play"].format(query=query))
+                audio_queue.put(MEDIA_REPLIES[user_language]["play"].format(query=query))
             elif action == "stop":
                 music_player.stop()
-                audio_queue.put(MUSIC_REPLIES[user_language]["stop"])
+                audio_queue.put(MEDIA_REPLIES[user_language]["stop"])
+            elif action == "stop_video":
+                video_player.stop()
+                audio_queue.put(MEDIA_REPLIES[user_language]["video_stop"])
             else:
                 music_player.set_paused(action == "pause")
-                audio_queue.put(MUSIC_REPLIES[user_language][action])
+                audio_queue.put(MEDIA_REPLIES[user_language][action])
             audio_queue.put("[END_OF_RESPONSE]")
-            session_active = False          # hand the speaker back to the music
+            session_active = False          # hand the speaker back to the media
             continue
 
         # --- 2. THINK & STREAM ---
@@ -1732,14 +2587,19 @@ def ai_loop(ui, headless=False):
                     emotion_parsed = False
                     is_searching = False
                     is_music = False
+                    is_video = False
 
                     for chunk in response_stream:
                         if stop_playback_event.is_set():
-                            break 
-                        
+                            break
+
                         delta = chunk.choices[0].delta.content
                         if delta is None: continue
                         full_response += delta
+
+                        if "VIDEO:" in full_response:
+                            is_video = True
+                            continue
 
                         if "MUSIC:" in full_response:
                             is_music = True
@@ -1748,8 +2608,8 @@ def ai_loop(ui, headless=False):
                         if "SEARCH:" in full_response:
                             is_searching = True
                             continue
-                        
-                        if is_music:
+
+                        if is_music or is_video:
                             continue
 
                         if not is_searching and not emotion_parsed:
@@ -1773,18 +2633,28 @@ def ai_loop(ui, headless=False):
                                 clean = clean_text_for_tts(new_sentences)
                                 if clean: audio_queue.put(clean)
 
-                    if is_music:
-                        song = full_response.split("MUSIC:")[1].strip()
-                        song = re.sub(r'(?:EMOTION|ANSWER):.*', '', song, flags=re.IGNORECASE)
-                        song = song.replace('[', '').replace(']', '').strip(" \"'.,!?।")
-                        if song:
-                            print(f"[MUSIC] Model resolved request to {song!r}", flush=True)
-                            music_player.play(song)
-                            audio_queue.put(MUSIC_REPLIES[user_language]["play"].format(query=song))
-                        else:
+                    if is_music or is_video:
+                        tag = "VIDEO:" if is_video else "MUSIC:"
+                        wanted = full_response.split(tag)[1].strip()
+                        wanted = re.sub(r'(?:EMOTION|ANSWER):.*', '', wanted, flags=re.IGNORECASE)
+                        wanted = wanted.replace('[', '').replace(']', '').strip(" \"'.,!?।")
+                        if not wanted:
                             audio_queue.put("I couldn't work out what to play.")
+                        elif is_video:
+                            print(f"[VIDEO] Model resolved request to {wanted!r}", flush=True)
+                            if video_player.can_show():
+                                video_player.play(wanted)
+                                audio_queue.put(
+                                    MEDIA_REPLIES[user_language]["video"].format(query=wanted))
+                            else:
+                                audio_queue.put(MEDIA_REPLIES[user_language]["no_video"])
+                        else:
+                            print(f"[MUSIC] Model resolved request to {wanted!r}", flush=True)
+                            music_player.play(wanted)
+                            audio_queue.put(
+                                MEDIA_REPLIES[user_language]["play"].format(query=wanted))
                         if not is_search_loop:
-                            result_holder['status'] = 'music'
+                            result_holder['status'] = 'media'
                             result_holder['text'] = full_response
                         return
 
@@ -1856,9 +2726,9 @@ def ai_loop(ui, headless=False):
                 audio_queue.put("I'm having trouble thinking right now.")
             else:
                 if result_holder.get('status') == 'error': raise RuntimeError(result_holder.get('error'))
-                if result_holder.get('status') == 'music':
+                if result_holder.get('status') == 'media':
                     chat_history.pop()          # keep the mangled request out of the history
-                    session_active = False      # hand the speaker back to the music
+                    session_active = False      # hand the speaker back to the media
                 else:
                     full_response = result_holder.get('text', '').strip()
                     chat_history.append({"role": "assistant", "content": full_response})
@@ -1896,6 +2766,11 @@ if __name__ == "__main__":
         print("[WARNING] WEATHER_API_KEY is not set; the weather panel will stay blank.", flush=True)
 
     HEADLESS = ("--headless" in sys.argv) or (os.getenv("HEADLESS") == "1")
+    HEADLESS_MODE = HEADLESS          # VideoPlayer.can_show() reads this
+
+    if VIDEO_ENABLED and not PIL_AVAILABLE and not HEADLESS:
+        print("[WARNING] Pillow is not installed, so videos cannot be shown. "
+              "Fix with: assist/bin/pip install pillow", flush=True)
 
     if HEADLESS:
         app_ui = HeadlessUI()
