@@ -21,3 +21,7 @@ chat_history.json
 # runtime assets and logs
 GIFS/
 logs/
+
+# mascot animation sources and generated frames
+Animations/*.gif
+Animations/cache/
