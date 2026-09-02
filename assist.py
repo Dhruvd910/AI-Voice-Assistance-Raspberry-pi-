@@ -17,11 +17,16 @@ import traceback
 import glob
 import fnmatch
 import difflib
+import random
 import collections
 import itertools
 import contextlib
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
+
+import profiles
+import kg_content
+import store
 
 
 def load_dotenv(path=None):
@@ -187,9 +192,35 @@ MIN_SPEECH_SEC = 0.35
 # See MIN_SPEECH_RMS, defined with the energy band it is derived from: a clip
 # also has to be LOUD enough to be speech, not just long enough.
 WAKE_SEED_PROMPT = "Hey Liza. हे लीज़ा।"
+# Whisper's initial_prompt is a bias, not a hint: handed ambiguous audio it will
+# return the prompt itself. Seeding every wake check with the wake phrase is
+# therefore the one thing guaranteed to make room noise transcribe AS the wake
+# phrase, and logs/liza.log shows exactly that -- a clean "हे लीज़ा।" out of a
+# room where nobody addressed her, indistinguishable from a real wake because it
+# IS the seed coming back.
+#
+# Awake that is an acceptable trade: the seed is what makes the name survive a
+# noisy room, and a spurious wake while she is already listening costs a
+# discarded turn. From SLEEP it is not. Sleep is an explicit "leave me alone",
+# the Speak button is always right there, and this is the failure the student
+# actually reported -- she came out of sleep on her own. So the sleep path asks
+# Whisper to transcribe what it really heard, with no phrase suggested to it.
+#
+# Set WAKE_SEED_ASLEEP to a prompt to put the old behaviour back.
+WAKE_SEED_PROMPT_ASLEEP = os.getenv("WAKE_SEED_ASLEEP", "")
+# Devanagari gives \b nothing to anchor to -- the script has no case, and its
+# vowel signs are combining marks rather than word characters -- so every name
+# spelling below matched happily INSIDE a longer word. Observed waking her on
+# "हे लीज़ाश देखे", where लीज़ा is merely the front of लीज़ाश. This asserts that
+# nothing which would CONTINUE the word follows: a consonant, a nukta, or a
+# virama. A danda or a space may, which is how a real utterance ends.
+NAME_END = r'(?![क-ह़्])'
 RE_WAKE_WORD = re.compile(
     # English spellings Whisper produces for the name.
-    r'\b(?:hey|hi|hello|ok|okay|hay|a)?\s*'
+    # "a" was in this list and never belonged: it is an ordinary English article,
+    # and the whole group is optional anyway, so it added no reachable match
+    # beyond the bare name while turning "a Lisa" in any sentence into a wake.
+    r'\b(?:hey|hi|hello|ok|okay|hay)?\s*'
     # Spellings observed from Whisper for the same spoken name. None of these is
     # an ordinary English word, so a bare match is safe without a greeting.
     r'(?:liza|lisa|leeza|leesa|lizza|lyza|eliza|elisa|lija|leza|laiza|liesa|lizah|luiza)\b'
@@ -199,9 +230,17 @@ RE_WAKE_WORD = re.compile(
     # consonant skeleton is matched instead. A greeting is REQUIRED for this
     # branch because some of those forms (लगा, "felt") are ordinary Hindi words
     # that must not trigger a wake on their own.
-    r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)\s*ल[ािीुू]?[जगसझशद]़?[ािी]?'
+    #
+    # The FINAL vowel sign is required, where it used to be optional. The name is
+    # two syllables and ends in one -- लीज़ा, लागा, लगा all do. Optional, this
+    # also matched every consonant-final word built on the same skeleton, and
+    # "हे लाग" (ल + ा + ग, no trailing vowel) was the single commonest false wake
+    # in logs/liza.log: seven of them, none remotely the wake word. Requiring the
+    # vowel costs nothing real, because it is present in every spelling of the
+    # name this branch was written to catch.
+    r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)\s*ल[ािीुू]?[जगसझशद]़?[ािी]' + NAME_END +
     # Unambiguous spellings still wake her with no greeting at all.
-    r'|(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)',
+    r'|(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)' + NAME_END,
     re.IGNORECASE
 )
 
@@ -220,7 +259,13 @@ RE_WAKE_WORD = re.compile(
 RE_WAKE_WORD_ASLEEP = re.compile(
     r'\b(?:hey|hi|hello|ok|okay|hay)\s+'
     r'(?:liza|lisa|leeza|leesa|lizza|lyza|eliza|elisa|lija|leza|laiza|liesa|lizah|luiza)\b'
-    r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)?\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)',
+    # The greeting is REQUIRED here, not optional. It was written with a `?`,
+    # which made this branch match a bare "लिज़ा" anywhere -- the exact hole the
+    # comment above claims is closed, and the one RE_WAKE_WORD_OVER_MEDIA was
+    # later added to work around. Observed in logs/liza.log waking her out of
+    # sleep on "है लिज़ा।" -- ambient Hindi where "है" is the verb "is", not a
+    # greeting at all.
+    r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)' + NAME_END,
     re.IGNORECASE
 )
 
@@ -243,8 +288,86 @@ RE_WAKE_WORD_ASLEEP = re.compile(
 RE_WAKE_WORD_OVER_MEDIA = re.compile(
     r'\b(?:hey|hi|hello|ok|okay|hay)\s+'
     r'(?:liza|lisa|leeza|leesa|lizza|lyza|eliza|elisa|lija|leza|laiza|liesa|lizah|luiza)\b'
-    r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)',
+    r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)' + NAME_END,
     re.IGNORECASE)
+
+# WHERE the name falls in the utterance, which the patterns above cannot express.
+#
+# Every pattern here is used with .search(), so until now a hit ANYWHERE in the
+# transcript woke her -- including thirty words into a sentence that merely
+# mentioned the name. That is the false-wake reported from a room with an
+# ordinary Hindi conversation going on in it, and it is not a spelling problem,
+# so no amount of tightening the alternations above can reach it.
+#
+# Two structural facts separate a real wake from a mention. A person addressing
+# the device says the name FIRST -- "Hey Liza, what is photosynthesis" -- so a
+# match buried mid-sentence is somebody talking ABOUT her, not TO her. And
+# WAKE_SEED_PROMPT primes Whisper with the wake phrase, which is what makes it
+# reach for that phrase on ambiguous audio, so a regex hit on its own is weaker
+# evidence than it looks.
+WAKE_MAX_LEAD_WORDS = int(os.getenv("WAKE_MAX_LEAD_WORDS", "2"))
+# From sleep the bar is higher again, for the reason RE_WAKE_WORD_ASLEEP already
+# gives: sleep is an explicit "leave me alone", the Speak button is always right
+# there, and an accidental wake is the worse failure. So from sleep the wake
+# word must be substantially the WHOLE utterance -- "Hey Liza", not a sentence
+# that happens to open with it. Generous enough to keep "Hey Liza, what is a
+# cell" working, far short of the ambient sentences that caused this.
+WAKE_SLEEP_MAX_WORDS = int(os.getenv("WAKE_SLEEP_MAX_WORDS", "6"))
+# A bare name with no greeting -- "Liza", "लिज़ा" -- is a legitimate way to
+# address her, so RE_WAKE_WORD allows it. But it is also the single commonest
+# false positive, because it is exactly what an ordinary sentence ABOUT her
+# contains: "Lisa said the report was fine", "मैं लिज़ा से बात कर रहा हूँ".
+# Both open with the name and so clear the lead-word gate above.
+#
+# What separates them is what comes AFTER. "Liza" addressed to her is the whole
+# utterance; the name inside a sentence is followed by the rest of the sentence.
+# So a bare name has to stand alone, while a greeting -- which no one says by
+# accident -- buys the right to keep talking: "Hey Liza, what is photosynthesis".
+WAKE_BARE_NAME_MAX_WORDS = int(os.getenv("WAKE_BARE_NAME_MAX_WORDS", "3"))
+# (?!\w) rather than \b: a Devanagari greeting ends in a vowel SIGN ("हे" is
+# ह + े), which is a combining mark and not a word character, so there is no
+# word boundary after it and \b silently never matches the Hindi half of this
+# list. The lookahead asks the question that was actually meant -- that the
+# greeting is not just the front of a longer word.
+RE_WAKE_GREETING = re.compile(r'^\s*(?:hey|hi|hello|ok|okay|hay|हे|अरे|ओके|हाय|सुनो|हैलो)(?!\w)',
+                              re.IGNORECASE)
+
+def wake_word_match(text, pattern, asleep=False):
+    """The regex hit, but only when it sits where a real wake word sits.
+
+    Returns the match object, or None. See the constants above for why a bare
+    pattern hit is not enough on its own."""
+    if not text:
+        return None
+    match = pattern.search(text)
+    if not match:
+        return None
+    words = text.split()
+    lead_words = len(text[:match.start()].split())
+    if lead_words > WAKE_MAX_LEAD_WORDS:
+        print(f"[WAKE] Ignored (name {lead_words} words in, not addressed to her): "
+              f"{text!r}", flush=True)
+        return None
+    if asleep and len(words) > WAKE_SLEEP_MAX_WORDS:
+        print(f"[WAKE] Ignored (asleep; {len(words)} words is a conversation, "
+              f"not a wake): {text!r}", flush=True)
+        return None
+    if not RE_WAKE_GREETING.match(match.group(0)):
+        # A bare name has to OPEN the utterance, not merely sit near the front.
+        # The lead-word gate above allows two words before the match, which is
+        # right for a greeting ("ok then, Liza") but wrong with no greeting at
+        # all: "आप लिज़ा।" -- "you, Liza" -- cleared it and woke her, and so
+        # would "मैंने लिज़ा से". Addressing her by name alone means starting
+        # with the name; anything in front of it is a sentence about her.
+        if lead_words:
+            print(f"[WAKE] Ignored (bare name {lead_words} word(s) in, "
+                  f"no greeting): {text!r}", flush=True)
+            return None
+        if len(words) > WAKE_BARE_NAME_MAX_WORDS:
+            print(f"[WAKE] Ignored (bare name inside a {len(words)}-word sentence, "
+                  f"no greeting): {text!r}", flush=True)
+            return None
+    return match
 
 # Music and video hold the microphone shut (a song's own lyrics come back as
 # commands otherwise), which would leave "stop the music" as the one spoken
@@ -331,6 +454,159 @@ def note_media_started():
 media_process = None
 media_procs = []                   # [yt-dlp, mpv] for the current playback
 sleep_event = threading.Event()    # the Sleep button was tapped; drop to standby
+
+# ---------- student profiles and the Kindergarten flow ----------
+# Set while a KG student is on the device. ai_loop parks on this instead of
+# listening: a pre-reader gets the spelling and story screens and nothing else,
+# so the open microphone and the whole question-and-answer path stay shut. It is
+# an Event rather than a bool because ai_loop waits on it, and .wait() with a
+# timeout is what keeps that loop off the CPU while a child taps at letters.
+kg_active = threading.Event()
+
+# The KG screens run on the Tk thread; the microphone belongs to ai_loop, which
+# opens it once and never lets go (see HeldMicrophone / VoiceListener -- this
+# dongle wedges if a stream is re-opened per listen). So a KG screen cannot just
+# listen for itself without standing up a second audio stack, which is the one
+# thing the brief for this feature ruled out.
+#
+# Instead ai_loop, which is otherwise PARKED for the whole of KG mode, services
+# listen requests from these two queues. The Tk side asks and then polls for the
+# answer with root.after, so no Tk call is ever made off the Tk thread.
+kg_listen_requests = queue.Queue()
+kg_listen_results = queue.Queue()
+
+
+# Seeding Whisper with the alphabet is right for "spell it" and WRONG for
+# "what is this?" -- logs/liza.log shows a child answering "crown" coming back
+# as 'Q R O N' and "kite" as 'K I T', because the seed taught it to expect
+# letters. So the seed now follows the question rather than being fixed.
+KG_SEED_LETTERS = "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z"
+
+
+def kg_request_listen(seconds=6.0, seed="", language="en"):
+    """Ask ai_loop for one transcribed utterance. Answer arrives on kg_listen_results."""
+    while not kg_listen_results.empty():          # drop anything stale
+        try: kg_listen_results.get_nowait()
+        except queue.Empty: break
+    kg_listen_requests.put({"seconds": seconds, "seed": seed, "language": language})
+
+
+def kg_serve_listen(recognizer, mic_device, listener):
+    """Run one pending KG listen, if any. Called from ai_loop's KG park branch.
+
+    Returns True when it did something, so the caller can skip its idle sleep.
+    """
+    try:
+        request = kg_listen_requests.get_nowait()
+    except queue.Empty:
+        return False
+    text = ""
+    try:
+        seconds = float(request.get("seconds", 6.0))
+        audio = None
+        if listener is not None and listener.available:
+            audio = listener.wait_for_utterance(seconds, seconds, PAUSE_THRESHOLD_NORMAL)
+        elif mic_device is not None:
+            try:
+                with mic_device as source:
+                    audio = recognizer.listen(source, timeout=seconds,
+                                              phrase_time_limit=seconds)
+            except sr.WaitTimeoutError:
+                audio = None
+        if audio is not None and is_probably_speech(audio, "KG", True):
+            wav = audio.get_wav_data(convert_rate=16000, convert_width=2)
+            # Never seeded with the answer itself: priming Whisper with the
+            # target word would have it hand that word back on noise, which is
+            # the same trap WAKE_SEED_PROMPT set for the wake word. The caller
+            # says whether it expects letters or a word, and in which language.
+            text, _lang = transcribe(wav, request.get("seed", ""),
+                                     language=request.get("language") or None)
+        print(f"[KG] Heard: {text!r}", flush=True)
+    except Exception as exc:
+        print(f"[KG] Listen failed: {exc}", flush=True)
+    kg_listen_results.put(text or "")
+    return True
+
+
+def set_kg_active(active):
+    if active:
+        # Whatever she was doing was for the previous, older student.
+        kg_active.set()
+        interrupt_playback()
+        stop_media_playback()
+    else:
+        kg_active.clear()
+
+def active_profile():
+    """The profile in use, or None. Never raises -- the UI draws either way."""
+    try:
+        return profiles.get_active_profile()
+    except Exception as exc:
+        print(f"[PROFILE] Could not read the profile store: {exc}", flush=True)
+        return None
+
+# Cartesia's own enum, not free text. The emotion is a GENERATION parameter, so
+# it changes how the line is delivered and is never part of the transcript --
+# measured: the same sentence at emotion=excited and emotion=mysterious returned
+# an identical word list and different durations (3.20s / 3.28s / 3.60s). That is
+# the whole point. Writing "happily," into the sentence would make her SAY the
+# word; this makes her SOUND it.
+# Speed and volume move WITH the emotion, because that is how a person reads to a
+# child: the scary bit is slow and quiet, the exciting bit is fast and loud. The
+# first version of this table span only 0.85..1.05 and every tone sounded the
+# same. Measured on the same sentence, speed 0.6 gives 4.24s against 2.80s at
+# 1.3, and saturates past about 1.3 -- so this uses 0.7..1.2, which is the range
+# that is actually audible.
+KG_EMOTIONS = {
+    # fast and loud -- the payoff moments
+    "excited":       {"emotion": "excited",       "speed": 1.20, "volume": 1.3},
+    "encouraging":   {"emotion": "enthusiastic",  "speed": 1.05, "volume": 1.15},
+    "proud":         {"emotion": "proud",         "speed": 1.00, "volume": 1.2},
+    # middle -- narration and asking
+    "amazed":        {"emotion": "amazed",        "speed": 1.00, "volume": 1.25},
+    "curious":       {"emotion": "curious",       "speed": 0.95, "volume": 1.0},
+    "storyteller":   {"emotion": "contemplative", "speed": 0.90, "volume": 1.0},
+    "warm":          {"emotion": "affectionate",  "speed": 0.90, "volume": 1.0},
+    # slow and quiet -- worry, suspense, kindness
+    "gentle":        {"emotion": "calm",          "speed": 0.85, "volume": 0.9},
+    "sad":           {"emotion": "sad",           "speed": 0.80, "volume": 0.85},
+    "mysterious":    {"emotion": "mysterious",    "speed": 0.72, "volume": 0.8},
+}
+
+
+def kg_delivery(name):
+    """The Cartesia generation_config for a KG tone name, or None."""
+    return KG_EMOTIONS.get(name)
+
+
+def kg_say(text, tone=None):
+    """Speak one line on the KG screens, through the one existing TTS pipeline.
+
+    Same audio_queue every other spoken line goes through, so the ducking and
+    the barge-in machinery all behave exactly as they do elsewhere. The
+    interrupt first is what makes the buttons feel responsive: a child taps Next
+    Word three times, and without it they would queue up three words deep.
+
+    `tone` names an entry in KG_EMOTIONS and changes how the line is DELIVERED.
+    """
+    kg_say_many([(text, tone)])
+
+
+def kg_say_many(segments):
+    """Speak several lines, each with its own delivery, as ONE response.
+
+    All of them go in before the single [END_OF_RESPONSE], which matters: the
+    player starts one aplay per response and streams every sentence into it, so
+    ending the response per line would tear a story into separate playbacks with
+    a process start-up gap at each seam. One response means the emotion changes
+    between sentences while the audio stays continuous.
+    """
+    interrupt_playback()
+    for text, tone in segments:
+        if not text:
+            continue
+        audio_queue.put((text, kg_delivery(tone)) if tone else text)
+    audio_queue.put("[END_OF_RESPONSE]")
 
 # ---------- device state (rule 7, the agentic actions) ----------
 # What the device is actually DOING, as opposed to what it has been told. Handed
@@ -821,16 +1097,90 @@ try:
     jacklib.jack_set_info_function(c_jack_error_handler)
 except OSError: pass
 
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f:
+# One history per student, not one per device.
+#
+# Three children sharing this Pi were sharing a single chat_history.json, which
+# means each one's lesson few-shot the next one's replies: a Class 11 discussion
+# of gravitational fields sat in the window while a Class 5 child asked what
+# gravity is, and the model follows the examples in front of it over any
+# instruction. Separate files also mean "remember where we got to" is per child,
+# which is the point of having profiles at all.
+#
+# The unprofiled path still reads and writes the original HISTORY_FILE, so a
+# device nobody has set up behaves exactly as before.
+HISTORY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history")
+
+# Which student the in-memory history belongs to. Set by ai_loop when it loads
+# one, and read by save_history so the four call sites that save a turn do not
+# each have to carry the id -- and so a save can never write one child's turn
+# into another child's file.
+_history_owner = None
+
+
+def history_path(user_id):
+    if not user_id:
+        return HISTORY_FILE
+    return os.path.join(HISTORY_DIR, f"{user_id}.json")
+
+
+# How many turns already in the store when this session started. Everything
+# after that index is new and is what gets appended -- the store keeps an
+# append-only log of turns, while chat_history in memory is a rolling window
+# that trim_history() shortens, so writing the whole window back every turn
+# would duplicate rows the log already has.
+_history_written = 0
+
+
+def load_history(user_id=None):
+    global _history_owner, _history_written
+    _history_owner = user_id
+    rows = store.load_messages(user_id, limit=MAX_HISTORY_TURNS * 2) if user_id else None
+    if rows is not None:
+        _history_written = len(rows)
+        return rows
+    # No store, or no student: the JSON files the device used before.
+    _history_written = 0
+    path = history_path(user_id)
+    if os.path.exists(path):
+        with open(path, "r") as f:
             try: return json.load(f)
             except json.JSONDecodeError: return []
     return []
 
-def save_history(chat_history):
-    with open(HISTORY_FILE, "w") as f:
+
+def save_history(chat_history, user_id=None):
+    """Persist the turns added since the last save.
+
+    Writes to PostgreSQL when it is up and to the JSON file when it is not, and
+    keeps the JSON copy either way: it is what the device falls back to, and a
+    fallback that has been stale since the database came up is not a fallback.
+    """
+    global _history_written
+    owner = _history_owner if user_id is None else user_id
+    # A profile deleted from the UI while ai_loop still holds their turns in
+    # memory would otherwise be written straight back on the next save -- the
+    # database row is gone, so the insert fails, but the JSON fallback copy would
+    # be recreated and the "deleted" child would reappear the next time the store
+    # was down. No known profile means nothing to save.
+    if owner and not any(p.get("user_id") == owner for p in profiles.list_profiles()):
+        return
+    turns = [m for m in chat_history if m.get("role") in ("user", "assistant")]
+    if owner:
+        new_turns = turns[_history_written:]
+        if new_turns and store.append_messages(owner, new_turns):
+            _history_written = len(turns)
+    path = history_path(owner)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except (OSError, ValueError):
+        pass
+    with open(path, "w") as f:
         json.dump(chat_history, f)
+
+
+def active_user_id():
+    profile = active_profile()
+    return profile.get("user_id") if profile else None
 
 # Nothing ever asks for an EMOTION: line. The prompt requests ANSWER: and only
 # ANSWER:, and all three places that touch the model's output strip the tag back
@@ -951,13 +1301,44 @@ def calibrate_microphone(seconds=6):
     print(f"\nPut these in .env:\n  MIC_ENERGY_FLOOR={floor}\n  MIC_ENERGY_CEILING={ceiling}",
           flush=True)
 
+def _index_can_record(index):
+    """True when this PortAudio index is actually a capture device.
+
+    A pinned index is a position in PortAudio's list, not a name, and that list
+    is rebuilt on every boot -- so a USB dongle re-enumerating shifts every index
+    after it. Observed on 2026-08-29: after a reboot, index 0 became the HDMI
+    output, which has no input channels at all, and the pin quietly pointed the
+    microphone at it. The only symptom was six failed open attempts and a device
+    that never heard anything again.
+    """
+    try:
+        import pyaudio
+        pa = pyaudio.PyAudio()
+        try:
+            if not 0 <= index < pa.get_device_count():
+                return False
+            return int(pa.get_device_info_by_index(index)["maxInputChannels"]) > 0
+        finally:
+            pa.terminate()
+    except Exception:
+        # Cannot tell, so do not overrule the pin on a guess.
+        return True
+
+
 def detect_microphone_index():
     if MIC_DEVICE_INDEX:
         try:
-            return int(MIC_DEVICE_INDEX)
+            pinned = int(MIC_DEVICE_INDEX)
         except ValueError:
             print(f"[MIC] MIC_DEVICE_INDEX={MIC_DEVICE_INDEX!r} is not a number; "
                   f"falling back to auto-detection.", flush=True)
+        else:
+            if _index_can_record(pinned):
+                return pinned
+            print(f"[MIC] MIC_DEVICE_INDEX={pinned} cannot record -- it is not a "
+                  f"capture device any more. The USB dongles have almost certainly "
+                  f"renumbered across a reboot. Auto-detecting instead; run "
+                  f"`--list-mics` and re-pin it in .env.", flush=True)
     try:
         mic_names = sr.Microphone.list_microphone_names()
         for index, name in enumerate(mic_names):
@@ -2123,9 +2504,12 @@ def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
 
     try:
         wav_data = audio.get_wav_data(convert_rate=16000, convert_width=2)
-        text, language = transcribe(wav_data,
-                                    WAKE_SEED_PROMPT if seed is None else seed,
-                                    model=WAKE_STT_MODEL)
+        if seed is None:
+            # Empty from sleep, on purpose -- see WAKE_SEED_PROMPT_ASLEEP. The
+            # seed is what teaches Whisper to hand the wake phrase back on room
+            # noise, and from sleep a false wake is the worse failure.
+            seed = WAKE_SEED_PROMPT_ASLEEP if asleep else WAKE_SEED_PROMPT
+        text, language = transcribe(wav_data, seed, model=WAKE_STT_MODEL)
         if is_repeated_hallucination(text):
             # "हे लीज़ा। हे लीज़ा। हे लीज़ा।" -- nobody says the wake word three
             # times in one breath. Whisper looping a short phrase is one of its
@@ -2135,7 +2519,7 @@ def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
             return False, "", ""
         if pattern is None:
             pattern = RE_WAKE_WORD_ASLEEP if asleep else RE_WAKE_WORD
-        match = pattern.search(text) if text else None
+        match = wake_word_match(text, pattern, asleep=asleep)
         if match:
             print(f"[WAKE] Heard{' (from sleep)' if asleep else ''}: {text}", flush=True)
             # "Hey Liza, what is photosynthesis?" said in one breath: keep the question
@@ -2248,6 +2632,19 @@ def ui_call(callback):
 # ==========================================
 # Bulletproof Audio + Word-Timestamped Subtitles
 # ==========================================
+def spoken_parts(item):
+    """(text, generation_config) for one queue item.
+
+    Everything on audio_queue used to be a bare string. A line may now arrive as
+    (text, config) to give Cartesia a delivery as well as words -- see kg_say.
+    Kept as one small reader so every consumer agrees on the shape, and so the
+    bare-string form keeps working untouched.
+    """
+    if isinstance(item, tuple):
+        return item[0], item[1]
+    return item, None
+
+
 def audio_player_worker():
     global active_subprocesses, playback_started_at
     while True:
@@ -2279,7 +2676,7 @@ def audio_player_worker():
             generation_done = threading.Event()
             cancelled = threading.Event()
 
-            def speak_sentence(sentence):
+            def speak_sentence(sentence, config=None):
                 # Last resort: neither voice can read Urdu or other Indic scripts, and
                 # sending it anyway produces noise rather than speech.
                 if RE_UNREADABLE_SCRIPT.search(sentence):
@@ -2295,7 +2692,11 @@ def audio_player_worker():
                     voice={"mode": "id", "id": cartesia_voice_id(language)},
                     language=language,
                     output_format={"container": "raw", "encoding": "pcm_s16le", "sample_rate": CARTESIA_SAMPLE_RATE},
-                    speed=CARTESIA_SPEED,
+                    # generation_config carries its own float speed, and the two
+                    # settings are different types for the same knob, so only one
+                    # is ever sent.
+                    **({"generation_config": config} if config
+                       else {"speed": CARTESIA_SPEED}),
                 ) as stream:
                     for event in stream:
                         if stop_playback_event.is_set() or cancelled.is_set(): break
@@ -2323,9 +2724,10 @@ def audio_player_worker():
             def generate_audio():
                 try:
                     while True:
-                        sentence = sentence_queue.get()
-                        if sentence is None: break
+                        item = sentence_queue.get()
+                        if item is None: break
                         if stop_playback_event.is_set() or cancelled.is_set(): break
+                        sentence, config = spoken_parts(item)
 
                         print(f"Liza (speaking): {sentence}", flush=True)
                         # Recorded here rather than at each call site so mode
@@ -2337,7 +2739,7 @@ def audio_player_worker():
                         note_spoken(sentence)
                         ui_call(lambda s=sentence: ui_instance.set_transcript(s, "liza"))
                         try:
-                            speak_sentence(sentence)
+                            speak_sentence(sentence, config)
                         except Exception as exc:
                             if not (stop_playback_event.is_set() or cancelled.is_set()):
                                 print(f"TTS Error: {exc}", flush=True)
@@ -2353,7 +2755,7 @@ def audio_player_worker():
             while True:
                 sentence = audio_queue.get()
                 if sentence is None: break
-                if sentence == "[END_OF_RESPONSE]":
+                if not isinstance(sentence, tuple) and sentence == "[END_OF_RESPONSE]":
                     audio_queue.task_done()
                     break
                 if stop_playback_event.is_set():
@@ -2504,7 +2906,18 @@ TRANS_Y0, TRANS_Y1 = 258, 392
 # seam. At the old 212 they finished at 362, floating 20px above the horizon.
 MASCOT_CX, MASCOT_CY = 399, 234
 DOTS_Y = 18
-STATE_LABEL_Y = 44
+# Was 44, directly under the head dots. The profile chip now sits between the
+# two, so the state pill drops far enough to clear it: dots end at 22, the chip
+# occupies 26..52, and the pill's 20px height means 68 puts its top at 58. The
+# mascot's frame starts at y=84 (MASCOT_CY - 150), so there is still room below.
+STATE_LABEL_Y = 68
+# The profile chip, centred on the same axis as the state pill and the mascot.
+# Moved here from the top-left corner, where it was 158x22 in the strip beside
+# the clock card: 22px is under half what a fingertip reliably hits, and the
+# measured touch error on this panel is ~10px average with 16px worst case, so
+# a tap aimed at its centre could land outside it. Centred it is unconstrained
+# by the clock card, so it can be both taller and wider.
+CHIP_W, CHIP_Y0, CHIP_Y1 = 210, 26, 52
 
 BTN_Y0, BTN_H, BTN_W, BTN_GAP = 400, 64, 252, 12
 BTN_XS = [10, 274, 538]
@@ -2587,6 +3000,94 @@ def _load_mascot_frames():
 # buttons are defined by their soft shadow and gradient more than by any
 # outline, so those two pieces are rendered in PIL and placed as images.
 SHADOW_PAD = 10
+
+# ---------------------------------------------------------------------------
+# Emoji pictures for the KG screens
+# ---------------------------------------------------------------------------
+# "A for Apple" needs an apple, and a child who cannot read needs it more than
+# the word. These come from Noto Color Emoji rendered to a bitmap by Pillow
+# rather than from a folder of downloaded pictures: nothing to license, nothing
+# to ship, nothing to fetch, and it keeps working with the network unplugged.
+#
+# Tk cannot draw colour emoji from a font itself -- it would show boxes, which
+# is why the rest of the UI has none -- so the glyph is rasterised here and put
+# on the canvas as an image instead.
+EMOJI_FONT = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
+# Noto Color Emoji is a CBDT bitmap font with ONE strike, at 109px. Asking
+# FreeType for any other size raises "invalid pixel size", so every glyph is
+# rendered at 109 and resized down afterwards.
+EMOJI_STRIKE = 109
+_emoji_cache = {}
+
+
+# Pictures that are not emoji. Some words a child is actually taught have no
+# emoji at all -- Yak, अनार, इमली, ईख, ओखली, लट्टू, षट्कोण -- and the nearest
+# emoji is the wrong animal or the wrong object, which on a chart a child is
+# learning from is worse than no picture. Dropping a PNG in here fills the gap:
+# name the entry "yak.png" instead of an emoji character and it is used instead.
+PICTURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pictures")
+_PICTURE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+
+def picture_image(spec, px):
+    """A PIL image for a picture spec at `px`: a file in pictures/, or an emoji.
+
+    None when there is nothing to draw, which every caller already handles by
+    showing the letter on its own -- so a missing file degrades to exactly the
+    same screen as no picture at all, rather than to a broken one.
+    """
+    if not spec:
+        return None
+    if spec.lower().endswith(_PICTURE_SUFFIXES):
+        return _file_picture(spec, px)
+    return emoji_image(spec, px)
+
+
+def _file_picture(name, px):
+    key = ("file:" + name, px)
+    if key in _emoji_cache:
+        return _emoji_cache[key]
+    path = os.path.join(PICTURE_DIR, os.path.basename(name))
+    image = None
+    try:
+        if os.path.exists(path):
+            source = Image.open(path).convert("RGBA")
+            # Fitted into a square and centred rather than stretched, so a
+            # non-square drawing keeps its proportions next to the letter.
+            source.thumbnail((px, px), Image.LANCZOS)
+            image = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+            image.paste(source, ((px - source.width) // 2,
+                                 (px - source.height) // 2), source)
+    except Exception as exc:
+        print(f"[PICTURE] Could not load {path} ({exc}).", flush=True)
+        image = None
+    _emoji_cache[key] = image
+    return image
+
+
+def emoji_image(char, px):
+    """A PIL image of one emoji at `px`, or None if it cannot be drawn."""
+    if not char:
+        return None
+    key = (char, px)
+    if key in _emoji_cache:
+        return _emoji_cache[key]
+    try:
+        from PIL import ImageFont
+        font = ImageFont.truetype(EMOJI_FONT, EMOJI_STRIKE)
+        canvas = Image.new("RGBA", (EMOJI_STRIKE + 40, EMOJI_STRIKE + 40), (0, 0, 0, 0))
+        ImageDraw.Draw(canvas).text((20, 20), char, font=font, embedded_color=True)
+        box = canvas.getbbox()
+        if box is None:                      # font has no glyph for it
+            _emoji_cache[key] = None
+            return None
+        image = canvas.crop(box).resize((px, px), Image.LANCZOS)
+    except Exception as exc:
+        print(f"[EMOJI] Could not render {char!r} ({exc}).", flush=True)
+        image = None
+    _emoji_cache[key] = image
+    return image
+
 
 def _rgb(colour):
     return tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
@@ -2715,6 +3216,30 @@ class TutorUI:
         self.mascot_frames_big = {} # bucket -> upscaled frames, built on demand
         self._big_pending = set()
 
+        # Profile / Kindergarten screens. `overlay` is the name of the modal
+        # screen currently covering the canvas, or None for the normal UI, and
+        # several handlers key off it -- see tap_to_wake().
+        self.overlay = None
+        self._overlay_seq = 0
+        self._overlay_photos = []
+        self._setup_name = ""
+        self._setup_class = None
+        self._setup_board = None
+        # Words and stories already used, so a child is not handed "cat" four
+        # times in a row. Cleared once the bank is exhausted.
+        self._kg_seen_words = set()
+        self._kg_seen_stories = set()
+        self._kg_word = None
+        self._kg_story = None
+        self._kg_typed = ""
+        self._kg_feedback = ""
+        self._kg_story_asked = False
+        # Set here as well as in show_kg_spelling, so _draw_kg_spelling is safe
+        # to call from any entry point rather than only after a word is chosen.
+        self._kg_stage = "write"
+        self._kg_heard = ""
+        self._kg_listening = False
+
         self.font_family = self._pick_font()
         self.canvas = tk.Canvas(root, width=UI_W, height=UI_H, bd=0,
                                 highlightthickness=0, bg=COL_BG)
@@ -2730,8 +3255,10 @@ class TutorUI:
         self._build_mode_cards()
         self._build_transcript_panel()
         self._build_buttons()
+        self._build_profile_chip()
         self._refresh_cards()
         self.set_now_playing(None)
+        self.refresh_profile_chip()
 
         self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
         self.root.bind("<Button-1>", self.tap_to_wake)
@@ -2774,6 +3301,18 @@ class TutorUI:
         pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
                x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
         return self.canvas.create_polygon(pts, smooth=True, **kw)
+
+    def _place_emoji(self, char, cx, cy, px):
+        """Draw one picture centred at (cx, cy). Returns the item id, or None."""
+        image = picture_image(char, px)
+        if image is None:
+            return None
+        photo = ImageTk.PhotoImage(image)
+        # Tk keeps no reference of its own; _clear_overlay empties this list, so
+        # a long alphabet session cannot accumulate 42 dead bitmaps.
+        self._overlay_photos.append(photo)
+        return self.canvas.create_image(cx, cy, image=photo, anchor="center",
+                                        tags=self.OVERLAY_TAG)
 
     def _place_photo(self, image, x, y, tags=None):
         """Photos are anchored NW and pulled back by the shadow padding, so
@@ -3446,17 +3985,57 @@ class TutorUI:
 
         self.current_state = state
 
+    # create_text's `width` wraps the transcript horizontally but does nothing
+    # about its height, so a long line simply kept growing downwards -- out
+    # through the bottom of its own card and over the buttons underneath. The
+    # panel is 192x134 with a status row across the bottom, which leaves exactly
+    # three lines at this font; a spoken sentence routinely needs six. Measured,
+    # not guessed: "Computers are electronic devices that process data according
+    # to a set of instructions..." laid out to y=416 against a card ending at 392.
+    def _fit_transcript(self, text):
+        """The longest leading part of `text` that stays inside the card."""
+        # Clear of the status dots, which start at TRANS_Y1 - 17.
+        bottom = TRANS_Y1 - 20
+        def fits(candidate):
+            """Lay `candidate` out in the real item and see where it ends."""
+            self.canvas.itemconfig(self.transcript_id, text=candidate)
+            box = self.canvas.bbox(self.transcript_id)
+            return box is None or box[3] <= bottom
+
+        if fits(text):
+            return text
+        # Binary search rather than dropping a word at a time: the question is
+        # how tall the text lands once WRAPPED, and the only way to answer that
+        # is to lay it out and measure it, so the aim is to do it ~8 times
+        # instead of ~40.
+        low, high, cut = 0, len(text), 0
+        while low <= high:
+            mid = (low + high) // 2
+            if fits(text[:mid].rstrip() + "…"):
+                cut, low = mid, mid + 1
+            else:
+                high = mid - 1
+        # Snap back to a word boundary -- only ever shortens it, so what fitted
+        # still fits. A single unbroken word longer than the card has no space
+        # to snap to and is left cut mid-word, which is the best available.
+        head = text[:cut].rstrip()
+        if " " in head:
+            head = head[:head.rindex(" ")].rstrip()
+        return (head + "…") if head else text[:cut].rstrip() + "…"
+
     def set_transcript(self, text, speaker="user"):
         text = (text or "").strip()
         if not text:
             return
+        # The FULL line is kept here and only the drawn copy is clipped.
         self.transcript = text
         self.speaker = speaker
         liza = speaker == "liza"
         self.canvas.itemconfig(self.speaker_id,
                                text="Liza said:" if liza else "You said:",
                                fill=STATE_STYLE["speaking"][1] if liza else COL_INDIGO)
-        self.canvas.itemconfig(self.transcript_id, text=text, fill=COL_TEXT)
+        self.canvas.itemconfig(self.transcript_id, text=self._fit_transcript(text),
+                               fill=COL_TEXT)
 
     def wake_up(self, event=None):
         """The Speak button. Wakes her from anything, including sleep."""
@@ -3474,7 +4053,12 @@ class TutorUI:
         those as a wake would put her straight back to listening. Asleep,
         only the Speak button or the wake word count.
         """
-        if self.asleep:
+        if self.asleep or self.overlay:
+            # An overlay owns the whole screen, and every control on it is a
+            # canvas item with its own binding. This handler is bound to the
+            # ROOT window, so it fires on those taps as well -- without this,
+            # picking a class would also wake her and start the microphone
+            # behind the screen the child is still looking at.
             return
         return self.wake_up(event)
 
@@ -3533,9 +4117,1423 @@ class TutorUI:
     def cycle_mode(self, event=None):
         self.set_mode((self.current_mode_index + 1) % len(self.modes))
 
+    # ==========================================
+    # Student profiles and the Kindergarten screens
+    # ==========================================
+    # Drawn as full-screen OVERLAYS on the same canvas rather than as separate Tk
+    # windows or frames. Tk has no z-index -- items stack in creation order -- so
+    # an opaque rectangle created last covers everything under it, and covered
+    # items stop receiving taps because the canvas dispatches to the topmost item
+    # only. That gets modal screens for the price of one create_rectangle, with
+    # the whole existing layout left untouched underneath.
+    #
+    # Every item carries OVERLAY_TAG, so dismissing a screen is one delete call
+    # and there is no partial teardown to get wrong.
+    OVERLAY_TAG = "overlay"
+
+    def _clear_overlay(self):
+        self.canvas.delete(self.OVERLAY_TAG)
+        self._overlay_photos = []
+        self.overlay = None
+
+    def _overlay_screen(self, name, title, subtitle=None, tint=COL_BG):
+        """The opaque backing every profile and KG screen is built on.
+
+        `name` is set here, AFTER the clear, and not by the callers: _clear_overlay
+        resets it to None, so a caller that set it first had it wiped again on
+        every redraw. That left self.overlay permanently None, which silently
+        disabled both of the guards that read it -- the story's comprehension
+        question and the move to the next spelling word, each of which checks
+        which screen is still up before firing.
+        """
+        self._clear_overlay()
+        self.overlay = name
+        backing = self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill=tint,
+                                               outline="", tags=self.OVERLAY_TAG)
+        # The backing must SWALLOW taps, not merely cover the screen.
+        #
+        # A canvas dispatches a click to the topmost item that has a binding for
+        # it -- not to the topmost item. With no binding here, every tap on an
+        # empty part of a profile or KG screen fell straight through to whatever
+        # sat underneath, which is the full assistant UI. logs/liza.log shows the
+        # result: twenty "[UI] Speak tapped" while a profile screen was open,
+        # then "[MODE] Now in TUTOR mode" and an unasked-for mode intro spoken
+        # over a child choosing their name. Binding it makes the overlay behave
+        # like the modal screen it always looked like.
+        self.canvas.tag_bind(backing, "<Button-1>", lambda event: "break")
+        self.canvas.create_text(UI_W / 2, 40, text=title, font=self._font(20, True),
+                                fill=COL_TEXT, tags=self.OVERLAY_TAG)
+        if subtitle:
+            self.canvas.create_text(UI_W / 2, 68, text=subtitle, font=self._font(10),
+                                    fill=COL_TEXT_DIM, tags=self.OVERLAY_TAG)
+
+    def _overlay_button(self, x0, y0, x1, y1, label, command, fill=COL_INDIGO,
+                        text_colour="#FFFFFF", radius=12, size=13, sub=None,
+                        label_frac=None, sub_frac=0.68):
+        self._overlay_seq += 1
+        tag = f"ovbtn{self._overlay_seq}"
+        tags = (self.OVERLAY_TAG, tag)
+        height = y1 - y0
+        self._round_rect(x0, y0, x1, y1, radius, fill=fill, outline=fill, tags=tags)
+        if label_frac is not None:
+            label_y = y0 + height * label_frac
+        else:
+            label_y = (y0 + y1) / 2 if not sub else y0 + height * 0.36
+        self.canvas.create_text((x0 + x1) / 2, label_y, text=label,
+                                font=self._font(size, True), fill=text_colour, tags=tags)
+        if sub:
+            self.canvas.create_text((x0 + x1) / 2, y0 + height * sub_frac, text=sub,
+                                    font=self._font(8), fill=text_colour, tags=tags)
+        if command is not None:
+            self.canvas.tag_bind(tag, "<Button-1>", lambda e: command())
+        return tag
+
+    # ---------- the chip that shows who is using the device ----------
+    def _build_profile_chip(self):
+        """Name and class, centred above the state pill, and the way in to
+        Switch User.
+
+        Centred rather than tucked in the top-left corner: this is the only
+        control for WHO is using the device, and in the corner it read as a
+        label rather than something to press. On the centre axis it has no clock
+        card below it to bound its height, so it is 26px tall instead of 22 and
+        wide enough not to truncate a name.
+        """
+        tags = (self.OVERLAY_TAG + "_never", "profilechip")
+        x0, x1 = MASCOT_CX - CHIP_W / 2, MASCOT_CX + CHIP_W / 2
+        self.profile_chip_bg = self._round_rect(x0, CHIP_Y0, x1, CHIP_Y1, 13,
+                                                fill="#FFFFFF",
+                                                outline=COL_CARD_EDGE, tags=tags)
+        self.profile_chip_text = self.canvas.create_text(
+            MASCOT_CX, (CHIP_Y0 + CHIP_Y1) / 2, text="Tap to set up",
+            anchor="center", font=self._font(9, True),
+            fill=COL_TEXT_DIM, tags=tags)
+        self.canvas.tag_bind("profilechip", "<Button-1>",
+                             lambda e: self.show_profile_picker())
+
+    def refresh_profile_chip(self):
+        profile = active_profile()
+        if profile:
+            label = f"{profile.get('name', 'Student')}  ·  Class {profile.get('class')}"
+            colour = COL_TEXT
+        else:
+            label, colour = "Tap to set up", COL_TEXT_DIM
+        self.canvas.itemconfig(self.profile_chip_text,
+                               text=self._ellipsize(label, self._font(9, True),
+                                                    CHIP_W - 24),
+                               fill=colour)
+
+    # ---------- who is using the device ----------
+    def show_profile_picker(self):
+        """Existing profiles plus a way to add one. The Switch User screen.
+
+        Also the first screen on a device nobody has set up yet, where it has no
+        profiles to list and so shows only Add a student.
+        """
+        people = profiles.list_profiles()
+        self._overlay_screen("picker", "Who's learning today?",
+                             "Tap your name, or add a new student.")
+        for index, profile in enumerate(people[:6]):
+            col, row = index % 3, index // 3
+            x0 = 40 + col * 246
+            y0 = 110 + row * 96
+            klass = profile.get("class")
+            tint = "#FFF4E6" if klass == profiles.KG_CLASS else "#F3EEFF"
+            accent = "#F59E0B" if klass == profiles.KG_CLASS else "#7C3AED"
+            self._overlay_button(x0, y0, x0 + 226, y0 + 78,
+                                 self._ellipsize(profile.get("name", "Student"),
+                                                 self._font(13, True), 200),
+                                 lambda p=profile: self.choose_profile(p),
+                                 fill=tint, text_colour=accent, size=13,
+                                 sub=f"Class {klass}")
+        active = active_profile()
+        if active:
+            # Two buttons once somebody is set up: add a NEW child, or correct
+            # the one already in use. Side by side rather than one centred, and
+            # both still 56px tall, which is well past what a fingertip needs.
+            self._overlay_button(130, 396, 410, 452, "+  Add a student",
+                                 self.show_profile_setup, fill=COL_INDIGO, size=13)
+            self._overlay_button(426, 396, 670, 452, "Edit this student",
+                                 lambda: self.show_profile_setup(active_profile()),
+                                 fill="#E6E9F5", text_colour=COL_TEXT, size=12,
+                                 sub=self._ellipsize(
+                                     f"{active.get('name', 'Student')} · "
+                                     f"Class {active.get('class')}",
+                                     self._font(9), 214))
+        else:
+            self._overlay_button(UI_W / 2 - 150, 396, UI_W / 2 + 150, 452,
+                                 "+  Add a student", self.show_profile_setup,
+                                 fill=COL_INDIGO, size=13)
+        if people:
+            self._overlay_button(628, 20, 780, 56, "Close",
+                                 self.dismiss_overlay, fill="#E6E9F5",
+                                 text_colour=COL_TEXT, size=10)
+
+    def choose_profile(self, profile):
+        profiles.set_active_profile(profile["user_id"])
+        print(f"[PROFILE] Active: {profile.get('name')} (Class {profile.get('class')})",
+              flush=True)
+        self.refresh_profile_chip()
+        self.route_for_profile(profile)
+
+    def dismiss_overlay(self):
+        """Back to whichever screen the ACTIVE profile belongs on.
+
+        This used to clear the overlay and set_kg_active(False) unconditionally,
+        on the assumption it was only ever offered to a non-KG profile. The KG
+        home offers Switch user, so a pre-reader could reach the picker and tap
+        Close -- which dropped them into the open chat screen with the microphone
+        live, the one place the KG routing exists to keep them out of. Routing on
+        the active profile makes Close mean "back", not "leave KG".
+        """
+        self.route_for_profile(active_profile())
+
+    # ---------- creating and editing a profile ----------
+    def show_profile_setup(self, profile=None):
+        """The name-and-class screen. With `profile`, edits it instead of
+        creating a new one.
+
+        The same screen for both on purpose: a child who was set up as Class 5
+        when they meant Class 6 needs exactly the fields they were first asked
+        for, and a second screen that showed the same three things would drift
+        out of step with this one the first time either changed.
+        """
+        self.overlay = "setup"
+        self._setup_editing = (profile or {}).get("user_id")
+        self._setup_name = (profile or {}).get("name", "") or ""
+        self._setup_class = (profile or {}).get("class")
+        self._setup_board = (profile or {}).get("board")
+        self._draw_setup()
+
+    def _draw_setup(self):
+        editing = getattr(self, "_setup_editing", None)
+        self._overlay_screen(
+            "setup",
+            "Edit student" if editing else "New student",
+            "Change the name or class, then save." if editing
+            else "Type a name, then tap a class.")
+
+        # Name field
+        self._round_rect(40, 84, 760, 124, 10, fill="#FFFFFF",
+                         outline=COL_CARD_EDGE, tags=self.OVERLAY_TAG)
+        shown = self._setup_name or "Name"
+        self.canvas.create_text(54, 104, text=shown, anchor="w",
+                                font=self._font(13, True),
+                                fill=COL_TEXT if self._setup_name else COL_TEXT_FAINT,
+                                tags=self.OVERLAY_TAG)
+
+        # Keyboard. A-Z on three rows, plus space and backspace: a name is all
+        # this ever has to type, so there are no digits and no symbols to hunt
+        # through. Keys are 46px wide, which is comfortably past the ~40px a
+        # fingertip needs on this panel.
+        rows = ["ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ"]
+        for r, row in enumerate(rows):
+            width, gap = 68, 4
+            total = len(row) * width + (len(row) - 1) * gap
+            x = (UI_W - total) / 2 if r < 2 else 40
+            y = 136 + r * 46
+            for letter in row:
+                self._overlay_button(x, y, x + width, y + 42, letter,
+                                     lambda c=letter: self._setup_key(c),
+                                     fill="#FFFFFF", text_colour=COL_TEXT,
+                                     radius=8, size=12)
+                x += width + gap
+            if r == 2:
+                self._overlay_button(x, y, x + 140, y + 42, "SPACE",
+                                     lambda: self._setup_key(" "),
+                                     fill="#FFFFFF", text_colour=COL_TEXT,
+                                     radius=8, size=10)
+                x += 144
+                self._overlay_button(x, y, x + 140, y + 42, "DELETE",
+                                     self._setup_backspace,
+                                     fill="#E6E9F5", text_colour=COL_TEXT,
+                                     radius=8, size=10)
+
+        # Class picker: KG and 1-12, thirteen big targets on one row each half.
+        self.canvas.create_text(40, 292, text="CLASS", anchor="w",
+                                font=self._font(9, True), fill=COL_TEXT_DIM,
+                                tags=self.OVERLAY_TAG)
+        # Thirteen targets in the 40..540 strip, which is everything left of the
+        # board column at 560. Seven per row at 66px wide clears the ~40px a
+        # fingertip needs and still leaves the board its half of the screen.
+        for index, value in enumerate(profiles.CLASS_VALUES):
+            col, row = index % 7, index // 7
+            x0 = 40 + col * 72
+            y0 = 306 + row * 52
+            chosen = self._setup_class == value
+            self._overlay_button(x0, y0, x0 + 66, y0 + 46,
+                                 "KG" if value == profiles.KG_CLASS else value,
+                                 lambda v=value: self._setup_pick_class(v),
+                                 fill=COL_INDIGO if chosen else "#FFFFFF",
+                                 text_colour="#FFFFFF" if chosen else COL_TEXT,
+                                 radius=10, size=13)
+
+        # Board is explicitly optional, so it never blocks Save.
+        self.canvas.create_text(560, 292, text="BOARD (OPTIONAL)", anchor="w",
+                                font=self._font(9, True), fill=COL_TEXT_DIM,
+                                tags=self.OVERLAY_TAG)
+        for index, board in enumerate(profiles.BOARDS):
+            x0, y0 = 560 + (index % 2) * 116, 306 + (index // 2) * 52
+            chosen = self._setup_board == board
+            self._overlay_button(x0, y0, x0 + 108, y0 + 46, board,
+                                 lambda b=board: self._setup_pick_board(b),
+                                 fill="#14B8A6" if chosen else "#FFFFFF",
+                                 text_colour="#FFFFFF" if chosen else COL_TEXT,
+                                 radius=10, size=10)
+
+        ready = bool(self._setup_class)
+        self._overlay_button(40, 416, 300, 462,
+                             "Save changes" if editing else "Save and start",
+                             self._setup_save if ready else None,
+                             fill=COL_INDIGO if ready else "#C7CEF0", size=13)
+        if profiles.list_profiles():
+            self._overlay_button(316, 416, 500, 462, "Back",
+                                 self.show_profile_picker, fill="#E6E9F5",
+                                 text_colour=COL_TEXT, size=11)
+        if editing:
+            # Only when editing, and set well away from Save: the two buttons do
+            # opposite things and one of them cannot be undone.
+            self._overlay_button(600, 416, 760, 462, "Delete",
+                                 lambda: self.confirm_delete_profile(editing),
+                                 fill="#FEE2E2", text_colour="#B91C1C", size=11)
+
+    def confirm_delete_profile(self, user_id):
+        """Ask before deleting. This removes their conversation as well.
+
+        A separate screen rather than a second tap on the same button, because
+        the thing being destroyed is everything the device knows about a child
+        and the two taps would sit in the same place.
+        """
+        profile = next((p for p in profiles.list_profiles()
+                        if p.get("user_id") == user_id), None)
+        if profile is None:
+            self.show_profile_picker()
+            return
+        name = profile.get("name", "this student")
+        self._overlay_screen("confirm_delete", f"Delete {name}?",
+                             "This cannot be undone.", tint="#FFF5F5")
+        self.canvas.create_text(
+            UI_W / 2, 150,
+            text=f"{name} (Class {profile.get('class')}) will be removed,\n"
+                 f"along with everything they have asked and learned.",
+            justify="center", font=self._font(12), fill=COL_TEXT,
+            tags=self.OVERLAY_TAG)
+        self._overlay_button(120, 250, 380, 310, "Keep",
+                             lambda: self.show_profile_setup(profile),
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=13)
+        self._overlay_button(420, 250, 680, 310, f"Delete {name}",
+                             lambda: self.delete_profile_now(user_id),
+                             fill="#DC2626", size=13)
+
+    def delete_profile_now(self, user_id):
+        profile = next((p for p in profiles.list_profiles()
+                        if p.get("user_id") == user_id), None)
+        name = (profile or {}).get("name", user_id)
+        profiles.delete_profile(user_id)
+        print(f"[PROFILE] Deleted {name} and their history.", flush=True)
+        self.refresh_profile_chip()
+        remaining = profiles.list_profiles()
+        if not remaining:
+            # Nobody left: the device is back to its first-run state, so it asks
+            # who is using it rather than dropping into a nameless session.
+            set_kg_active(False)
+            self.show_profile_setup()
+            return
+        # delete_profile has already moved the active pointer to a survivor;
+        # route on whoever that now is so a KG child lands on the KG screens.
+        self.show_profile_picker()
+
+    def _setup_key(self, char):
+        if len(self._setup_name) < 18:
+            self._setup_name += char
+            self._draw_setup()
+
+    def _setup_backspace(self):
+        self._setup_name = self._setup_name[:-1]
+        self._draw_setup()
+
+    def _setup_pick_class(self, value):
+        self._setup_class = value
+        self._draw_setup()
+
+    def _setup_pick_board(self, board):
+        # Tapping the chosen board again clears it -- it is optional, so there
+        # has to be a way back out of having picked one.
+        self._setup_board = None if self._setup_board == board else board
+        self._draw_setup()
+
+    def _setup_save(self):
+        editing = getattr(self, "_setup_editing", None)
+        if editing:
+            profile = profiles.update_profile(editing,
+                                              name=self._setup_name.title().strip(),
+                                              class_value=self._setup_class,
+                                              board=self._setup_board)
+            if profile is None:
+                # The profile was deleted from under this screen. Nothing to
+                # write back to, so fall back to the picker rather than saving
+                # a ghost or crashing on None.
+                print("[PROFILE] The profile being edited no longer exists.", flush=True)
+                self.show_profile_picker()
+                return
+            # Editing implies using: the class that was just corrected has to be
+            # the one the next answer is pitched at, and update_profile does not
+            # change which profile is active.
+            profiles.set_active_profile(profile["user_id"])
+            print(f"[PROFILE] Updated {profile['name']} (Class {profile['class']}).",
+                  flush=True)
+        else:
+            profile = profiles.create_profile(self._setup_name.title().strip(),
+                                              self._setup_class,
+                                              board=self._setup_board)
+            print(f"[PROFILE] Created {profile['name']} (Class {profile['class']}).",
+                  flush=True)
+        self.refresh_profile_chip()
+        # Routed either way, so changing a class INTO or OUT OF KG moves the
+        # child to the right screen immediately -- editing Class 5 to KG has to
+        # land on the spelling and story picker, not leave them in open chat.
+        self.route_for_profile(profile)
+
+    # ---------- the single routing decision ----------
+    def route_for_profile(self, profile):
+        """KG goes to the spelling and story screens; everyone else to the
+        normal flow. The one place that decision is made."""
+        if profile and profiles.is_kindergarten(profile.get("class")):
+            set_kg_active(True)
+            self.show_kg_home(greet=True)
+        else:
+            set_kg_active(False)
+            self._clear_overlay()
+
+    # ---------- Kindergarten ----------
+    def show_kg_home(self, greet=False):
+        set_kg_active(True)
+        profile = active_profile() or {}
+        name = profile.get("name", "")
+        self._overlay_screen("kg_home", f"Hello {name}!" if name else "Hello!",
+                             "What would you like to do?", tint="#FFF9F0")
+        # Six activities in a 3x2 grid rather than two big cards. Each tile is
+        # 236x142, which is far past what a fingertip needs, and each one leads
+        # with a BIG GLYPH the child can recognise -- the words underneath are
+        # for whoever is sitting with them, because the child this is built for
+        # cannot read "Hindi alphabet".
+        tiles = [
+            ("Spell a Word",  "Say it, then write it", "#7C3AED", "ABC",
+             self.show_kg_spelling),
+            ("A B C",         "English letters",        "#2563EB", "Aa",
+             lambda: self.show_kg_alphabet("en")),
+            ("क ख ग",         "हिंदी अक्षर",             "#DB2777", "अ",
+             lambda: self.show_kg_alphabet("hi")),
+            ("1 2 3",         "Counting",               "#059669", "12",
+             self.show_kg_counting),
+            ("A to Z",        "Put them in order",      "#D97706", "A?",
+             self.show_kg_order),
+            ("Story Time",    "Sit back and listen",    "#F59E0B", "book",
+             self.show_kg_story_picker),
+        ]
+        for index, (label, sub, colour, glyph, command) in enumerate(tiles):
+            col, row = index % 3, index // 3
+            x0 = 28 + col * 252
+            y0 = 96 + row * 158
+            tag = self._overlay_button(x0, y0, x0 + 236, y0 + 142, label, command,
+                                       fill=colour, size=15, sub=sub,
+                                       label_frac=0.62, sub_frac=0.82)
+            self._kg_tile_glyph(glyph, x0 + 118, y0 + 42, tag)
+
+        # Test sits apart from the six learning tiles, wide and on its own row,
+        # because it is a different kind of thing: the tiles teach, this one
+        # asks. Mixing it into the grid would have made it look like a seventh
+        # activity to wander into.
+        self._overlay_button(28, 412, 560, 464, "Test yourself",
+                             self.show_kg_test_picker, fill="#0EA5E9", size=15,
+                             sub="See what you have learned",
+                             label_frac=0.42, sub_frac=0.74)
+        self._overlay_button(580, 412, 770, 464, "Switch user",
+                             self.show_profile_picker, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=11)
+        if greet and name:
+            kg_say(f"Hello {name}! What would you like to do today?", "warm")
+
+    def _kg_tile_glyph(self, kind, cx, cy, tag):
+        """The picture on a home tile. Drawn under the label, same tag, so
+        tapping the picture is tapping the button."""
+        tags = (self.OVERLAY_TAG, tag)
+        if kind == "book":
+            self._kg_book_glyph(cx, cy + 4, tag)
+            return
+        if kind == "ABC":
+            self._kg_blocks_glyph(cx, cy + 4, tag)
+            return
+        self.canvas.create_text(cx, cy, text=kind, font=self._font(26, True),
+                                fill="#FFFFFF", tags=tags)
+
+    # ----- alphabets -----
+    def show_kg_alphabet(self, language="en", index=0):
+        """One letter at a time, said aloud with its example word.
+
+        Hindi and English share this screen because the activity is identical --
+        only the bank and the voice change, and the voice picks itself from the
+        script (see detect_tts_language). Two screens would have been two places
+        to fix the next layout bug.
+        """
+        bank = (kg_content.HINDI_ALPHABET if language == "hi"
+                else kg_content.ENGLISH_ALPHABET)
+        self._kg_alpha_lang = language
+        self._kg_alpha_index = max(0, min(index, len(bank) - 1))
+        entry = bank[self._kg_alpha_index]
+        letter, word = entry[0], entry[1]
+        if language == "hi":
+            reading, picture = entry[2], entry[3]
+        else:
+            reading, picture = "", entry[2]
+
+        title = "हिंदी अक्षर" if language == "hi" else "A B C"
+        self._overlay_screen("kg_alpha", title,
+                             f"{self._kg_alpha_index + 1} of {len(bank)}",
+                             tint="#EFF6FF" if language == "en" else "#FDF2F8")
+        accent = "#2563EB" if language == "en" else "#DB2777"
+
+        # With a picture the letter moves left and they sit side by side, which
+        # is how a wall chart does it. Without one the letter takes the middle,
+        # so a letter whose traditional word has no emoji still looks deliberate
+        # rather than like something failed to load.
+        has_picture = picture_image(picture, 132) is not None if picture else False
+        letter_x = UI_W / 2 - 150 if has_picture else UI_W / 2
+        self.canvas.create_text(letter_x, 186, text=letter,
+                                font=self._font(76, True), fill=accent,
+                                tags=self.OVERLAY_TAG)
+        if reading:
+            # The Latin reading is for the adult sitting alongside, not the child.
+            self.canvas.create_text(letter_x, 244, text=f"({reading})",
+                                    font=self._font(11), fill=COL_TEXT_DIM,
+                                    tags=self.OVERLAY_TAG)
+        if has_picture:
+            self._place_emoji(picture, UI_W / 2 + 130, 186, 132)
+        self.canvas.create_text(UI_W / 2, 306, text=word,
+                                font=self._font(22, True), fill=COL_TEXT,
+                                tags=self.OVERLAY_TAG)
+
+        self._overlay_button(20, 396, 170, 452, "Back",
+                             self.show_kg_home, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=11)
+        if self._kg_alpha_index > 0:
+            self._overlay_button(200, 396, 360, 452, "Previous",
+                                 lambda: self.show_kg_alphabet(
+                                     language, self._kg_alpha_index - 1),
+                                 fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._overlay_button(390, 396, 560, 452, "Say it again",
+                             lambda: self._kg_say_letter(letter, word, language),
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        if self._kg_alpha_index < len(bank) - 1:
+            self._overlay_button(590, 396, 780, 452, "Next", lambda:
+                                 self.show_kg_alphabet(language,
+                                                       self._kg_alpha_index + 1),
+                                 fill=accent, size=13)
+        else:
+            self._overlay_button(590, 396, 780, 452, "Start again",
+                                 lambda: self.show_kg_alphabet(language, 0),
+                                 fill=accent, size=12)
+        self._kg_say_letter(letter, word, language)
+
+    def _kg_say_letter(self, letter, word, language):
+        if language == "hi":
+            kg_say_many([(f"{letter}", "curious"), (f"{letter} से {word}।", "warm")])
+        else:
+            kg_say_many([(f"{letter}.", "curious"),
+                         (f"{letter} for {word}.", "warm")])
+
+    # ----- counting -----
+    def show_kg_counting(self, value=1):
+        """Count up one number at a time, in English and Hindi.
+
+        She asks before going past each block of twenty rather than marching to
+        fifty, because a KG child finishing at twenty has finished something.
+        """
+        self._kg_count = max(1, min(value, kg_content.COUNT_MAX))
+        n = self._kg_count
+        english = kg_content.number_name(n, "en")
+        hindi = kg_content.number_name(n, "hi")
+
+        self._overlay_screen("kg_count", "Counting",
+                             f"{n} of {kg_content.COUNT_MAX}", tint="#ECFDF5")
+        self.canvas.create_text(UI_W / 2, 150, text=str(n),
+                                font=self._font(76, True), fill="#059669",
+                                tags=self.OVERLAY_TAG)
+        self.canvas.create_text(UI_W / 2, 218, text=english,
+                                font=self._font(20, True), fill=COL_TEXT,
+                                tags=self.OVERLAY_TAG)
+        self.canvas.create_text(UI_W / 2, 252, text=hindi,
+                                font=self._font(20, True), fill="#DB2777",
+                                tags=self.OVERLAY_TAG)
+
+        # Something to actually count. Apples rather than dots: a child counts
+        # things, and "five apples" is a sentence they can check against the
+        # numeral. Two rows past ten so twenty still fits across 800px.
+        if n <= 20:
+            per_row = 10
+            size = 38 if n <= 10 else 32
+            gap = 8
+            rows = [list(range(min(per_row, n - r * per_row)))
+                    for r in range((n + per_row - 1) // per_row)]
+            top = 300 if len(rows) == 1 else 284
+            for row_index, row in enumerate(rows):
+                total = len(row) * size + (len(row) - 1) * gap
+                x = (UI_W - total) / 2 + size / 2
+                y = top + row_index * (size + 6)
+                for _ in row:
+                    self._place_emoji(kg_content.COUNT_EMOJI, x, y, size)
+                    x += size + gap
+
+        self._overlay_button(20, 396, 170, 452, "Back", self.show_kg_home,
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        if n > 1:
+            self._overlay_button(200, 396, 360, 452, "Previous",
+                                 lambda: self.show_kg_counting(n - 1),
+                                 fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._overlay_button(390, 396, 560, 452, "Say it again",
+                             lambda: self._kg_say_number(n),
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        if n >= kg_content.COUNT_MAX:
+            self._overlay_button(590, 396, 780, 452, "Start again",
+                                 lambda: self.show_kg_counting(1),
+                                 fill="#059669", size=12)
+        else:
+            self._overlay_button(590, 396, 780, 452, "Next",
+                                 lambda: self._kg_count_next(n),
+                                 fill="#059669", size=13)
+        self._kg_say_number(n)
+
+    def _kg_say_number(self, n):
+        kg_say_many([(f"{kg_content.number_name(n, 'en')}.", "curious"),
+                     (f"{kg_content.number_name(n, 'hi')}।", "warm")])
+
+    def _kg_count_next(self, n):
+        """Ask before starting each new block of twenty."""
+        if n % kg_content.COUNT_BLOCK == 0:
+            self._kg_count_milestone(n)
+            return
+        self.show_kg_counting(n + 1)
+
+    def _kg_count_milestone(self, n):
+        self._overlay_screen("kg_count_more", f"You counted to {n}!",
+                             "Shall we keep going?", tint="#ECFDF5")
+        self.canvas.create_text(UI_W / 2, 170, text="\u2b50",
+                                font=self._font(58, True), fill="#F59E0B",
+                                tags=self.OVERLAY_TAG)
+        self.canvas.create_text(
+            UI_W / 2, 240,
+            text=f"That is all the way to {kg_content.number_name(n, 'en').lower()}.",
+            font=self._font(14), fill=COL_TEXT, tags=self.OVERLAY_TAG)
+        self._overlay_button(140, 300, 380, 360, "Yes, keep going!",
+                             lambda: self.show_kg_counting(n + 1),
+                             fill="#059669", size=14)
+        self._overlay_button(420, 300, 660, 360, "That's enough",
+                             self.show_kg_home, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=13)
+        kg_say_many([(f"Wow! You counted all the way to {n}!", "excited"),
+                     ("Shall we keep going?", "curious")])
+
+    # ----- put the letters in A-Z order -----
+    # Five letters, drawn from a window of the alphabet rather than at random
+    # across it: ordering C D E F G teaches the sequence, while ordering B K Q
+    # only tests whether they already know it.
+    KG_ORDER_COUNT = 5
+
+    def show_kg_order(self):
+        letters = [entry[0] for entry in kg_content.ENGLISH_ALPHABET]
+        start = random.randint(0, len(letters) - self.KG_ORDER_COUNT)
+        self._kg_order_target = letters[start:start + self.KG_ORDER_COUNT]
+        pool = list(self._kg_order_target)
+        # Shuffle until it is not already in order, or the puzzle is not one.
+        for _ in range(10):
+            random.shuffle(pool)
+            if pool != self._kg_order_target:
+                break
+        self._kg_order_pool = pool
+        self._kg_order_picked = []
+        self._kg_order_done = False
+        self._draw_kg_order()
+        kg_say_many([("Put the letters in order!", "encouraging"),
+                     ("Tap them from A to Z.", "curious")])
+
+    def _draw_kg_order(self):
+        self._overlay_screen("kg_order", "A to Z",
+                             "Tap the letters in the right order",
+                             tint="#FFFBEB")
+        # What they have chosen so far, left to right.
+        slot, gap = 84, 12
+        total = len(self._kg_order_target) * slot + (len(self._kg_order_target) - 1) * gap
+        x = (UI_W - total) / 2
+        for index in range(len(self._kg_order_target)):
+            picked = (self._kg_order_picked[index]
+                      if index < len(self._kg_order_picked) else "")
+            self._round_rect(x, 100, x + slot, 100 + 76, 12, fill="#FFFFFF",
+                             outline="#F5D9A0", tags=self.OVERLAY_TAG)
+            self.canvas.create_text(x + slot / 2, 138, text=picked,
+                                    font=self._font(30, True), fill="#D97706",
+                                    tags=self.OVERLAY_TAG)
+            x += slot + gap
+
+        if self._kg_order_done:
+            self.canvas.create_text(UI_W / 2, 214, text="Perfect! A to Z!",
+                                    font=self._font(17, True), fill="#059669",
+                                    tags=self.OVERLAY_TAG)
+        else:
+            # The letters still to place.
+            remaining = [c for c in self._kg_order_pool
+                         if c not in self._kg_order_picked]
+            total = len(remaining) * slot + max(0, len(remaining) - 1) * gap
+            x = (UI_W - total) / 2
+            for letter in remaining:
+                self._overlay_button(x, 226, x + slot, 226 + 76, letter,
+                                     lambda c=letter: self._kg_order_tap(c),
+                                     fill="#FFFFFF", text_colour="#92400E",
+                                     radius=12, size=26)
+                x += slot + gap
+
+        self._overlay_button(20, 396, 170, 452, "Back", self.show_kg_home,
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._overlay_button(320, 396, 480, 452, "Start over",
+                             self._kg_order_reset, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=11)
+        self._overlay_button(610, 396, 780, 452, "New letters",
+                             self.show_kg_order, fill="#D97706", size=12)
+
+    def _kg_order_reset(self):
+        self._kg_order_picked = []
+        self._kg_order_done = False
+        self._draw_kg_order()
+
+    def _kg_order_tap(self, letter):
+        expected = self._kg_order_target[len(self._kg_order_picked)]
+        if letter != expected:
+            # Wrong one. Say which letter actually comes next rather than only
+            # that this one is wrong -- "not that one" tells a child nothing
+            # about the alphabet.
+            kg_say_many([("Not that one.", "gentle"),
+                         (f"After {self._kg_order_picked[-1]}, comes {expected}."
+                          if self._kg_order_picked
+                          else f"{expected} comes first.", "curious")])
+            return
+        self._kg_order_picked.append(letter)
+        if len(self._kg_order_picked) < len(self._kg_order_target):
+            self._draw_kg_order()
+            kg_say(letter, "curious")
+            return
+        self._kg_order_done = True
+        self._draw_kg_order()
+        kg_say_many([(random.choice(kg_content.PRAISE), "proud"),
+                     (" ".join(self._kg_order_target) + ".", "excited")])
+        self.root.after(4500, self._kg_order_next_if_still_here)
+
+    def _kg_order_next_if_still_here(self):
+        if self.overlay == "kg_order":
+            self.show_kg_order()
+
+    # ----- which language should the story be in? -----
+    def show_kg_story_picker(self):
+        self._overlay_screen("kg_story_lang", "Story Time",
+                             "Which language would you like?", tint="#FFF6E8")
+        english = self._overlay_button(60, 130, 380, 340, "English",
+                                       lambda: self.show_kg_story("en"),
+                                       fill="#F59E0B", size=22,
+                                       sub="A story in English",
+                                       label_frac=0.56, sub_frac=0.74)
+        self._kg_book_glyph(220, 196, english)
+        hindi = self._overlay_button(420, 130, 740, 340, "हिंदी",
+                                     lambda: self.show_kg_story("hi"),
+                                     fill="#DB2777", size=24,
+                                     sub="हिंदी में कहानी",
+                                     label_frac=0.56, sub_frac=0.74)
+        self._kg_book_glyph(580, 196, hindi)
+        self._overlay_button(300, 396, 500, 448, "Back", self.show_kg_home,
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        kg_say_many([("Would you like a story in English,", "curious"),
+                     ("या हिंदी में?", "curious")])
+
+    # ----- tests -----
+    # A test is five questions, each in two parts: NAME the picture, then spell
+    # it (English) or say its first letter (Hindi). Counting asks how many, then
+    # for the same number in the other language.
+    #
+    # Both parts are answered by voice through the same ai_loop bridge the
+    # spelling screen uses, so there is still only one audio stack. Every screen
+    # also carries a tap-through, because a test a child cannot leave when the
+    # room is too loud is a trap rather than a test.
+    KG_TEST_QUESTIONS = 5
+    KG_TEST_LISTEN_S = 6.0
+
+    def show_kg_test_picker(self):
+        self._overlay_screen("kg_test_pick", "Test yourself",
+                             "What would you like to be tested on?",
+                             tint="#EFF6FF")
+        options = [
+            ("A B C", "English letters", "#2563EB", "en"),
+            ("क ख ग", "हिंदी अक्षर", "#DB2777", "hi"),
+            ("1 2 3", "Counting", "#059669", "count"),
+        ]
+        for index, (label, sub, colour, kind) in enumerate(options):
+            x0 = 40 + index * 250
+            tag = self._overlay_button(x0, 130, x0 + 230, 330, label,
+                                       lambda k=kind: self.start_kg_test(k),
+                                       fill=colour, size=22, sub=sub,
+                                       label_frac=0.58, sub_frac=0.78)
+            self._kg_tile_glyph(label.split()[0], x0 + 115, 176, tag)
+        self._overlay_button(300, 396, 500, 452, "Back", self.show_kg_home,
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        kg_say("What would you like to be tested on?", "curious")
+
+    def start_kg_test(self, kind):
+        self._kg_test_kind = kind
+        self._kg_test_qs = kg_content.test_questions(kind, self.KG_TEST_QUESTIONS)
+        self._kg_test_at = 0
+        self._kg_test_score = 0
+        self._kg_test_round = getattr(self, "_kg_test_round", 0) + 1
+        self._kg_ask_test_question()
+
+    def _kg_test_stale(self, token):
+        return (self.overlay != "kg_test"
+                or token != getattr(self, "_kg_test_round", 0))
+
+    def _kg_ask_test_question(self):
+        if self._kg_test_at >= len(self._kg_test_qs):
+            self._kg_test_finish()
+            return
+        self._kg_test_stage = "name"
+        self._kg_test_heard = ""
+        self._kg_test_note = ""
+        self._kg_test_listening = False
+        self._draw_kg_test()
+        question = self._kg_test_qs[self._kg_test_at]
+        if question["kind"] == "count":
+            kg_say_many([("How many do you see?", "curious")])
+        elif question["kind"] == "hi":
+            kg_say_many([("यह क्या है?", "curious")])
+        else:
+            kg_say_many([("What is this?", "curious")])
+        self._kg_after_speaking(
+            lambda r=self._kg_test_round: self._kg_test_listen(r))
+
+    def _draw_kg_test(self):
+        question = self._kg_test_question()
+        if question is None:
+            return
+        self._overlay_screen(
+            "kg_test", f"Question {self._kg_test_at + 1} of {len(self._kg_test_qs)}",
+            "Listening..." if self._kg_test_listening else " ", tint="#F0F9FF")
+
+        if question["kind"] == "count":
+            # The thing being counted IS the question, so it is drawn large.
+            n = question["value"]
+            per_row = 10
+            size = 44 if n <= 10 else 34
+            gap = 8
+            rows = [min(per_row, n - r * per_row)
+                    for r in range((n + per_row - 1) // per_row)]
+            top = 150 if len(rows) == 1 else 132
+            for row_index, count in enumerate(rows):
+                total = count * size + (count - 1) * gap
+                x = (UI_W - total) / 2 + size / 2
+                y = top + row_index * (size + 8)
+                for _ in range(count):
+                    self._place_emoji(kg_content.COUNT_EMOJI, x, y, size)
+                    x += size + gap
+        else:
+            self._place_emoji(question["picture"], UI_W / 2, 168, 150)
+
+        prompt = {"name": {"count": "How many?", "hi": "यह क्या है?"}.get(
+                      question["kind"], "What is this?"),
+                  "spell": {"count": "Now say it in Hindi",
+                            "hi": "किस अक्षर से शुरू होता है?"}.get(
+                      question["kind"], "Now spell it")}[self._kg_test_stage]
+        self.canvas.create_text(UI_W / 2, 268, text=prompt,
+                                font=self._font(17, True), fill=COL_TEXT,
+                                tags=self.OVERLAY_TAG)
+        if self._kg_test_listening:
+            self._round_rect(UI_W / 2 - 130, 292, UI_W / 2 + 130, 336, 22,
+                             fill="#E0F2FE", outline="#0EA5E9",
+                             tags=self.OVERLAY_TAG)
+            self.canvas.create_text(UI_W / 2, 314, text="I'm listening...",
+                                    font=self._font(13, True), fill="#075985",
+                                    tags=self.OVERLAY_TAG)
+        elif self._kg_test_note:
+            self.canvas.create_text(UI_W / 2, 314, text=self._kg_test_note,
+                                    font=self._font(14, True), fill=COL_TEXT,
+                                    tags=self.OVERLAY_TAG)
+
+        self.canvas.create_text(60, 40, text=f"Score {self._kg_test_score}",
+                                font=self._font(11, True), fill="#0EA5E9",
+                                tags=self.OVERLAY_TAG)
+        self._overlay_button(20, 400, 170, 452, "Stop", self.show_kg_home,
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._overlay_button(330, 400, 470, 452, "Say again",
+                             self._kg_test_repeat, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=11)
+        self._overlay_button(620, 400, 780, 452, "Skip",
+                             self._kg_test_skip, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=11)
+
+    def _kg_test_repeat(self):
+        question = self._kg_test_question()
+        if question is None:
+            return
+        if self._kg_test_stage == "name":
+            text = {"count": "How many do you see?",
+                    "hi": "यह क्या है?"}.get(question["kind"], "What is this?")
+        else:
+            text = {"count": "Now say that number in Hindi.",
+                    "hi": "यह किस अक्षर से शुरू होता है?"}.get(
+                        question["kind"], "Now spell it.")
+        kg_say(text, "curious")
+        self._kg_after_speaking(
+            lambda r=self._kg_test_round: self._kg_test_listen(r))
+
+    def _kg_test_skip(self):
+        self._kg_test_at += 1
+        self._kg_ask_test_question()
+
+    def _kg_test_question(self):
+        """The question on display, clamped. Belt and braces for the redraw gap
+        above: a drawing routine must never be the thing that raises."""
+        if not self._kg_test_qs:
+            return None
+        return self._kg_test_qs[min(self._kg_test_at, len(self._kg_test_qs) - 1)]
+
+    def _kg_test_listen(self, token):
+        if self._kg_test_stale(token):
+            return
+        self._kg_test_listening = True
+        self._draw_kg_test()
+        question = self._kg_test_question()
+        kind = question["kind"] if question else "en"
+        spelling = self._kg_test_stage == "spell"
+        if kind == "hi":
+            # Hindi answers were being forced through language="en", which turns
+            # कबूतर into nonsense before it is ever compared.
+            seed, language = "", "hi"
+        elif kind == "count":
+            seed, language = "", ("hi" if spelling else "en")
+        else:
+            seed, language = (KG_SEED_LETTERS if spelling else ""), "en"
+        kg_request_listen(self.KG_TEST_LISTEN_S, seed=seed, language=language)
+        self._kg_test_poll(token)
+
+    def _kg_test_poll(self, token):
+        if self._kg_test_stale(token):
+            return
+        try:
+            heard = kg_listen_results.get_nowait()
+        except queue.Empty:
+            self.root.after(150, lambda r=token: self._kg_test_poll(r))
+            return
+        self._kg_test_listening = False
+        self._kg_test_judge(heard)
+
+    def _kg_test_judge(self, heard):
+        """Mark one answer, say why, and move on.
+
+        A point per half -- naming and spelling -- so a child who knows the
+        picture but not the spelling still scores, which is the honest reading
+        of what they know and keeps a five-year-old in the game.
+        """
+        question = self._kg_test_question()
+        if question is None:
+            return
+        kind, stage = question["kind"], self._kg_test_stage
+        self._kg_test_heard = heard or ""
+
+        if stage == "name":
+            if kind == "count":
+                right = kg_content.number_matches(heard, question["value"])
+                answer = kg_content.number_name(question["value"], "en")
+            else:
+                right = kg_content.matches_answer(heard, question["word"])
+                answer = question["word"]
+            if right:
+                self._kg_test_score += 1
+                self._kg_test_note = f"Yes! {answer}"
+                lines = [(random.choice(kg_content.PRAISE), "proud"),
+                         (f"It is {answer}.", "warm")]
+            else:
+                # Say what they said before the answer, the same way the spelling
+                # screen does: a child needs to hear the difference, not just the
+                # right answer on its own.
+                self._kg_test_note = f"It is {answer}"
+                said = f"You said {heard}. " if heard.strip() else ""
+                lines = [("Not quite.", "gentle"),
+                         (f"{said}This is {answer}.", "curious")]
+            self._kg_test_stage = "spell"
+            self._draw_kg_test()
+            lines.append(({"count": "Now say that number in Hindi.",
+                           "hi": "यह किस अक्षर से शुरू होता है?"}.get(
+                              kind, f"Now spell {answer}."), "encouraging"))
+            kg_say_many(lines)
+            self._kg_after_speaking(
+                lambda r=self._kg_test_round: self._kg_test_listen(r))
+            return
+
+        # ----- the second half -----
+        if kind == "count":
+            right = kg_content.number_matches(heard, question["value"])
+            answer = kg_content.number_name(question["value"], "hi")
+        elif kind == "hi":
+            # Which अक्षर does it start with. Devanagari has no letter-by-letter
+            # spelling a KG child is taught, so the first letter is the skill.
+            right = question["letter"] in (heard or "")
+            answer = question["letter"]
+        else:
+            verdict, _letters = kg_content.heard_spelling(
+                heard, kg_content.spelling_target(question["word"]))
+            right = verdict == "correct"
+            answer = kg_content.spell_out(question["word"])
+
+        if right:
+            self._kg_test_score += 1
+            self._kg_test_note = "Correct!"
+            lines = [(random.choice(kg_content.PRAISE), "proud")]
+        else:
+            self._kg_test_note = f"It is {answer}"
+            lines = [("Not quite.", "gentle"), (f"It is {answer}", "curious")]
+        self._draw_kg_test()
+        kg_say_many(lines)
+        # The index moves when the NEXT question actually starts, not here.
+        # Incrementing now left a 3.2s gap in which the screen still on display
+        # belonged to a question the index had already passed -- and on the last
+        # one, any redraw in that gap (tapping "Say again") indexed off the end.
+        self.root.after(3200, lambda r=self._kg_test_round: self._kg_test_advance(r))
+
+    def _kg_test_advance(self, token):
+        if self._kg_test_stale(token):
+            return
+        self._kg_test_at += 1
+        self._kg_ask_test_question()
+
+    def _kg_test_finish(self):
+        total = len(self._kg_test_qs) * 2          # two marks per question
+        score = self._kg_test_score
+        share = score / total if total else 0
+        self._overlay_screen("kg_test_done", "All done!",
+                             f"You scored {score} out of {total}", tint="#EFF6FF")
+        self._place_emoji("\U0001F31F" if share >= 0.8 else "\U0001F44F", UI_W / 2, 160, 108)
+        if share >= 0.8:
+            message, tone = "Brilliant! You really know these.", "excited"
+        elif share >= 0.5:
+            message, tone = "Well done! Keep practising.", "encouraging"
+        else:
+            message, tone = "Good try! Let's learn some more together.", "warm"
+        self.canvas.create_text(UI_W / 2, 254, text=message,
+                                font=self._font(16, True), fill=COL_TEXT,
+                                tags=self.OVERLAY_TAG)
+        self._overlay_button(140, 300, 380, 358, "Try again",
+                             lambda: self.start_kg_test(self._kg_test_kind),
+                             fill="#0EA5E9", size=14)
+        self._overlay_button(420, 300, 660, 358, "Back",
+                             self.show_kg_home, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=13)
+        kg_say_many([(f"You scored {score} out of {total}!", "excited"),
+                     (message, tone)])
+        # Recorded against the knowledge graph, so a parent switching to the
+        # graded flow later sees that this child has met these at all.
+        slug = {"en": "counting", "hi": "counting", "count": "counting"}.get(
+            self._kg_test_kind)
+        try:
+            user_id = active_user_id()
+            if user_id and slug:
+                store.record_concept(user_id, slug,
+                                     "confident" if share >= 0.8
+                                     else "struggling" if share < 0.5 else "met")
+        except Exception:
+            pass
+
+    def _kg_blocks_glyph(self, cx, cy, tag):
+        """Three alphabet blocks, for Spelling."""
+        tags = (self.OVERLAY_TAG, tag)
+        for index, letter in enumerate("ABC"):
+            x = cx - 96 + index * 66
+            self._round_rect(x, cy - 30, x + 56, cy + 30, 10,
+                             fill="#FFFFFF", outline="#FFFFFF", tags=tags)
+            self.canvas.create_text(x + 28, cy, text=letter,
+                                    font=self._font(20, True), fill="#7C3AED", tags=tags)
+
+    def _kg_book_glyph(self, cx, cy, tag):
+        """An open book, for Story Time."""
+        tags = (self.OVERLAY_TAG, tag)
+        for side in (-1, 1):
+            self.canvas.create_polygon(
+                cx, cy - 26, cx + side * 88, cy - 16, cx + side * 88, cy + 30,
+                cx, cy + 22, fill="#FFFFFF", outline="#FFFFFF", tags=tags)
+            for row in range(3):
+                y = cy - 6 + row * 11
+                self.canvas.create_line(cx + side * 14, y, cx + side * 72, y + side * 0,
+                                        fill="#F59E0B", width=3, capstyle="round", tags=tags)
+        self.canvas.create_line(cx, cy - 26, cx, cy + 22, fill="#F59E0B",
+                                width=3, capstyle="round", tags=tags)
+
+    # ----- spelling -----
+    # A word is done in two stages: SAY the letters, then WRITE them.
+    #
+    # Saying it first is how spelling is actually taught and tested aloud at this
+    # age, and it also means the child has already committed to an answer before
+    # the keyboard appears to help them. The spoken stage is deliberately
+    # FORGIVING -- Whisper transcribing a four-year-old spelling out loud is near
+    # its worst case, so a miss there earns a nudge, never a mark. The written
+    # stage is the one that counts.
+    KG_SAY_SECONDS = 7.0
+
+    def show_kg_spelling(self):
+        self._kg_word = kg_content.random_word(self._kg_seen_words)
+        self._kg_seen_words.add(self._kg_word["word"])
+        if len(self._kg_seen_words) >= len(kg_content.SPELLING_WORDS):
+            self._kg_seen_words.clear()
+        self._kg_typed = ""
+        self._kg_feedback = ""
+        self._kg_stage = "say"
+        self._kg_heard = ""
+        self._kg_listening = False
+        # Every deferred step below is scheduled with root.after, and a child
+        # taps Next Word long before those fire. Without a token, the previous
+        # word's "now write it" lands on the NEW word and skips its speaking
+        # stage entirely -- seen in testing as a word going straight to the
+        # keyboard. Each callback checks the round it was born in.
+        self._kg_round = getattr(self, "_kg_round", 0) + 1
+        self._draw_kg_spelling()
+        word = self._kg_word["word"]
+        kg_say_many([
+            ("Spell this word.", "encouraging"),
+            (f"{word}.", "excited"),
+            (f"{self._kg_word['hint']}.", "gentle"),
+            ("Say the letters out loud.", "curious"),
+        ])
+        # After she finishes asking, not before, or the microphone opens while
+        # she is still talking and records her own voice saying the word.
+        self._kg_after_speaking(lambda r=self._kg_round: self._kg_start_listening(r))
+
+    def _kg_after_speaking(self, callback, settle_ms=400):
+        """Run `callback` once Liza has ACTUALLY stopped talking.
+
+        Every KG listen used to start on a fixed root.after guess -- 2.6s, 3.8s,
+        6.2s -- which is a bet on how long a line takes to speak. It lost
+        constantly: logs/liza.log has the microphone returning "Read the letters
+        out loud." and "This is juice. Now spell juice.", which are Liza's own
+        prompts recorded because the mic opened while she was still saying them.
+        Every one of those was then marked as the child's wrong answer.
+
+        playback_active and the queue tell us the truth, so wait on them instead
+        of guessing, plus a short settle for the tail of the audio to leave the
+        speaker before the microphone opens.
+        """
+        if playback_active.is_set() or not audio_queue.empty():
+            self.root.after(120, lambda: self._kg_after_speaking(callback, settle_ms))
+            return
+        self.root.after(settle_ms, callback)
+
+    def _kg_stale(self, round_token):
+        return (self.overlay != "kg_spell"
+                or round_token != getattr(self, "_kg_round", 0))
+
+    def _kg_start_listening(self, round_token):
+        if self._kg_stale(round_token) or self._kg_stage != "say":
+            return
+        self._kg_listening = True
+        self._draw_kg_spelling()
+        kg_request_listen(self.KG_SAY_SECONDS, seed=KG_SEED_LETTERS, language="en")
+        self._kg_poll_listen(round_token)
+
+    def _kg_poll_listen(self, round_token):
+        """Wait for ai_loop's answer without blocking the Tk thread."""
+        if self._kg_stale(round_token) or self._kg_stage != "say":
+            return
+        try:
+            heard = kg_listen_results.get_nowait()
+        except queue.Empty:
+            self.root.after(150, lambda r=round_token: self._kg_poll_listen(r))
+            return
+        self._kg_listening = False
+        self._kg_judge_spoken(heard)
+
+    def _kg_judge_spoken(self, heard):
+        word = self._kg_word["word"]
+        verdict, letters = kg_content.heard_spelling(heard, word)
+        self._kg_heard = letters.upper()
+        if verdict == "correct":
+            praise = random.choice(kg_content.PRAISE)
+            self._kg_feedback = praise
+            self._draw_kg_spelling()
+            lines = [(f"{praise} That's right.", "proud"),
+                     ("Now write it.", "encouraging")]
+        elif verdict == "said_the_word":
+            self._kg_feedback = "Let's write it."
+            self._draw_kg_spelling()
+            lines = [(f"That's the word, {word}.", "warm"),
+                     ("Now write it for me.", "encouraging")]
+        elif verdict == "jumbled":
+            # They HAVE the letters, in the wrong order. Saying the letters again
+            # would teach nothing, because the letters were never the problem --
+            # so name what actually went wrong and put the order side by side.
+            self._kg_feedback = "Right letters, wrong order!"
+            self._draw_kg_spelling()
+            lines = [
+                ("Ooh, so close!", "encouraging"),
+                (f"You said {kg_content.spell_out(letters)}", "gentle"),
+                ("You have all the right letters, but they are in a different order.",
+                 "gentle"),
+                (f"Listen. {word} is {kg_content.spell_out(word)}", "curious"),
+                ("Now you write it.", "encouraging"),
+            ]
+        elif verdict == "wrong":
+            # Say what they said before saying what is right. A child who is told
+            # only the answer does not learn which part of theirs was wrong, and
+            # hearing their own attempt read back is what makes the difference
+            # audible.
+            nudge = random.choice(kg_content.ENCOURAGEMENT)
+            self._kg_feedback = nudge
+            self._draw_kg_spelling()
+            lines = [
+                (nudge, "encouraging"),
+                (f"You said {kg_content.spell_out(letters)}", "gentle"),
+                (f"But {word} is {kg_content.spell_out(word)}", "curious"),
+                ("Now you write it.", "encouraging"),
+            ]
+        else:
+            # Nothing heard. Never treated as a wrong answer -- a quiet child or
+            # a noisy room is not a spelling mistake, and marking it as one would
+            # be the device's fault landing on them.
+            self._kg_feedback = "Let's write it together."
+            self._draw_kg_spelling()
+            lines = [("I didn't quite catch that.", "gentle"),
+                     (f"{word} is {kg_content.spell_out(word)}", "curious"),
+                     ("Now you write it.", "encouraging")]
+        kg_say_many(lines)
+        self.root.after(300, lambda r=self._kg_round: self._kg_to_writing(r))
+
+    def _kg_to_writing(self, round_token=None):
+        # None when a child tapped the Write it button, which is always for the
+        # word in front of them.
+        if round_token is not None and self._kg_stale(round_token):
+            return
+        if self.overlay != "kg_spell":
+            return
+        self._kg_stage = "write"
+        self._kg_typed = ""
+        self._draw_kg_spelling()
+
+    def _draw_kg_spelling(self):
+        saying = getattr(self, "_kg_stage", "write") == "say"
+        if saying:
+            subtitle = ("Listening... say the letters" if self._kg_listening
+                        else self._kg_word["hint"])
+        else:
+            subtitle = f"Now write it:  {self._kg_word['hint']}"
+        self._overlay_screen("kg_spell", "Spell a Word", subtitle, tint="#F6F2FF")
+
+        if saying:
+            self._draw_kg_saying()
+            return
+
+        # What they have tapped so far, as one box per letter of the answer, so
+        # the child can see how many letters are still to come.
+        target = self._kg_word["word"]
+        slot, gap = 56, 10
+        total = len(target) * slot + (len(target) - 1) * gap
+        x = (UI_W - total) / 2
+        for index in range(len(target)):
+            typed = self._kg_typed[index] if index < len(self._kg_typed) else ""
+            self._round_rect(x, 96, x + slot, 96 + 64, 10, fill="#FFFFFF",
+                             outline="#D9D2F5", tags=self.OVERLAY_TAG)
+            self.canvas.create_text(x + slot / 2, 128, text=typed.upper(),
+                                    font=self._font(22, True), fill="#7C3AED",
+                                    tags=self.OVERLAY_TAG)
+            x += slot + gap
+
+        if self._kg_feedback:
+            self.canvas.create_text(UI_W / 2, 180, text=self._kg_feedback,
+                                    font=self._font(12, True), fill=COL_TEXT,
+                                    tags=self.OVERLAY_TAG)
+
+        for r, row in enumerate(["ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ"]):
+            width, gap = 76, 5
+            total = len(row) * width + (len(row) - 1) * gap
+            x = (UI_W - total) / 2
+            y = 200 + r * 60
+            for letter in row:
+                self._overlay_button(x, y, x + width, y + 54, letter,
+                                     lambda c=letter: self._kg_letter(c),
+                                     fill="#FFFFFF", text_colour="#4C3A8F",
+                                     radius=10, size=16)
+                x += width + gap
+
+        self._overlay_button(20, 396, 150, 448, "Undo", self._kg_undo,
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._overlay_button(166, 396, 316, 448, "Say it again",
+                             lambda: kg_say(f"{self._kg_word['word']}. "
+                                            f"{self._kg_word['hint']}."),
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._overlay_button(484, 396, 634, 448, "Next word",
+                             self.show_kg_spelling, fill="#7C3AED", size=11)
+        self._overlay_button(650, 396, 780, 448, "Back",
+                             self.show_kg_home, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=11)
+
+    def _draw_kg_saying(self):
+        """The SAY stage. No keyboard at all -- it is not their turn to write.
+
+        Showing the word in letters they can see while they say it is deliberate:
+        this stage is about hearing the letters, not recalling them, and the
+        recall test is the written stage immediately after.
+        """
+        word = self._kg_word["word"].upper()
+        self.canvas.create_text(UI_W / 2, 150, text=word, font=self._font(44, True),
+                                fill="#7C3AED", tags=self.OVERLAY_TAG)
+        self.canvas.create_text(UI_W / 2, 208, text="  ".join(word),
+                                font=self._font(16, True), fill="#A78BFA",
+                                tags=self.OVERLAY_TAG)
+
+        if self._kg_listening:
+            self._round_rect(UI_W / 2 - 150, 250, UI_W / 2 + 150, 300, 24,
+                             fill="#EDE7FF", outline="#7C3AED",
+                             tags=self.OVERLAY_TAG)
+            self.canvas.create_text(UI_W / 2, 275, text="I'm listening...",
+                                    font=self._font(15, True), fill="#5B21B6",
+                                    tags=self.OVERLAY_TAG)
+        elif self._kg_feedback:
+            self.canvas.create_text(UI_W / 2, 275, text=self._kg_feedback,
+                                    font=self._font(15, True), fill=COL_TEXT,
+                                    tags=self.OVERLAY_TAG)
+
+        if self._kg_heard:
+            self.canvas.create_text(UI_W / 2, 322,
+                                    text=f"I heard:  {'  '.join(self._kg_heard)}",
+                                    font=self._font(11), fill=COL_TEXT_DIM,
+                                    tags=self.OVERLAY_TAG)
+
+        # A way past the microphone, always. If the room is loud, or the child
+        # will not speak, or Whisper simply never returns, this stage must not be
+        # a dead end -- so writing is one tap away at every moment.
+        self._overlay_button(166, 396, 396, 448, "Say it again",
+                             lambda: kg_say(f"{self._kg_word['word']}. "
+                                            f"{self._kg_word['hint']}.", "gentle"),
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._overlay_button(412, 396, 634, 448, "Write it",
+                             self._kg_to_writing, fill="#7C3AED", size=12)
+        self._overlay_button(650, 396, 780, 448, "Back",
+                             self.show_kg_home, fill="#E6E9F5",
+                             text_colour=COL_TEXT, size=11)
+
+    def _kg_letter(self, letter):
+        target = self._kg_word["word"]
+        if len(self._kg_typed) >= len(target):
+            return
+        self._kg_typed += letter.lower()
+        if len(self._kg_typed) < len(target):
+            self._kg_feedback = ""
+            self._draw_kg_spelling()
+            return
+        # The word is now full length, so it can be marked.
+        if self._kg_typed == target:
+            praise = random.choice(kg_content.PRAISE)
+            self._kg_feedback = praise
+            self._draw_kg_spelling()
+            kg_say(f"{praise} {target}. {kg_content.spell_out(target)}")
+            # Long enough for the praise to finish before the next word starts.
+            self.root.after(4200, self._kg_next_if_still_spelling)
+        else:
+            nudge = random.choice(kg_content.ENCOURAGEMENT)
+            self._kg_feedback = nudge
+            self._kg_typed = ""
+            self._draw_kg_spelling()
+            kg_say(f"{nudge} {target} is spelled {kg_content.spell_out(target)}. "
+                   f"Now you try. {target}.")
+
+    def _kg_next_if_still_spelling(self):
+        # The child may have tapped Back or Story Time while the praise played.
+        if self.overlay == "kg_spell":
+            self.show_kg_spelling()
+
+    def _kg_undo(self):
+        self._kg_typed = self._kg_typed[:-1]
+        self._kg_feedback = ""
+        self._draw_kg_spelling()
+
+    # ----- stories -----
+    def show_kg_story(self, language=None):
+        # Remembered so Next story stays in the language they chose rather than
+        # dropping back to English on the second story.
+        if language:
+            self._kg_story_lang = language
+        language = getattr(self, "_kg_story_lang", "en")
+        self._kg_story = kg_content.random_story_in(language, self._kg_seen_stories)
+        self._kg_seen_stories.add(self._kg_story["title"])
+        if len(self._kg_seen_stories) >= len(kg_content.stories_for(language)):
+            self._kg_seen_stories.clear()
+        self._kg_story_asked = False
+        self._draw_kg_story()
+        self._kg_narrate()
+        # The question follows the story rather than riding on the same speech,
+        # so the child hears a pause and knows they are being asked something.
+        self.root.after(1200, self._kg_ask_question)
+
+    def _kg_narrate(self):
+        """Read the story as its beats, each with its own delivery.
+
+        One kg_say_many call rather than one per beat, so the whole story is a
+        single response and the audio runs continuously -- see kg_say_many for
+        why per-line calls would put a gap at every seam.
+        """
+        story = self._kg_story
+        kg_say_many([(f"{story['title']}.", "storyteller")] + list(story["segments"]))
+
+    def _draw_kg_story(self):
+        self._overlay_screen("kg_story", self._kg_story["title"],
+                             "Listen to the story", tint="#FFF6E8")
+        self._round_rect(40, 92, 760, 300, 16, fill="#FFFFFF",
+                         outline="#F3E2C6", tags=self.OVERLAY_TAG)
+        self.canvas.create_text(60, 112, text=self._kg_story["text"], anchor="nw",
+                                width=680, justify="left", font=self._font(11),
+                                fill=COL_TEXT, tags=self.OVERLAY_TAG)
+
+        if self._kg_story_asked:
+            self.canvas.create_text(UI_W / 2, 322, text=self._kg_story["question"],
+                                    font=self._font(13, True), fill=COL_TEXT,
+                                    tags=self.OVERLAY_TAG)
+            self._overlay_button(180, 344, 380, 400, "YES",
+                                 lambda: self._kg_answer(True),
+                                 fill="#14B8A6", size=16)
+            self._overlay_button(420, 344, 620, 400, "NO",
+                                 lambda: self._kg_answer(False),
+                                 fill="#F43F5E", size=16)
+
+        self._overlay_button(20, 414, 170, 462, "Read again",
+                             self._kg_narrate,
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._overlay_button(320, 414, 480, 462, "Next story",
+                             self.show_kg_story, fill="#F59E0B", size=11)
+        self._overlay_button(630, 414, 780, 462, "Back",
+                             self.show_kg_story_picker,
+                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+
+    def _kg_ask_question(self):
+        if self.overlay != "kg_story":
+            return
+        self._kg_story_asked = True
+        self._draw_kg_story()
+        kg_say(self._kg_story["question"], "curious")
+
+    def _kg_answer(self, said_yes):
+        # Answered in the story's own language: praise in English after a Hindi
+        # story breaks the spell for the child who was just listening to it.
+        language = getattr(self, "_kg_story_lang", "en")
+        correct = said_yes == self._kg_story["answer"]
+        if correct:
+            kg_say(kg_content.story_praise(language), "proud")
+        else:
+            kg_say(kg_content.story_verdict(self._kg_story, language), "gentle")
+        self._kg_story_asked = False
+        self._draw_kg_story()
+
 class HeadlessUI:
     def __init__(self):
         self.current_state = "idle"
+        self.overlay = None     # there are no overlays without a screen
         self.modes = ["TUTOR", "CO-TELL", "RE-TELL"]
         self.current_mode_index = 0
         self.current_mode = self.modes[0]
@@ -5340,6 +7338,128 @@ def device_state_block():
             f"CURRENTLY_OPEN_FILE: {open_file or 'None (no file is open)'}\n"
             f"CURRENT_UI_MODE: {ui_mode}")
 
+def student_profile_block():
+    """Who she is teaching and how deep to pitch it. "" when nobody is set up.
+
+    Read from the profile store on EVERY turn rather than cached at session
+    start. Switch User has to change the depth of the very next answer without a
+    restart, and this is a few hundred bytes of JSON on a turn that is already
+    waiting on a Whisper call and an LLM call -- the read is free by comparison.
+
+    Empty string when there is no profile, which is what keeps the device
+    behaving exactly as it did before this feature until somebody makes one.
+    """
+    try:
+        profile = profiles.get_active_profile()
+    except Exception as exc:
+        print(f"[PROFILE] Could not read the profile store: {exc}", flush=True)
+        return ""
+    if not profile:
+        return ""
+    instruction = profiles.band_instruction(profile.get("class"))
+    if not instruction:
+        # KG, or a class that failed to parse. KG students never reach this
+        # prompt at all -- they are routed to the spelling and story screens.
+        return ""
+    # The whole section, header included, so that a device with no profile on it
+    # emits nothing at all here rather than an empty heading -- see the caller.
+    return (
+        "### 1a. WHO YOU ARE TEACHING (CRITICAL OVERRIDE -- GOVERNS DEPTH, NOT BEHAVIOUR)\n"
+        f"You are teaching {profile.get('name') or 'a student'}, "
+        f"who is in Class {profile.get('class')}.\n"
+        f"{instruction}\n"
+        "This sets HOW DEEP and HOW PLAIN the answer is. The mode below still decides HOW\n"
+        "you teach -- explaining, asking, or examining -- and rule 5 still decides how you\n"
+        "speak. The sentence ceiling here is a maximum, never a target: a one-line question\n"
+        "still gets a one-line answer. NEVER mention the student's class, their year, or\n"
+        "that you are adjusting anything; just answer at that level.\n\n"
+        + learning_history_block(profile)
+    )
+
+
+# How confusion is spotted, for deciding whether a concept goes down as met or
+# as struggled-with. Deliberately narrow: only an explicit admission counts, so
+# an ordinary question never marks a child down.
+RE_STUCK = re.compile(
+    r"\b(i don'?t (understand|get|know)|i'?m confused|makes no sense|"
+    r"still don'?t|can'?t do|too hard|explain again|didn'?t understand)\b",
+    re.IGNORECASE)
+
+
+# The concept of the turn being answered right now. Set by note_learning, which
+# runs before the prompt is built, and read by learning_history_block so the gap
+# advice is about the question actually being asked.
+_current_concept = None
+
+
+def note_learning(text):
+    """Record which concept a question touched, and how it seemed to go.
+
+    Advisory only: a missed concept, a student with no profile, or a database
+    that is down all simply mean nothing is written. Nothing downstream depends
+    on this succeeding.
+    """
+    try:
+        user_id = active_user_id()
+        if not user_id:
+            return
+        slug = store.detect_concept(text)
+        if not slug:
+            return
+        outcome = "struggling" if RE_STUCK.search(text or "") else "met"
+        global _current_concept
+        _current_concept = slug
+        if store.record_concept(user_id, slug, outcome):
+            print(f"[LEARN] {slug} ({outcome})", flush=True)
+    except Exception as exc:
+        print(f"[LEARN] Could not record the concept ({exc}).", flush=True)
+
+
+def learning_history_block(profile):
+    """What she knows about this student's progress, from the store.
+
+    Empty when there is nothing recorded, or when PostgreSQL is down -- which is
+    what makes the whole knowledge-graph feature strictly additive. A device with
+    no store behaves exactly as it did before.
+    """
+    user_id = profile.get("user_id")
+    if not user_id:
+        return ""
+    recent = store.student_summary(user_id, limit=6)
+    if not recent:
+        return ""
+    seen = ", ".join(f"{row['name'].lower()} ({row['status']})" for row in recent)
+    lines = [
+        "### 1b. WHAT THIS STUDENT HAS ALREADY WORKED ON WITH YOU",
+        f"Recently, most recent first: {seen}.",
+        "Connect new ideas back to the ones they are confident about -- that is what a "
+        "teacher who remembers them would do. NEVER read this list aloud, never say you "
+        "have a record of them, and never open with what they did last time.",
+    ]
+
+    # The gap query. Asked about whatever the CURRENT question is about, falling
+    # back to whatever they are struggling with -- a student who has just asked
+    # about algebra needs the gaps behind algebra, not behind last week's topic.
+    weak = [row for row in recent if row["status"] == "struggling"]
+    target = _current_concept or (weak[0]["slug"] if weak else None)
+    if target:
+        try:
+            student_class = int(profile.get("class"))
+        except (TypeError, ValueError):
+            student_class = None
+        gaps = store.missing_prerequisites(user_id, target,
+                                           student_class=student_class) or []
+        nearest = [g["name"].lower() for g in gaps[:3]]
+        if nearest:
+            concept = store.concept_by_slug(target) or {}
+            lines.append(
+                f"Before {concept.get('name', target).lower()} they have not solidly met: "
+                f"{', '.join(nearest)}. If they struggle with it now, do not re-explain "
+                f"the same thing louder -- drop back to the earliest of those, check it "
+                f"with one question, and build up from there."
+            )
+    return "\n".join(lines) + "\n\n"
+
 # ==========================================
 # Education-Only Guardrail
 # ==========================================
@@ -5472,9 +7592,28 @@ MODE_INSTRUCTIONS = {
 ANSWER FIRST, ALWAYS. Your opening sentence is the direct answer. No preamble, no restating the question, no defining the topic before answering it.
 
 MATCH THE LENGTH TO THE QUESTION -- the most important rule here:
-- Quick ones (conversions, arithmetic, spelling, dates, definitions, yes/no, greetings, "is it going to rain") get ONE sentence, then STOP. "180 centimetres is about 5 feet 11 inches." That's the entire answer. Don't explain the method unless asked.
-- Only when they ask to understand ("how does X work", "why does X happen", "explain X") add up to 3 more sentences: how it works, plus one concrete example.
+- Quick ones (conversions, arithmetic, spelling, dates, single facts, yes/no, greetings, "is it going to rain") get ONE sentence, then STOP. "180 centimetres is about 5 feet 11 inches." That's the entire answer. Don't explain the method unless asked.
+- A question about a CONCEPT is not a quick one, even when it is phrased as "what is X". "What is gravity", "what is a cell", "what is inflation" are answered at the depth section 1a sets for their class -- that section wins over this rule, every time. A Class 11 student asking what gravity is has not asked for the Class 5 sentence.
+- "How does X work" and "why does X happen" likewise: how it works, plus one concrete example, within their class's ceiling.
 - Something open -- a plan, a recommendation, an opinion, a story -- give the thing itself, short enough to listen to. Name ONE choice and why, not a list to sort through.
+
+TEACHING MOMENTS ARE THE EXCEPTION TO "ANSWER FIRST", AND THEY OVERRIDE IT.
+A teaching moment is when they are STUCK or ask to be TAUGHT: "I don't understand fractions", "I don't get why this works", "teach me long division", "explain this to me, I'm confused", "help me with photosynthesis".
+It is NOT a plain question. "What is gravity" is a question -- answer it directly, at the depth their class calls for. Only reach for the pizza when they have told you the straight answer is not landing, or asked to be walked through it.
+
+In a teaching moment, do NOT open with the definition. Open with something they ALREADY know, and ONE question they can answer from ordinary life:
+  Them: "I don't understand fractions."
+  You: "No problem, forget the word for a second. If you cut a pizza into 4 equal slices and eat one, how much of the pizza did you eat?"
+Then when they answer, say in a few words whether they're right, and name the idea THEIR OWN ANSWER just demonstrated:
+  Them: "One quarter."
+  You: "Exactly. That's all a fraction is. The bottom number is how many equal pieces the whole was cut into, and the top is how many of them you have."
+
+How to run one:
+- ONE question per turn. Never two, and never a question so broad that "yes" answers it.
+- The question must be answerable from everyday life -- pizza, money, a cricket team, sharing sweets -- NOT from the very topic they just said they don't understand.
+- They get it wrong, or say they don't know? Make the step SMALLER. Never just repeat the question, and never make them feel slow for missing it.
+- Name the term only AFTER they've reached the idea themselves. The definition is the reward for getting there, not the opening move.
+- Stay inside the sentence ceiling for their class. A teaching turn is short by nature: a scenario and a question, nothing more.
 
 Don't know something? Say so in one sentence rather than inventing details.""",
 
@@ -5660,7 +7799,7 @@ Everything you write is spoken aloud. Write what a knowledgeable person would SA
 ### 7. ACTIONS YOU CAN PERFORM ON THIS DEVICE
 {agentic_actions}
 
-### 1. CURRENT TEACHING MODE (CRITICAL OVERRIDE)
+{grade_guidelines}### 1. CURRENT TEACHING MODE (CRITICAL OVERRIDE)
 {domain_guidelines}
 
 ### 2. LANGUAGE MIRRORING (CRITICAL OVERRIDE)
@@ -5743,8 +7882,11 @@ def ai_loop(ui, headless=False):
                   f"(allowed {MIC_ENERGY_FLOOR}-{MIC_ENERGY_CEILING}, "
                   f"speech RMS gate {MIN_SPEECH_RMS}).", flush=True)
 
-    chat_history = load_history()
+    chat_history = load_history(active_user_id())
     if not chat_history: chat_history = []
+    # Whose history is in memory. Compared against the active profile at the top
+    # of every turn so Switch User swaps the conversation as well as the band.
+    history_for = active_user_id()
     session_active = False
     silence_counter = 0
     pending_question = pending_language = ""
@@ -5780,6 +7922,42 @@ def ai_loop(ui, headless=False):
                            else mic_device)
 
     while True:
+        # NOTHING TO LISTEN FOR RIGHT NOW.
+        #
+        # Either a KG student is on the device -- they get the spelling and story
+        # screens, which speak through audio_queue on the UI thread and never
+        # need the microphone -- or a profile screen is covering the canvas.
+        #
+        # Parking the whole loop rather than filtering further down is deliberate:
+        # it means the mic is never opened and no wake word can be heard, so a
+        # pre-reader cannot fall into the open chat flow by accident. The overlay
+        # half matters for the same reason -- without it a stray "Hey Liza" during
+        # setup would wake her behind a modal screen the child is still using, and
+        # she would sit there listening to a room that is not talking to her.
+        # Switch User has to change WHO she is talking to, not just how deep she
+        # pitches it. Checked here because it is the one point every turn passes
+        # through before the prompt is built or the history is read.
+        current_user = active_user_id()
+        if current_user != history_for:
+            save_history(chat_history, history_for)
+            chat_history = load_history(current_user)
+            history_for = current_user
+            print(f"[PROFILE] Switched to a different student's history "
+                  f"({len(chat_history)} messages).", flush=True)
+
+        if kg_active.is_set() or getattr(ui, "overlay", None):
+            session_active = False
+            silence_counter = 0
+            retell_buffer, retell_silence_from, retell_nudged = [], 0.0, False
+            wake_event.clear()
+            sleep_event.clear()
+            # Parked, but not deaf: the spelling screen asks the child to SAY the
+            # letters, and this is the only thread that may touch the microphone.
+            # Nothing else here opens it, so a KG listen cannot race the wake word.
+            if not kg_serve_listen(recognizer, mic_device, listener):
+                time.sleep(0.4)
+            continue
+
         # Set when the silence timer expires and the buffered recitation is due
         # to be marked; makes this pass of the loop a verdict rather than a
         # normal question-and-answer turn.
@@ -6680,11 +8858,39 @@ def ai_loop(ui, headless=False):
         user_language = detect_user_language(text, stt_language)
         print(f"[LANGUAGE] heard={stt_language or 'n/a'} -> replying in {user_language}", flush=True)
 
+        # Checked again HERE, not only at the top of the loop. Switch User is a
+        # tap on the Tk thread and lands whenever it lands -- typically while
+        # ai_loop is already inside a turn, blocked on the microphone. The top
+        # of the loop had then already passed, so the answer was built with the
+        # PREVIOUS student's conversation still in the window; logs/liza.log
+        # shows the swap logging after the reply had been spoken. The band was
+        # right, because student_profile_block reads the store live, but the
+        # history was not, which is the whole thing per-student history exists
+        # to prevent. This is the last point before the prompt is assembled.
+        current_user = active_user_id()
+        if current_user != history_for:
+            save_history(chat_history, history_for)
+            chat_history = load_history(current_user)
+            history_for = current_user
+            print(f"[PROFILE] Switched student mid-turn; loaded their history "
+                  f"({len(chat_history)} messages).", flush=True)
+
+        # One concept note per answered turn. Here rather than at the eight
+        # save_history sites because this is the single point every answered
+        # question passes through with `text` still in hand, and because a note
+        # is worth taking only for a turn that actually became a lesson.
+        note_learning(text)
+
         current_time = datetime.now().strftime("%I:%M %p, %A, %B %d, %Y")
         dynamic_system_prompt = UNIVERSAL_SYSTEM_PROMPT.format(
             education_scope=ASSISTANT_SCOPE,
             emotion_persona=EMOTION_PERSONA,
             agentic_actions=AGENTIC_ACTIONS,
+            # Above the mode because it changes LESS often than one -- a mode is
+            # a tap away, a band only moves on Switch User -- so this ordering
+            # keeps the whole fixed prefix cacheable across a mode change. See
+            # the section-order note above UNIVERSAL_SYSTEM_PROMPT.
+            grade_guidelines=student_profile_block(),
             domain_guidelines=mode_instruction,
             language_guidelines=LANGUAGE_INSTRUCTIONS[user_language],
             # Volatile, so it sits at the very bottom with the clock -- see the
@@ -7001,6 +9207,23 @@ if __name__ == "__main__":
         root = tk.Tk()
         app_ui = TutorUI(root)
         ui_instance = app_ui
+        # THE ROUTING DECISION, made once, before the first turn can happen.
+        # No profile at all means a device nobody has set up, so it opens on the
+        # picker; a KG profile goes straight to the spelling and story screens
+        # and never reaches the normal flow; everyone else lands on the usual
+        # screen with their band already in the prompt. Scheduled through
+        # root.after so it runs inside the mainloop, where the canvas is real.
+        def open_first_screen():
+            profile = active_profile()
+            if profile is None:
+                print("[PROFILE] No student set up yet; opening the picker.", flush=True)
+                app_ui.show_profile_picker()
+            else:
+                profiles.touch_active()
+                print(f"[PROFILE] Active: {profile.get('name')} "
+                      f"(Class {profile.get('class')}).", flush=True)
+                app_ui.route_for_profile(profile)
+        root.after(600, open_first_screen)
         if WEATHER_API_KEY:
             threading.Thread(target=weather_worker, daemon=True).start()
         ai_thread = threading.Thread(target=ai_loop, args=(app_ui,), daemon=True)
