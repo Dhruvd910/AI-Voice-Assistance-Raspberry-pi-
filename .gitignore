@@ -18,6 +18,7 @@ __pycache__/
 output.wav
 *.tar.gz
 chat_history.json
+profiles.json
 # runtime assets and logs
 GIFS/
 logs/
@@ -25,3 +26,10 @@ logs/
 # mascot animation sources and generated frames
 Animations/*.gif
 Animations/cache/
+
+# Per-student conversation history: personal to the child using the device.
+history/
+
+# Custom KG pictures are local content, but keep the README that explains them.
+pictures/*
+!pictures/README.md
