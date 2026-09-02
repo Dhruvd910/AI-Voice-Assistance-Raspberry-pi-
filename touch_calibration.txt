@@ -1,0 +1,16 @@
+# ADS7846 touch calibration - applied 2026-08-29
+#
+# APPLIED (this is what is live in ~/.config/labwc/rc.xml):
+1.055236 0.028135 -0.014814 -0.038881 1.020071 -0.016408
+#
+# That is the raw five-point fit composed with a correction measured from the
+# verify pass. Verified at 10 px average / 16 px worst.
+#
+# Raw fit alone, before the verify correction (kept for reference only, do not
+# paste this into rc.xml): 1.036597 0.004966 0.019666 -0.062268 1.104925 -0.018981
+#
+# Valid only for the ABS range the driver currently reports: x=(200,4095),
+# y=(0,4095). Check with calibrate_touch.py, whose first line prints the range.
+#
+# To redo:  .venv/bin/python calibrate_touch.py            (five held presses)
+# To check: .venv/bin/python calibrate_touch.py --verify   (five quick taps)
