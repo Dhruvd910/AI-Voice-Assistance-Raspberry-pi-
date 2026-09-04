@@ -852,60 +852,107 @@ class TutorUI:
         title instead of under it, and the progress bar runs the full width
         along the bottom where there is nothing to compete with it.
         """
-        art = ui_asset("Home", "Music_bg.png")
-        if art is not None:
-            self._place_asset(art, MUSIC_X0, TOP_Y0)
+        card_art = ui_asset("Home", "Music_bg.png")
+        if card_art is not None:
+            self._place_asset(card_art, MUSIC_X0, TOP_Y0)
         else:
             self._card(MUSIC_X0, TOP_Y0, MUSIC_X1, TOP_Y1, 16)
 
-        art = ImageTk.PhotoImage(_album_art_image(38, 10))
-        self._photos.append(art)
-        self.canvas.create_image(MUSIC_X0 + 12, TOP_Y0 + 11, image=art, anchor="nw")
-
-        self.canvas.create_text(MUSIC_X0 + 60, TOP_Y0 + 15, text="MUSIC PLAYER",
-                                anchor="w", font=self._font(7, True), fill=COL_INDIGO)
-        self.track_id = self.canvas.create_text(
-            MUSIC_X0 + 60, TOP_Y0 + 30, text="", anchor="w",
-            font=self._font(9, True), fill=COL_TEXT)
-        self.artist_id = self.canvas.create_text(
-            MUSIC_X0 + 60, TOP_Y0 + 45, text="", anchor="w",
-            font=self._font(7), fill=COL_TEXT_DIM)
+        # THIS CARD LOST A THIRD OF ITS WIDTH.
+        #
+        # The old contents -- album art, a MUSIC PLAYER caption, a title, an
+        # artist line and the transport, side by side -- were laid out for a
+        # 315px card. This one is 204, and all of it landed on top of itself.
+        # The mockup gives the whole card to the transport and a progress bar,
+        # which leaves no room for four labels, so what is kept is what somebody
+        # actually needs from across a room: WHAT is playing, how far through it
+        # is, and the three buttons. The artist, the caption and the album
+        # thumbnail go; the elapsed and duration figures go with them, because
+        # the bar already says that and the title is worth more than the digits.
+        self._music_compact = card_art is not None
+        if self._music_compact:
+            self.track_id = self.canvas.create_text(
+                MUSIC_X0 + 10, TOP_Y1 - 15, text="", anchor="w",
+                font=self._font(8, True), fill=COL_TEXT)
+            # Still created, because set_now_playing and set_media_progress
+            # write to them; simply never shown on this layout.
+            self.artist_id = self.canvas.create_text(
+                MUSIC_X0 + 10, TOP_Y1 - 15, text="", anchor="w",
+                font=self._font(7), fill=COL_TEXT_DIM, state="hidden")
+        else:
+            album = ImageTk.PhotoImage(_album_art_image(38, 10))
+            self._photos.append(album)
+            self.canvas.create_image(MUSIC_X0 + 12, TOP_Y0 + 11, image=album, anchor="nw")
+            self.canvas.create_text(MUSIC_X0 + 60, TOP_Y0 + 15, text="MUSIC PLAYER",
+                                    anchor="w", font=self._font(7, True), fill=COL_INDIGO)
+            self.track_id = self.canvas.create_text(
+                MUSIC_X0 + 60, TOP_Y0 + 30, text="", anchor="w",
+                font=self._font(9, True), fill=COL_TEXT)
+            self.artist_id = self.canvas.create_text(
+                MUSIC_X0 + 60, TOP_Y0 + 45, text="", anchor="w",
+                font=self._font(7), fill=COL_TEXT_DIM)
 
         # Transport on the right, with the play/pause ring biggest: it is the
         # one of the three that is pressed, and the only one that changes shape.
         cy = TOP_Y0 + 30
         pcx = MUSIC_X1 - 60
-        self.prev_items = self._skip_glyph(pcx - 34, cy, forward=False)
-        self.next_items = self._skip_glyph(pcx + 34, cy, forward=True)
+        # Measured off the mockup: prev at 601, play/pause at 644, next at 690,
+        # all centred on y40. The skip icon is one asset used twice, mirrored
+        # for prev, because the folder ships the forward one only.
+        skip = ui_asset("Home", "Next_button.png")
+        self.play_art = None
+        if skip is not None:
+            self.prev_items = [self._place_asset(
+                skip.transpose(Image.FLIP_LEFT_RIGHT), 595, 34, "prevbtn")]
+            self.next_items = [self._place_asset(skip, 684, 34, "nextbtn")]
+        else:
+            self.prev_items = self._skip_glyph(pcx - 34, cy, forward=False)
+            self.next_items = self._skip_glyph(pcx + 34, cy, forward=True)
         # Shuffle and repeat have nowhere to go at this height and were never
         # wired to anything, so the transport is only what actually works.
         self.shuffle_items = []
         self.repeat_items = []
 
-        self.play_ring = self.canvas.create_oval(pcx - 16, cy - 16, pcx + 16, cy + 16,
-                                                 fill=COL_INDIGO, outline="", tags="playpause")
-        self.play_left = self.canvas.create_rectangle(pcx - 5, cy - 6, pcx - 2, cy + 6,
-                                                      fill=COL_CARD, outline="", tags="playpause")
-        self.play_right = self.canvas.create_rectangle(pcx + 2, cy - 6, pcx + 5, cy + 6,
-                                                       fill=COL_CARD, outline="", tags="playpause")
-        self.play_tri = self.canvas.create_polygon(pcx - 5, cy - 7, pcx + 7, cy, pcx - 5, cy + 7,
-                                                   fill=COL_CARD, outline="", state="hidden",
-                                                   tags="playpause")
+        pause_art = ui_asset("Home", "Pause_button.png")
+        if pause_art is not None:
+            # One item whose picture is swapped, rather than a ring with two
+            # shapes shown and hidden over it: the artwork carries its own
+            # circle, so there is nothing left to draw on top of.
+            self.play_art = self._place_asset(pause_art, 632, 28, "playpause")
+            self.play_ring = self.play_left = self.play_right = self.play_tri = None
+        else:
+            self.play_ring = self.canvas.create_oval(pcx - 16, cy - 16, pcx + 16, cy + 16,
+                                                     fill=COL_INDIGO, outline="", tags="playpause")
+            self.play_left = self.canvas.create_rectangle(pcx - 5, cy - 6, pcx - 2, cy + 6,
+                                                          fill=COL_CARD, outline="", tags="playpause")
+            self.play_right = self.canvas.create_rectangle(pcx + 2, cy - 6, pcx + 5, cy + 6,
+                                                           fill=COL_CARD, outline="", tags="playpause")
+            self.play_tri = self.canvas.create_polygon(pcx - 5, cy - 7, pcx + 7, cy, pcx - 5, cy + 7,
+                                                       fill=COL_CARD, outline="", state="hidden",
+                                                       tags="playpause")
         self.canvas.tag_bind("playpause", "<Button-1>", self.toggle_media_pause)
 
-        self._bars_glyph(MUSIC_X1 - 16, TOP_Y0 + 16, COL_INDIGO, (4, 7, 10, 7, 4))
+        if not self._music_compact:
+            self._bars_glyph(MUSIC_X1 - 16, TOP_Y0 + 16, COL_INDIGO, (4, 7, 10, 7, 4))
 
-        bx0, bx1, by = MUSIC_X0 + 58, MUSIC_X1 - 46, TOP_Y1 - 15
+        if self._music_compact:
+            # Right of the title, along the bottom, as the mockup has it.
+            bx0, bx1, by = MUSIC_X0 + 105, MUSIC_X1 - 10, TOP_Y1 - 14
+        else:
+            bx0, bx1, by = MUSIC_X0 + 58, MUSIC_X1 - 46, TOP_Y1 - 15
         self._progress_span = (bx0, bx1, by)
         self._round_rect(bx0, by - 2, bx1, by + 2, 2, fill=COL_TRACK, outline="")
         self.progress_fill = self._round_rect(bx0, by - 2, bx0 + 1, by + 2, 2,
                                               fill=COL_INDIGO, outline="")
         self.progress_knob = self.canvas.create_oval(bx0 - 4, by - 4, bx0 + 4, by + 4,
                                                      fill=COL_INDIGO, outline=COL_CARD, width=2)
+        hide = "hidden" if self._music_compact else "normal"
         self.elapsed_id = self.canvas.create_text(bx0 - 6, by, text="00:00", anchor="e",
-                                                  font=self._font(6), fill=COL_TEXT_DIM)
+                                                  font=self._font(6), fill=COL_TEXT_DIM,
+                                                  state=hide)
         self.duration_id = self.canvas.create_text(bx1 + 6, by, text="00:00", anchor="w",
-                                                   font=self._font(6), fill=COL_TEXT_DIM)
+                                                   font=self._font(6), fill=COL_TEXT_DIM,
+                                                   state=hide)
 
     def _shuffle_glyph(self, cx, cy):
         c, w = self.canvas, 2
@@ -1239,10 +1286,15 @@ class TutorUI:
 
         self.media.update({"title": title, "artist": artist.strip(),
                            "pos": 0.0, "dur": 0.0, "paused": False})
+        # 170 was the room the album art and the transport left on the old,
+        # wider card. On the narrow one the title sits alone on the bottom row,
+        # left of the progress bar, and has 89px rather than 34.
+        if getattr(self, "_music_compact", False):
+            room, face = 89, self._font(8, True)
+        else:
+            room, face = MUSIC_X1 - MUSIC_X0 - 170, self._font(9, True)
         self.canvas.itemconfig(
-            self.track_id,
-            text=self._ellipsize(track.strip(), self._font(9, True),
-                                 MUSIC_X1 - MUSIC_X0 - 170),
+            self.track_id, text=self._ellipsize(track.strip(), face, room),
             fill=COL_TEXT if title else COL_TEXT_DIM)
         self.canvas.itemconfig(
             self.artist_id,
@@ -1276,11 +1328,19 @@ class TutorUI:
             return
         live = media_active.is_set()
         shade = COL_INDIGO if live else COL_TEXT_FAINT
-        self.canvas.itemconfig(self.play_ring, fill=shade)
         paused = self.media["paused"]
-        self.canvas.itemconfig(self.play_tri, state="normal" if paused else "hidden")
-        for item in (self.play_left, self.play_right):
-            self.canvas.itemconfig(item, state="hidden" if paused else "normal")
+        if getattr(self, "play_art", None) is not None:
+            # Paused shows PLAY, because that is what pressing it will do.
+            art = ui_asset("Home", "Play_button.png" if paused else "Pause_button.png")
+            if art is not None and art is not getattr(self, "_play_art_shown", None):
+                self._play_art_photo = ImageTk.PhotoImage(art)
+                self.canvas.itemconfigure(self.play_art, image=self._play_art_photo)
+                self._play_art_shown = art
+        else:
+            self.canvas.itemconfig(self.play_ring, fill=shade)
+            self.canvas.itemconfig(self.play_tri, state="normal" if paused else "hidden")
+            for item in (self.play_left, self.play_right):
+                self.canvas.itemconfig(item, state="hidden" if paused else "normal")
         self.canvas.itemconfig(self.progress_fill, fill=shade)
         self.canvas.itemconfig(self.progress_knob, fill=shade)
 
