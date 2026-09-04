@@ -94,6 +94,7 @@ from prompts import (AGENTIC_ACTIONS, ASSISTANT_SCOPE, EMOTION_PERSONA,
 # call time; see its foot for which.
 # Hearing. speech.py reads groq_key_order back through this module at call time.
 from speech import (ClampedRecognizer, HeldMicrophone, VoiceListener,
+                    calibrate_barge_in,
                     audio_seconds, calibrate_microphone, capture_continuation,
                     clamp_energy, detect_microphone_index, disable_mic_agc,
                     get_microphone_device, is_probably_speech, list_microphones,
@@ -101,8 +102,9 @@ from speech import (ClampedRecognizer, HeldMicrophone, VoiceListener,
                     looks_unfinished, stt_prompt_size, transcribe,
                     wake_word_match, is_repeated_hallucination, rejoin_absorbed_consonant,
                     clamp_stt_prompt, segment_logprob)
-from kg import (kg_handle_doubt, kg_holds_microphone, kg_listen_waiting,
-                kg_serve_listen)
+from kg import (KG_DOUBT_PAUSE_S, KG_DOUBT_PHRASE_S, KG_DOUBT_WAIT_S,
+                kg_cancel_listen, kg_capture_utterance, kg_handle_doubt,
+                kg_holds_microphone, kg_listen_waiting, kg_serve_listen)
 from audio import audio_player_worker, list_cartesia_voices
 from config import (BYTES_PER_SEC, CARTESIA_API_KEY, CARTESIA_MODEL,
                     CARTESIA_SAMPLE_RATE, CARTESIA_SPEED, CARTESIA_VOICE_ID,
@@ -111,7 +113,8 @@ from state import note_spoken
 
 
 
-from state import (_kg_listen_lock, _kg_listen_next, _kg_listen_valid_from, audio_queue,
+from state import (kg_ask_event,
+                   _kg_listen_lock, _kg_listen_next, _kg_listen_valid_from, audio_queue,
                    caption_lock, caption_state, device_state_lock, kg_active,
                    kg_listen_requests, kg_listen_results, media_active, playback_active,
                    sleep_event, stop_playback_event, subprocess_lock, wake_event)
@@ -1200,10 +1203,76 @@ def ai_loop(ui, headless=False):
             retell_buffer, retell_silence_from, retell_nudged = [], 0.0, False
             wake_event.clear()
             sleep_event.clear()
+            # THE CHILD TAPPED LIZA. Answered before anything else here,
+            # because it is the one interruption that cannot fail: no wake word
+            # to mishear, no bar to clear, no room acoustics involved. On this
+            # device that matters -- barge-in is marginal here, and a five-year-
+            # old cannot do anything about a speaker being louder than they are.
+            #
+            # Any question a screen was waiting for is abandoned first. They
+            # have stopped answering it and asked something of their own, and a
+            # listen left in flight would take the answer to THIS question and
+            # mark it against the old one.
+            if kg_ask_event.is_set():
+                kg_ask_event.clear()
+                kg_cancel_listen()
+                interrupt_playback()
+                asked = kg_capture_utterance(
+                    recognizer, mic_device, listener, KG_DOUBT_WAIT_S,
+                    KG_DOUBT_PHRASE_S, KG_DOUBT_PAUSE_S, label="KG-ASK")
+                kg_handle_doubt(ui, asked, "", recognizer, mic_device, listener)
+                continue
+
             # Parked, but not deaf: the spelling screen asks the child to SAY the
             # letters, and this is the only thread that may touch the microphone.
             # Nothing else here opens it, so a KG listen cannot race the wake word.
             if kg_serve_listen(recognizer, mic_device, listener):
+                continue
+
+            # SHE IS MID-LESSON AND SOMEBODY HAS STARTED TALKING OVER HER.
+            #
+            # The wake-word branch below only listens in the GAPS between her
+            # sentences. That is enough for the alphabet, where she says a
+            # letter and waits, and useless for a story: she talks for a minute
+            # at a stretch, and a child with a question has nowhere to put it
+            # until she has finished. Which is not how a five-year-old asks a
+            # question -- they ask it the moment they think of it, over
+            # whatever is being said, and if nothing happens they stop asking.
+            #
+            # So this is the same barge-in the normal conversation path uses,
+            # brought to the lesson: measured against her own voice coming back
+            # through the microphone rather than against any fixed level, so it
+            # moves with the volume and the room. See _track_barge_in.
+            #
+            # The interrupting words are already in the air when this fires, so
+            # they are captured straight away rather than after a "Yes?" -- the
+            # frames hold_barge_in() sets aside are picked up by the very next
+            # wait_for_utterance. That is what stops the question arriving with
+            # its first word missing.
+            if (BARGE_IN_ENABLED and listener is not None and listener.available
+                    and playback_active.is_set() and not kg_listen_waiting()):
+                # Her own first syllables are not an interruption of themselves.
+                if time.time() - state.playback_started_at < BARGE_IN_LEAD_S:
+                    time.sleep(0.05)
+                    continue
+                if not listener.barge_in_ready():
+                    # Short poll: the point is to react while they are still
+                    # talking, not once they have given up.
+                    time.sleep(0.05)
+                    continue
+                print("[BARGE-IN] Interrupted mid-lesson; stopping to listen.",
+                      flush=True)
+                listener.hold_barge_in()
+                interrupt_playback()
+                ui_call(lambda: state.ui_instance.set_state("listening"))
+                asked = kg_capture_utterance(
+                    recognizer, mic_device, listener, KG_DOUBT_WAIT_S,
+                    KG_DOUBT_PHRASE_S, KG_DOUBT_PAUSE_S,
+                    cancel=kg_listen_waiting, label="KG-BARGE")
+                # An empty capture is not a dead end: kg_handle_doubt asks what
+                # they wanted and listens again, which is the right answer when
+                # the interruption was a cough or the room.
+                kg_handle_doubt(ui, asked, "", recognizer, mic_device, listener)
                 continue
 
             # No screen was waiting for anything, so the microphone is free --
@@ -2533,6 +2602,12 @@ def main():
 
     if "--calibrate-mic" in sys.argv:
         calibrate_microphone()
+        sys.exit(0)
+
+    # "I cannot interrupt her" is not a bug report anyone can act on without
+    # numbers, because the answer depends on the room. This produces them.
+    if "--calibrate-barge-in" in sys.argv:
+        calibrate_barge_in()
         sys.exit(0)
 
     if not CARTESIA_API_KEY:

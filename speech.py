@@ -43,7 +43,7 @@ from config import (BARGE_IN_DEBUG, BARGE_IN_ENABLED, BARGE_IN_LEAD_S,
                     WAKE_BARE_NAME_MAX_WORDS, WAKE_LISTEN_TIMEOUT_S, WAKE_MAX_LEAD_WORDS,
                     WAKE_PHRASE_LIMIT_S, WAKE_SEED_PROMPT, WAKE_SEED_PROMPT_ASLEEP,
                     WAKE_SLEEP_MAX_WORDS, WAKE_STT_MODEL)
-from state import media_active, playback_active
+from state import audio_queue, media_active, playback_active
 
 def wake_word_match(text, pattern, asleep=False):
     """The regex hit, but only when it sits where a real wake word sits.
@@ -172,6 +172,100 @@ def calibrate_microphone(seconds=6):
               "these two.", flush=True)
     print(f"\nPut these in .env:\n  MIC_ENERGY_FLOOR={floor}\n  MIC_ENERGY_CEILING={ceiling}",
           flush=True)
+
+def calibrate_barge_in(quiet_s=6.0, talk_s=10.0):
+    """Can a voice in THIS room actually cut Liza off? Measure it, do not guess.
+
+    Barge-in compares what the microphone hears against how loud SHE is coming
+    back through it, so whether it fires depends on the speaker volume, the
+    distance from the speaker to the dongle, and the room. None of that can be
+    reasoned about from here, which is why -- when somebody reports they cannot
+    interrupt her -- this is the thing to run.
+
+    It runs in TWO halves, and the first is the important one. She talks while
+    you stay quiet, and that measures how far her own voice swings above its own
+    reference: the floor any usable margin has to sit above. Then you talk over
+    her, and that is the ceiling. A recommendation is only made when there is
+    daylight between the two -- because a margin under the first number is one
+    her own vowels clear, and she would spend the rest of her life cutting
+    herself off mid-word, which is a worse device than one you cannot interrupt.
+    """
+    import audio                    # deferred: audio has no business being a
+                                    # module-level dependency of hearing
+    index = detect_microphone_index()
+    disable_mic_agc(index)
+    listener = VoiceListener(index)
+    if not listener.available:
+        print("[BARGE-CAL] No voice detector, so there is no barge-in to measure. "
+              "Install it with: pip install webrtcvad-wheels", flush=True)
+        return
+    listener.start()
+    threading.Thread(target=audio.audio_player_worker, daemon=True).start()
+    time.sleep(1.0)
+
+    def measure(seconds):
+        """(highest level/bar the gate saw, ms spent over the bar)."""
+        listener.take_calibration()          # discard whatever came before
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            time.sleep(0.05)
+        return listener.take_calibration()
+
+    audio_queue.put(
+        "Please stay quiet for a moment, while I measure how loud I am in this "
+        "room. I will keep talking. One. Two. Three. Four. Five. Six. Seven. "
+        "Eight. Nine. Ten. Eleven. Twelve.")
+    audio_queue.put("[END_OF_RESPONSE]")
+    print("\n  [1/2] STAY QUIET. Measuring how loud she is here...", flush=True)
+    while not playback_active.is_set():
+        time.sleep(0.05)
+    time.sleep(BARGE_IN_LEAD_S)
+    her, her_over = measure(quiet_s)
+
+    audio_queue.put(
+        "Now please talk over me, normally, from where you are sitting. Do not "
+        "wait for me to stop. I will keep counting while you do. One. Two. "
+        "Three. Four. Five. Six. Seven. Eight. Nine. Ten. Eleven. Twelve. "
+        "Thirteen. Fourteen. Fifteen.")
+    audio_queue.put("[END_OF_RESPONSE]")
+    print("  [2/2] NOW TALK OVER HER, normally, from where you sit...", flush=True)
+    while not playback_active.is_set():
+        time.sleep(0.05)
+    time.sleep(BARGE_IN_LEAD_S)
+    you, you_over = measure(talk_s)
+
+    print("\n  ---- what the microphone actually heard ----", flush=True)
+    # Everything is expressed against the bar itself, so 1.00x IS the bar.
+    print("  her own voice reached  : %.2fx the bar, over it for %.0f ms" % (her, her_over))
+    print("  you reached            : %.2fx the bar, over it for %.0f ms" % (you, you_over))
+    print("  a run of %d ms over the bar is what actually stops her." % BARGE_IN_MS)
+
+    if you_over >= BARGE_IN_MS:
+        print("\n  You cleared it, and for long enough. Barge-in should already be "
+              "working here.")
+    elif you <= max(her, 1.0) * 1.05:
+        print("\n  Your voice did not come through any louder than hers does. No "
+              "margin can separate the two, so lowering it would only make her "
+              "interrupt herself. Move the microphone closer to where the child "
+              "sits, or the speaker further from the microphone, and run this "
+              "again.")
+    else:
+        # Halfway between, in the log domain, so it sits clear of BOTH.
+        # Scale the CURRENT margin by where you landed relative to the bar,
+        # then sit halfway between that and where her own voice reaches.
+        need = BARGE_IN_MARGIN / max(you, 0.01)
+        floor = BARGE_IN_MARGIN * max(her, 0.01)
+        suggest = round(max((need * max(floor, need)) ** 0.5, 1.15), 2)
+        print("\n  You are above her, but under the bar. That is why she cannot be "
+              "interrupted, and it is only a tuning problem.")
+        print("  Put this in .env, then `liza restart`:")
+        print("\n      BARGE_IN_MARGIN=%.2f\n" % suggest)
+        print("  If she starts cutting herself off mid-word it is too low; raise it "
+              "back towards %.2f. Her own voice reached %.2fx of the bar here, and "
+              "only the %d ms run is keeping that from firing."
+              % (BARGE_IN_MARGIN, her, BARGE_IN_MS))
+    listener.stop()
+
 
 def _index_can_record(index):
     """True when this PortAudio index is actually a capture device.
@@ -461,6 +555,8 @@ class VoiceListener:
         # Audio the student had already spoken when their interruption cut the
         # reply off; see hold_barge_in().
         self._carry = []
+        self._cal_peak = 0.0
+        self._cal_over_ms = 0.0
 
     @property
     def available(self):
@@ -729,6 +825,15 @@ class VoiceListener:
         # that they cannot interrupt her, this is the first thing to turn on.
         # Read `lvl` against `bar` while talking over her: lvl below bar means
         # the margin is too high for this room, not that the detector is broken.
+        # What the gate saw, for calibrate_barge_in(). Recorded HERE because
+        # this is the only place the frame's level and the bar it is being
+        # judged against exist at the same instant: comparing a peak taken from
+        # the ring buffer against a later reference measures nothing, and reads
+        # far too high.
+        if voiced and bar > 0:
+            self._cal_peak = max(self._cal_peak, level / bar)
+            if level > bar:
+                self._cal_over_ms += VAD_FRAME_MS
         if BARGE_IN_DEBUG and voiced:
             print(f"[BARGE?] lvl={level:6d} bar={bar:7.0f} echo={self._echo_level:7.0f} "
                   f"run={self._loud_run_ms:5.0f}ms {'OVER' if level > bar else ''}",
@@ -794,6 +899,13 @@ class VoiceListener:
 
     def reset_barge_in(self):
         self._loud_run_ms = 0.0
+
+    def take_calibration(self):
+        """(peak level/bar seen, ms spent over the bar) since the last call."""
+        with self._cv:
+            peak, over = self._cal_peak, self._cal_over_ms
+            self._cal_peak, self._cal_over_ms = 0.0, 0.0
+        return peak, over
 
     def hold_barge_in(self):
         """Set the interrupting audio aside, and drop everything before it.

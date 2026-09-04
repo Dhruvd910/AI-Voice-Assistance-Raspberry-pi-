@@ -36,7 +36,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 # this file has four of them (set_state's own parameter among them). The one
 # value that is REASSIGNED has to go through the module; see state.py.
 import state as app_state
-from state import (audio_queue, kg_listen_results, media_active,
+from state import (audio_queue, kg_ask_event, kg_listen_results, media_active,
                    playback_active, sleep_event, stop_playback_event,
                    wake_event)
 import kg_content
@@ -862,6 +862,9 @@ class TutorUI:
         self.state_text_id = self.canvas.create_text(
             MASCOT_CX, STATE_LABEL_Y, text="", font=self._font(9, True), fill=COL_TEXT_DIM)
         self.mascot_item = self.canvas.create_image(MASCOT_CX, MASCOT_CY)
+        # Bound once here rather than per screen: _kg_ask_tapped checks which
+        # screen is up, so the binding is harmless everywhere else.
+        self.canvas.tag_bind(self.mascot_item, "<Button-1>", self._kg_ask_tapped)
 
     # ---------- mode cards ----------
     def _mode_glyph(self, kind, cx, cy, colour, tint):
@@ -1452,6 +1455,29 @@ class TutorUI:
         self._overlay_photos = []
         self.overlay = None
 
+    # The lesson screens, where tapping her means "stop, I want to ask you
+    # something". Not the keyboard screens: she is behind the backing there and
+    # cannot be tapped at all, and not the pickers, where nothing is being said.
+    KG_ASK_SCREENS = {"kg_alpha", "kg_count", "kg_story"}
+
+    def _kg_ask_tapped(self, event=None):
+        """Tapping Liza during a lesson: stop talking, and listen to the child.
+
+        A five-year-old interrupts by talking over you, and barge-in covers that
+        -- when the room allows it. Whether it fires depends on how loud the
+        speaker is against the microphone, which is not something a child can do
+        anything about, and on this device it is marginal. A tap is not: it
+        works at any volume, in any room, and she is 187 by 250 pixels of her
+        own face, which is a larger target than any button on the screen.
+        """
+        if self.overlay not in self.KG_ASK_SCREENS:
+            return None
+        print("[UI] Liza tapped mid-lesson; stopping to listen.", flush=True)
+        kg_ask_event.set()
+        assistant.interrupt_playback()
+        self.set_state("listening")
+        return "break"
+
     def _kg_keep_mascot(self):
         """Lift the mascot above the overlay backing, so she is IN the lesson.
 
@@ -1471,6 +1497,19 @@ class TutorUI:
             return
         try:
             self.canvas.tag_raise(item)
+            if self.overlay in self.KG_ASK_SCREENS:
+                # A pill over her head, not a line under her feet: down there it
+                # lands in her own drop shadow and hard against the button strip
+                # at 396, where it reads as a caption rather than as something
+                # you may touch. Redrawn every time she is lifted, with the
+                # overlay tag, so it leaves with the screen.
+                y = MASCOT_CY - MASCOT_H // 2 - 4
+                self._round_rect(MASCOT_CX - 62, y - 12, MASCOT_CX + 62, y + 12,
+                                 12, fill="#FFFFFF", outline="#D9D2F5",
+                                 tags=self.OVERLAY_TAG)
+                self.canvas.create_text(
+                    MASCOT_CX, y, text="Tap me to ask", font=self._font(10, True),
+                    fill="#7C3AED", tags=self.OVERLAY_TAG)
         except tk.TclError:
             # A canvas rebuild between screens; the next redraw lifts her again.
             pass

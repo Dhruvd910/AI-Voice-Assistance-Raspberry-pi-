@@ -89,6 +89,13 @@ current_ui_mode = "normal"    # "normal" | "3d"
 device_state_lock = threading.Lock()
 
 # ---------------------------------------------------------------- kindergarten
+# A child tapped Liza during a lesson, meaning "stop, I want to ask you
+# something". Separate from wake_event because the KG park branch clears that
+# one on every pass -- and because this is not a wake: she is already awake,
+# already talking, and the point is to stop her.
+kg_ask_event = threading.Event()
+
+
 # Set while a KG student is on the device: ai_loop parks on this rather than
 # listening. An Event rather than a bool because ai_loop waits on it.
 kg_active = threading.Event()
