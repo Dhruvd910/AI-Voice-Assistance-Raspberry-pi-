@@ -561,3 +561,80 @@ RE_HALLUCINATION = re.compile(
     r'सब्सक्राइब करें|वीडियो पसंद आया|अगले वीडियो में',
     re.IGNORECASE
 )
+
+# WHERE the name falls in the utterance, which the patterns above cannot express.
+#
+# Every pattern here is used with .search(), so until now a hit ANYWHERE in the
+# transcript woke her -- including thirty words into a sentence that merely
+# mentioned the name. That is the false-wake reported from a room with an
+# ordinary Hindi conversation going on in it, and it is not a spelling problem,
+# so no amount of tightening the alternations above can reach it.
+#
+# Two structural facts separate a real wake from a mention. A person addressing
+# the device says the name FIRST -- "Hey Liza, what is photosynthesis" -- so a
+# match buried mid-sentence is somebody talking ABOUT her, not TO her. And
+# WAKE_SEED_PROMPT primes Whisper with the wake phrase, which is what makes it
+# reach for that phrase on ambiguous audio, so a regex hit on its own is weaker
+# evidence than it looks.
+WAKE_MAX_LEAD_WORDS = int(os.getenv("WAKE_MAX_LEAD_WORDS", "2"))
+
+# From sleep the bar is higher again, for the reason RE_WAKE_WORD_ASLEEP already
+# gives: sleep is an explicit "leave me alone", the Speak button is always right
+# there, and an accidental wake is the worse failure. So from sleep the wake
+# word must be substantially the WHOLE utterance -- "Hey Liza", not a sentence
+# that happens to open with it. Generous enough to keep "Hey Liza, what is a
+# cell" working, far short of the ambient sentences that caused this.
+WAKE_SLEEP_MAX_WORDS = int(os.getenv("WAKE_SLEEP_MAX_WORDS", "6"))
+
+# A bare name with no greeting -- "Liza", "लिज़ा" -- is a legitimate way to
+# address her, so RE_WAKE_WORD allows it. But it is also the single commonest
+# false positive, because it is exactly what an ordinary sentence ABOUT her
+# contains: "Lisa said the report was fine", "मैं लिज़ा से बात कर रहा हूँ".
+# Both open with the name and so clear the lead-word gate above.
+#
+# What separates them is what comes AFTER. "Liza" addressed to her is the whole
+# utterance; the name inside a sentence is followed by the rest of the sentence.
+# So a bare name has to stand alone, while a greeting -- which no one says by
+# accident -- buys the right to keep talking: "Hey Liza, what is photosynthesis".
+WAKE_BARE_NAME_MAX_WORDS = int(os.getenv("WAKE_BARE_NAME_MAX_WORDS", "3"))
+
+# (?!\w) rather than \b: a Devanagari greeting ends in a vowel SIGN ("हे" is
+# ह + े), which is a combining mark and not a word character, so there is no
+# word boundary after it and \b silently never matches the Hindi half of this
+# list. The lookahead asks the question that was actually meant -- that the
+# greeting is not just the front of a longer word.
+RE_WAKE_GREETING = re.compile(r'^\s*(?:hey|hi|hello|ok|okay|hay|हे|अरे|ओके|हाय|सुनो|हैलो)(?!\w)',
+                              re.IGNORECASE)
+
+MIC_ENERGY_CEILING = int(os.getenv("MIC_ENERGY_CEILING", "1300"))
+
+# Scripts nobody in this room is speaking. Whisper wanders into Japanese, Korean
+# and Chinese on noise -- logs/liza.log has "はい" eleven times and "バター"
+# (Japanese for "butter") twice, out of a room where only English and Hindi are
+# ever spoken. Arabic script is deliberately NOT here: Whisper reports Hindi as
+# Urdu routinely, and that is a real sentence to be re-read, not an invention.
+RE_IMPOSSIBLE_SCRIPT = re.compile(
+    "["
+    "\u3040-\u30ff"      # hiragana, katakana
+    "\u3400-\u4dbf"      # CJK extension A
+    "\u4e00-\u9fff"      # CJK unified ideographs
+    "\uac00-\ud7af"      # hangul
+    "\u0e00-\u0e7f"      # thai
+    "\u0400-\u04ff"      # cyrillic
+    "\u0370-\u03ff"      # greek
+    "\u0590-\u05ff"      # hebrew
+    "]")
+
+# Below this, a transcript is Whisper guessing rather than reading.
+#
+# MEASURED on this device against this model, not guessed. Real speech -- the
+# Cartesia voice degraded to a quarter volume with room hiss added, including the
+# hard cases (single words, spelled letters, Hindi) -- bottomed out at avg_logprob
+# -0.65. Non-speech -- digital silence and hiss at five amplitudes, sent with
+# both of the seed prompts this device uses -- topped out at -0.69. So there is a
+# real gap, and this sits inside it, one notch to the SAFE side: at -0.70 nothing
+# real was lost and nine of ten inventions were caught.
+#
+# Every drop is logged with its score, so if this ever starts eating real speech
+# the log says so immediately and the number can be moved from .env.
+STT_MIN_LOGPROB = float(os.getenv("STT_MIN_LOGPROB", "-0.70"))
