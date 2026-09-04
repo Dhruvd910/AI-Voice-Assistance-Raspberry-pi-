@@ -1845,33 +1845,47 @@ class TutorUI:
             self.canvas.create_arc(cx - 13, cy - 1, cx + 13, cy + 24, start=0, extent=180,
                                    fill="#FFFFFF", outline="", tags=tags)
 
-        self.canvas.create_text(WHO_X0 + 66, TOP_Y0 + 26, text="Welcome,", anchor="w",
-                                font=self._font(8), fill=COL_TEXT_DIM, tags=tags)
+        # NAME ON ONE LINE, CLASS ON THE NEXT.
+        #
+        # It used to be "Welcome," above "Sahil - Class 6" on a single line, and
+        # on this card that line has 204px to live in with an avatar in front of
+        # it -- so it came out as "Sahil - Clas...", which is the one thing the
+        # card exists to say. Splitting the two gives the name the whole width
+        # and drops the greeting, which was never the information.
+        text_x = WHO_X0 + 62
         self.profile_chip_text = self.canvas.create_text(
-            WHO_X0 + 66, TOP_Y0 + 48, text="Tap to set up",
-            anchor="w", font=self._font(13, True), fill=COL_TEXT_DIM, tags=tags)
+            text_x, TOP_Y0 + 25, text="Tap to set up",
+            anchor="w", font=self._font(12, True), fill=COL_TEXT_DIM, tags=tags)
+        self.profile_chip_class = self.canvas.create_text(
+            text_x, TOP_Y0 + 45, text="", anchor="w",
+            font=self._font(9), fill=COL_TEXT_DIM, tags=tags)
 
-        for x, y, s in ((WHO_X1 - 24, TOP_Y0 + 20, 7), (WHO_X1 - 40, TOP_Y0 + 58, 4)):
-            self.canvas.create_polygon(
-                x, y - s, x + s * 0.34, y - s * 0.34, x + s, y,
-                x + s * 0.34, y + s * 0.34, x, y + s,
-                x - s * 0.34, y + s * 0.34, x - s, y,
-                x - s * 0.34, y - s * 0.34, fill="#FBBF24", outline="", tags=tags)
+        # The artwork has its own decoration; these would land on top of it.
+        if art is None:
+            for x, y, s in ((WHO_X1 - 24, TOP_Y0 + 20, 7), (WHO_X1 - 40, TOP_Y0 + 58, 4)):
+                self.canvas.create_polygon(
+                    x, y - s, x + s * 0.34, y - s * 0.34, x + s, y,
+                    x + s * 0.34, y + s * 0.34, x, y + s,
+                    x - s * 0.34, y + s * 0.34, x - s, y,
+                    x - s * 0.34, y - s * 0.34, fill="#FBBF24", outline="", tags=tags)
 
         self.canvas.tag_bind("profilechip", "<Button-1>",
                              lambda e: self.show_profile_picker())
 
     def refresh_profile_chip(self):
         profile = profiles.active_profile()
+        room = WHO_X1 - (WHO_X0 + 62) - 10
         if profile:
-            label = f"{profile.get('name', 'Student')} - Class {profile.get('class')}"
+            label = profile.get("name", "Student")
+            klass = f"Class {profile.get('class')}"
             colour = COL_TEXT
         else:
-            label, colour = "Tap to set up", COL_TEXT_DIM
+            label, klass, colour = "Tap to set up", "", COL_TEXT_DIM
         self.canvas.itemconfig(self.profile_chip_text,
-                               text=self._ellipsize(label, self._font(13, True),
-                                                    WHO_X1 - WHO_X0 - 90),
+                               text=self._ellipsize(label, self._font(12, True), room),
                                fill=colour)
+        self.canvas.itemconfig(self.profile_chip_class,
+                               text=self._ellipsize(klass, self._font(9), room))
         if getattr(self, "profile_chip_face", None) is not None:
             face = profile_avatar(profile, 46) if profile else None
             if face is None:
@@ -2034,7 +2048,11 @@ class TutorUI:
             "setup",
             "Edit student" if editing else "New student",
             "Change the name or class, then save." if editing
-            else "Type a name, then tap a class.")
+            else "Type a name, then tap a class.",
+            backdrop=("KG Activity", "Glass_BG.png"), backdrop_at=(19, 20))
+        # The panel ends at 461, and this row used to run to 462.
+        glass = ui_asset("KG Activity", "Glass_BG.png")
+        row_y = 406 if glass is not None else 416
 
         # Name field
         self._round_rect(40, 84, 760, 124, 10, fill="#FFFFFF",
@@ -2073,8 +2091,10 @@ class TutorUI:
                                      radius=8, size=10)
 
         # Class picker: KG and 1-12, thirteen big targets on one row each half.
+        # Darker over the panel, which is a picture rather than a flat tint.
+        label_col = "#3A2E6E" if glass is not None else COL_TEXT_DIM
         self.canvas.create_text(40, 292, text="CLASS", anchor="w",
-                                font=self._font(9, True), fill=COL_TEXT_DIM,
+                                font=self._font(9, True), fill=label_col,
                                 tags=self.OVERLAY_TAG)
         # Thirteen targets in the 40..540 strip, which is everything left of the
         # board column at 560. Seven per row at 66px wide clears the ~40px a
@@ -2092,31 +2112,43 @@ class TutorUI:
                                  radius=10, size=13)
 
         # Board is explicitly optional, so it never blocks Save.
-        self.canvas.create_text(560, 292, text="BOARD (OPTIONAL)", anchor="w",
-                                font=self._font(9, True), fill=COL_TEXT_DIM,
+        self.canvas.create_text(556, 292, text="BOARD (OPTIONAL)", anchor="w",
+                                font=self._font(9, True), fill=label_col,
                                 tags=self.OVERLAY_TAG)
         for index, board in enumerate(profiles.BOARDS):
-            x0, y0 = 560 + (index % 2) * 116, 306 + (index // 2) * 52
+            # 556 and 104 wide, not 560 and 108: the second column used to end
+            # at 784 and the panel behind it ends at 781.
+            x0, y0 = 556 + (index % 2) * 112, 306 + (index // 2) * 52
             chosen = self._setup_board == board
-            self._overlay_button(x0, y0, x0 + 108, y0 + 46, board,
+            self._overlay_button(x0, y0, x0 + 104, y0 + 46, board,
                                  lambda b=board: self._setup_pick_board(b),
                                  fill="#14B8A6" if chosen else "#FFFFFF",
                                  text_colour="#FFFFFF" if chosen else COL_TEXT,
                                  radius=10, size=10)
 
         ready = bool(self._setup_class)
-        self._overlay_button(40, 416, 300, 462,
-                             "Save changes" if editing else "Save and start",
-                             self._setup_save if ready else None,
-                             fill=COL_INDIGO if ready else "#C7CEF0", size=13)
+        save_label = "Save changes" if editing else "Save and start"
+        # The artwork card only when Save is actually available: it is a solid
+        # navy button and there is no greyed version of it, and a button that
+        # looks live but does nothing is worse than one that looks dead.
+        if not (ready and self._art_button((40, row_y), ("Profile", "Add new.png"),
+                                           save_label, self._setup_save,
+                                           "#FFFFFF", 13)):
+            self._overlay_button(40, row_y, 300, row_y + 46, save_label,
+                                 self._setup_save if ready else None,
+                                 fill=COL_INDIGO if ready else "#C7CEF0", size=13)
         if profiles.list_profiles():
-            self._overlay_button(316, 416, 500, 462, "Back",
-                                 self.show_profile_picker, fill="#E6E9F5",
-                                 text_colour=COL_TEXT, size=11)
+            if not self._art_button((262, row_y), ("Profile", "Edit.png"), "Back",
+                                    self.show_profile_picker, COL_TEXT, 11):
+                self._overlay_button(316, row_y, 500, row_y + 46, "Back",
+                                     self.show_profile_picker, fill="#E6E9F5",
+                                     text_colour=COL_TEXT, size=11)
         if editing:
             # Only when editing, and set well away from Save: the two buttons do
-            # opposite things and one of them cannot be undone.
-            self._overlay_button(600, 416, 760, 462, "Delete",
+            # opposite things and one of them cannot be undone. Left drawn on
+            # purpose -- there is no red card in the folder, and this one should
+            # not look like the others.
+            self._overlay_button(600, row_y, 760, row_y + 46, "Delete",
                                  lambda: self.confirm_delete_profile(editing),
                                  fill="#FEE2E2", text_colour="#B91C1C", size=11)
 
