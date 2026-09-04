@@ -33,6 +33,13 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 import assistant
+# In-place objects by name -- a local called `state` cannot shadow these, and
+# this file has four of them (set_state's own parameter among them). The one
+# value that is REASSIGNED has to go through the module; see state.py.
+import state as app_state
+from state import (audio_queue, kg_listen_results, media_active,
+                   playback_active, sleep_event, stop_playback_event,
+                   wake_event)
 import kg_content
 import profiles
 import store
@@ -1126,7 +1133,7 @@ class TutorUI:
         # screen, sixteen times a second.
         if self.ui_mode == "3d":
             return
-        live = assistant.media_active.is_set()
+        live = media_active.is_set()
         shade = COL_INDIGO if live else COL_TEXT_FAINT
         self.canvas.itemconfig(self.play_ring, fill=shade)
         paused = self.media["paused"]
@@ -1137,7 +1144,7 @@ class TutorUI:
         self.canvas.itemconfig(self.progress_knob, fill=shade)
 
     def toggle_media_pause(self, event=None):
-        if assistant.media_active.is_set():
+        if media_active.is_set():
             assistant.mpv_command(["cycle", "pause"])
         return "break"
 
@@ -1284,7 +1291,7 @@ class TutorUI:
         if state != "sleeping" and self.asleep:
             return
         if state in ("idle", "listening", "warmup") and (
-                assistant.playback_active.is_set() or not assistant.audio_queue.empty() or assistant.media_active.is_set()):
+                playback_active.is_set() or not audio_queue.empty() or media_active.is_set()):
             return
 
         self.current_state = state
@@ -1345,8 +1352,8 @@ class TutorUI:
         """The Speak button. Wakes her from anything, including sleep."""
         print("[UI] Speak tapped. Waking up...", flush=True)
         self.asleep = False
-        assistant.sleep_event.clear()
-        assistant.wake_event.set()
+        sleep_event.clear()
+        wake_event.set()
         return "break"
 
     def tap_to_wake(self, event=None):
@@ -1369,10 +1376,10 @@ class TutorUI:
     def stop_speaking(self, event=None):
         # Music/video first: audio-only playback shows no window of its own, so
         # this button is the only way to stop a song.
-        if assistant.media_active.is_set():
+        if media_active.is_set():
             print("[UI] Stop tapped, stopping media playback.", flush=True)
             assistant.stop_media_playback()
-        if assistant.playback_active.is_set() or not assistant.audio_queue.empty():
+        if playback_active.is_set() or not audio_queue.empty():
             print("[UI] Stop tapped, cutting the reply short.", flush=True)
             assistant.interrupt_playback()
         return "break"          # do not let the tap fall through and re-wake her
@@ -1380,11 +1387,11 @@ class TutorUI:
     def go_to_sleep(self, event=None):
         print("[UI] Sleep tapped. Going to standby...", flush=True)
         self.asleep = True
-        assistant.wake_event.clear()
-        assistant.sleep_event.set()
-        if assistant.media_active.is_set():
+        wake_event.clear()
+        sleep_event.set()
+        if media_active.is_set():
             assistant.stop_media_playback()
-        if assistant.playback_active.is_set() or not assistant.audio_queue.empty():
+        if playback_active.is_set() or not audio_queue.empty():
             assistant.interrupt_playback()
         self.current_state = "sleeping"
         return "break"          # otherwise the root tap-to-wake binding undoes this
@@ -1414,8 +1421,8 @@ class TutorUI:
         # so ai_loop reaches the top of its loop -- and this pending intro --
         # right away. ai_loop's own pending_mode_intro handler still does the
         # real interrupt_playback() sweep and clears this event again.
-        assistant.stop_playback_event.set()
-        assistant.pending_mode_intro = MODE_INTROS[self.current_mode]
+        stop_playback_event.set()
+        app_state.pending_mode_intro = MODE_INTROS[self.current_mode]
 
     def cycle_mode(self, event=None):
         self.set_mode((self.current_mode_index + 1) % len(self.modes))
@@ -2792,7 +2799,7 @@ class TutorUI:
         """
         while True:
             try:
-                answer = assistant.kg_listen_results.get_nowait()
+                answer = kg_listen_results.get_nowait()
             except queue.Empty:
                 break
             if (isinstance(answer, dict)
@@ -2818,7 +2825,7 @@ class TutorUI:
         of guessing, plus a short settle for the tail of the audio to leave the
         speaker before the microphone opens.
         """
-        if assistant.playback_active.is_set() or not assistant.audio_queue.empty():
+        if playback_active.is_set() or not audio_queue.empty():
             self.root.after(120, lambda: self._kg_after_speaking(callback, settle_ms))
             return
         self.root.after(settle_ms, callback)
@@ -3243,7 +3250,7 @@ class TutorUI:
         # No audio ever arrived -- Cartesia is down, or the network is. Without
         # this the poll runs for as long as the screen is up and the question is
         # never asked, so the story screen becomes a dead end on a bad network.
-        if (index < 0 and not assistant.playback_active.is_set() and assistant.audio_queue.empty()
+        if (index < 0 and not playback_active.is_set() and audio_queue.empty()
                 and time.time() - getattr(self, "_kg_narrate_at", 0)
                 > self.KG_NARRATE_GRACE_S):
             print("[KG] The story never reached the speaker; showing the question.",
@@ -3363,7 +3370,7 @@ class HeadlessUI:
     def set_emotion(self, mood): self.emotion = (mood or "").strip().lower() or None
     def go_to_sleep(self, event=None):
         self.asleep = True
-        assistant.wake_event.clear()
-        assistant.sleep_event.set()
-        if assistant.media_active.is_set(): assistant.stop_media_playback()
-        if assistant.playback_active.is_set() or not assistant.audio_queue.empty(): assistant.interrupt_playback()
+        wake_event.clear()
+        sleep_event.set()
+        if media_active.is_set(): assistant.stop_media_playback()
+        if playback_active.is_set() or not audio_queue.empty(): assistant.interrupt_playback()

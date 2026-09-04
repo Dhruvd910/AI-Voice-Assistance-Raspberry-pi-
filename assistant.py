@@ -36,6 +36,18 @@ import config  # noqa: F401  (imported for the .env it loads)
 # The screen. ui.py imports THIS module back, and that cycle is safe only
 # because nothing in it touches assist.* at import time; see ui.py's header
 # before changing either import.
+# Shared state lives in state.py so that ui.py, the media player and the
+# action tags can all reach it without importing each other. The names
+# imported here are never reassigned, only mutated in place, which is what
+# makes importing them BY NAME safe; everything that IS reassigned is
+# reached as state.<name>. See state.py's header before moving one group
+# into the other.
+import state
+from state import (_kg_listen_lock, _kg_listen_next, _kg_listen_valid_from, audio_queue,
+                   caption_lock, caption_state, device_state_lock, kg_active,
+                   kg_listen_requests, kg_listen_results, media_active, playback_active,
+                   sleep_event, stop_playback_event, subprocess_lock, wake_event)
+
 from ui import HeadlessUI, TutorUI
 # Suppress ONNX Runtime warnings
 os.environ["ORT_LOGGING_LEVEL"] = "3"
@@ -409,20 +421,9 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
 WEATHER_CITY = os.getenv("WEATHER_CITY", "Delhi,IN")
 WEATHER_REFRESH_S = int(os.getenv("WEATHER_REFRESH_S", "900"))
 
-wake_event = threading.Event()
 HISTORY_FILE = os.getenv("HISTORY_FILE", "chat_history.json")
 MAX_HISTORY_TURNS = 6
 
-audio_queue = queue.Queue()
-playback_active = threading.Event()
-stop_playback_event = threading.Event()
-active_subprocesses = []
-subprocess_lock = threading.Lock()
-ui_instance = None
-media_active = threading.Event()   # a song or video is playing via mpv
-# When that player came up. Read by the barge-in path, which must not listen
-# into the first moments of a track -- see MEDIA_START_GRACE_S.
-media_started_at = 0.0
 
 def note_media_started():
     """Single funnel for 'a player just came up', whoever started it.
@@ -432,11 +433,7 @@ def note_media_started():
     ever set the grace period. The second is how "open the gravity file" plays a
     video, so that path came up with NO guard at all and the branch below was
     free to listen into the first second of it."""
-    global media_started_at
-    media_started_at = time.time()
-media_process = None
-media_procs = []                   # [yt-dlp, mpv] for the current playback
-sleep_event = threading.Event()    # the Sleep button was tapped; drop to standby
+    state.media_started_at = time.time()
 
 # ---------- student profiles and the Kindergarten flow ----------
 # Set while a KG student is on the device. ai_loop parks on this instead of
@@ -444,7 +441,6 @@ sleep_event = threading.Event()    # the Sleep button was tapped; drop to standb
 # so the open microphone and the whole question-and-answer path stay shut. It is
 # an Event rather than a bool because ai_loop waits on it, and .wait() with a
 # timeout is what keeps that loop off the CPU while a child taps at letters.
-kg_active = threading.Event()
 
 # The KG screens run on the Tk thread; the microphone belongs to ai_loop, which
 # opens it once and never lets go (see HeldMicrophone / VoiceListener -- this
@@ -455,8 +451,6 @@ kg_active = threading.Event()
 # Instead ai_loop, which is otherwise PARKED for the whole of KG mode, services
 # listen requests from these two queues. The Tk side asks and then polls for the
 # answer with root.after, so no Tk call is ever made off the Tk thread.
-kg_listen_requests = queue.Queue()
-kg_listen_results = queue.Queue()
 
 # A request and its answer used to be two unrelated queues, with the screen
 # simply taking whatever turned up next. That held together only while every
@@ -472,9 +466,6 @@ kg_listen_results = queue.Queue()
 # belongs to, and a screen accepts only its own. Asking for a new listen
 # abandons every older one, which also reaches INTO the listen ai_loop is
 # blocked in and ends it early -- see the cancel argument to wait_for_utterance.
-_kg_listen_lock = threading.Lock()
-_kg_listen_next = [1]          # id for the next request
-_kg_listen_valid_from = [1]    # anything below this has been abandoned
 
 
 def kg_next_listen_id():
@@ -824,44 +815,25 @@ def kg_say_many(segments):
 # Locked because these are written from three different threads: ai_loop when it
 # executes an action, the Tk thread when a button is tapped, and the media
 # watcher when a song simply ends on its own.
-currently_playing = None      # {"title": str, "kind": "music"|"video"} or None
-currently_open_file = None    # absolute path inside $HOME, or None
-current_ui_mode = "normal"    # "normal" | "3d"
-device_state_lock = threading.Lock()
 
 def set_playing_state(title=None, kind=None):
     """Single writer for currently_playing; title=None means nothing plays."""
-    global currently_playing
     with device_state_lock:
-        currently_playing = {"title": title, "kind": kind} if title else None
+        state.currently_playing = {"title": title, "kind": kind} if title else None
 
 def get_device_state():
     """(playing, open_file, ui_mode) -- a snapshot, safe to read at leisure."""
     with device_state_lock:
-        playing = dict(currently_playing) if currently_playing else None
-        return playing, currently_open_file, current_ui_mode
+        playing = dict(state.currently_playing) if state.currently_playing else None
+        return playing, state.currently_open_file, state.current_ui_mode
 
-# Everything Liza has said recently, for echo rejection. playback_active alone
-# is not enough: it clears when aplay's stdin closes, but sound keeps coming out
-# of the ALSA buffer for a moment afterwards, so the mic reopens in time to
-# record her own tail. That is how a mode intro came back as a [TRANSCRIPT] and
-# got answered as if the student had said it.
-last_spoken_text = ""
-last_spoken_at = 0.0
-# When the reply now playing began. Barge-in is held off for a moment after
-# this; see BARGE_IN_LEAD_S.
-playback_started_at = 0.0
-# Mode intro waiting to be spoken by ai_loop, so audio is never started from the
-# Tk thread while the microphone is open. See TutorUI.set_mode().
-pending_mode_intro = None
 ECHO_GUARD_SEC = 2.5      # treat mic input as suspect this long after speaking
 MIC_SETTLE_SEC = 0.4      # let the speaker drain before opening the mic
 
 def note_spoken(text):
     """Single funnel for everything sent to the voice, whoever queued it."""
-    global last_spoken_text, last_spoken_at
-    last_spoken_text = f"{last_spoken_text} {text}"[-600:]
-    last_spoken_at = time.time()
+    state.last_spoken_text = f"{state.last_spoken_text} {text}"[-600:]
+    state.last_spoken_at = time.time()
 
 # Echo detection scores how much of what the mic heard also appears in what Liza
 # just said. Function words have to be excluded from that score: last_spoken_text
@@ -925,7 +897,7 @@ def sounds_like_her_own_prompt(text):
     heard = [w for w in RE_ECHO_TOKEN.findall((text or "").lower()) if len(w) > 1]
     if len(heard) < KG_ECHO_MIN_WORDS:
         return False
-    hers = set(RE_ECHO_TOKEN.findall((last_spoken_text or "").lower()))
+    hers = set(RE_ECHO_TOKEN.findall((state.last_spoken_text or "").lower()))
     if not hers:
         return False
     return sum(1 for word in heard if word in hers) / len(heard) >= KG_ECHO_RATIO
@@ -981,7 +953,6 @@ def kill_stray_media():
             except Exception:
                 pass
 HEADLESS_MODE = False
-current_ai_response = ""
 
 PREFERRED_MIC_NAMES = ["USB PnP Sound Device", "USB Audio", "Audio"]
 # Name matching cannot separate two dongles that report the SAME name, and this
@@ -2332,10 +2303,10 @@ class VoiceListener:
 def _cleanup(*_args):
     stop_playback_event.set()
     with subprocess_lock:
-        for proc in active_subprocesses:
+        for proc in state.active_subprocesses:
             try: proc.terminate()
             except Exception: pass
-        active_subprocesses.clear()
+        state.active_subprocesses.clear()
     try: audio_queue.put_nowait(None)
     except Exception: pass
 
@@ -2424,14 +2395,13 @@ def _log_thread_crash(args):
 threading.excepthook = _log_thread_crash
 
 def interrupt_playback():
-    global active_subprocesses
     stop_playback_event.set()
     
     with subprocess_lock:
-        for proc in active_subprocesses:
+        for proc in state.active_subprocesses:
             try: proc.terminate()
             except Exception: pass
-        active_subprocesses.clear()
+        state.active_subprocesses.clear()
     
     while not audio_queue.empty():
         try: audio_queue.get_nowait()
@@ -3058,7 +3028,7 @@ def weather_worker():
             reading = fetch_weather()
             if reading:
                 print(f"[WEATHER] {reading['city']} {reading['temp']}C {reading['desc']}", flush=True)
-                ui_call(lambda r=reading: ui_instance.set_weather(r))
+                ui_call(lambda r=reading: state.ui_instance.set_weather(r))
         except Exception as exc:
             print(f"[WEATHER ERROR] {exc}", flush=True)
         time.sleep(WEATHER_REFRESH_S)
@@ -3078,8 +3048,8 @@ def list_cartesia_voices(query=""):
 
 def ui_call(callback):
     """Run a UI update on the Tk thread. No-op when headless."""
-    if ui_instance is None: return
-    root = getattr(ui_instance, "root", None)
+    if state.ui_instance is None: return
+    root = getattr(state.ui_instance, "root", None)
     if root is not None: root.after(0, callback)
 
 # ==========================================
@@ -3115,8 +3085,6 @@ def spoken_parts(item):
 # Sessions exist so a torn-down response cannot caption the one that replaced it:
 # the player captures the session number when it picks a response up, and a cue
 # under a stale number is dropped.
-caption_lock = threading.Lock()
-caption_state = {"session": 0, "start": 0.0, "cues": []}
 
 
 def caption_begin():
@@ -3182,7 +3150,6 @@ def caption_now(session):
 
 
 def audio_player_worker():
-    global active_subprocesses, playback_started_at
     while True:
         first_item = audio_queue.get()
         if first_item is None: break
@@ -3193,7 +3160,7 @@ def audio_player_worker():
             audio_queue.task_done()
             continue
 
-        playback_started_at = time.time()
+        state.playback_started_at = time.time()
         playback_active.set()
         # Captured once for the whole response; see caption_begin.
         this_caption = caption_session()
@@ -3207,7 +3174,7 @@ def audio_player_worker():
                  "-c", "1", "-D", AUDIO_OUTPUT_DEVICE],
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL
             )
-            active_subprocesses = [aplay_proc]
+            state.active_subprocesses = [aplay_proc]
 
             # "generated" is how many seconds of audio have been handed to aplay so far,
             # so it doubles as the offset of the next sentence on the playback timeline.
@@ -3247,7 +3214,7 @@ def audio_player_worker():
                             if not clock["start"]:
                                 clock["start"] = time.time()
                                 caption_clock_start(this_caption, clock["start"])
-                                ui_call(lambda: ui_instance.set_state("speaking"))
+                                ui_call(lambda: state.ui_instance.set_state("speaking"))
 
                             try:
                                 aplay_proc.stdin.write(chunk)
@@ -3277,7 +3244,7 @@ def audio_player_worker():
                         # reason: this is the one point every spoken line passes
                         # through, so nothing she says can miss the screen.
                         note_spoken(sentence)
-                        ui_call(lambda s=sentence: ui_instance.set_transcript(s, "liza"))
+                        ui_call(lambda s=sentence: state.ui_instance.set_transcript(s, "liza"))
                         # Stamped BEFORE the sentence is generated, because
                         # clock["generated"] is then exactly the audio that
                         # precedes it -- which is where it lands on the timeline.
@@ -3316,12 +3283,11 @@ def audio_player_worker():
         except Exception as e:
             print(f"TTS Error: {e}", flush=True)
         finally:
-            ui_call(lambda: ui_instance.set_state("idle"))
-            active_subprocesses.clear()
+            ui_call(lambda: state.ui_instance.set_state("idle"))
+            state.active_subprocesses.clear()
             # Re-stamped at the true end of playback, so the echo window is
             # measured from when sound actually stopped.
-            global last_spoken_at
-            last_spoken_at = time.time()
+            state.last_spoken_at = time.time()
             playback_active.clear()
 
 # ==========================================
@@ -4056,9 +4022,9 @@ def media_progress_worker(title=None):
         paused = mpv_command(["get_property", "pause"])
         if not playing and position:
             playing = True
-            ui_call(lambda t=title: ui_instance.set_now_playing(t))
+            ui_call(lambda t=title: state.ui_instance.set_now_playing(t))
         ui_call(lambda p=position, d=duration, s=paused:
-                ui_instance.set_media_progress(p, d, s))
+                state.ui_instance.set_media_progress(p, d, s))
         time.sleep(0.5)
 
 def start_media_playback(kind, hit):
@@ -4069,7 +4035,6 @@ def start_media_playback(kind, hit):
     yt-dlp already fetched through stdin has proven reliable in testing.
     The distro's yt-dlp package lags YouTube's changes badly, so the venv's
     own copy (kept current via `pip install -U yt-dlp`) is used explicitly."""
-    global media_process
     # Whatever is already playing has to go first, or the two overlap on the speaker.
     stop_media_playback()
     ytdlp = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "bin", "yt-dlp")
@@ -4114,15 +4079,14 @@ def start_media_playback(kind, hit):
                                 preexec_fn=_die_with_parent)
     yt_proc.stdout.close()  # let yt_proc receive SIGPIPE if mpv exits first
 
-    global media_procs
     with subprocess_lock:
-        active_subprocesses.extend([yt_proc, mpv_proc])
-        media_procs = [yt_proc, mpv_proc]
-    media_process = mpv_proc
+        state.active_subprocesses.extend([yt_proc, mpv_proc])
+        state.media_procs = [yt_proc, mpv_proc]
+    state.media_process = mpv_proc
     media_active.set()
     note_media_started()
     set_playing_state(hit["title"], kind)
-    ui_call(lambda t=hit["title"]: ui_instance.set_now_playing(t, loading=True))
+    ui_call(lambda t=hit["title"]: state.ui_instance.set_now_playing(t, loading=True))
     threading.Thread(target=media_progress_worker, args=(hit["title"],),
                      daemon=True).start()
 
@@ -4133,7 +4097,7 @@ def start_media_playback(kind, hit):
         media_active.clear()
         with subprocess_lock:
             for p in (yt_proc, mpv_proc):
-                if p in active_subprocesses: active_subprocesses.remove(p)
+                if p in state.active_subprocesses: state.active_subprocesses.remove(p)
             # In-place: a bare assignment here would bind a local, not the global.
             media_procs[:] = []
         for handle in (yt_log, mpv_log):
@@ -4149,7 +4113,7 @@ def start_media_playback(kind, hit):
         # A track that simply ended: nothing called stop_media_playback(), so
         # this is the only place the state can be told it is over.
         set_playing_state(None)
-        ui_call(lambda: ui_instance.set_now_playing(None))
+        ui_call(lambda: state.ui_instance.set_now_playing(None))
 
     threading.Thread(target=watcher, daemon=True).start()
 
@@ -4217,7 +4181,7 @@ def stop_media_playback():
         set_playing_state(None)
         return False
     with subprocess_lock:
-        procs = list(media_procs)
+        procs = list(state.media_procs)
     for proc in procs:
         try:
             if proc.poll() is None:
@@ -4268,7 +4232,7 @@ def ui_invoke(method_name, *args):
 
     ui_call() drops everything in headless mode, which is right for repainting
     and wrong for these: going to sleep has to work with no screen attached."""
-    target = ui_instance
+    target = state.ui_instance
     if target is None:
         return
     fn = getattr(target, method_name, None)
@@ -4644,7 +4608,6 @@ def open_file_action(phrase, path=None):
     been found and named to the student -- see the "shall I open it?" flow. Re-
     searching there would be both wasteful and wrong: the walk is ranked, and
     nothing guarantees it lands on the same file it just offered."""
-    global currently_open_file
     if path is None:
         if not phrase:
             return "no_name", ""
@@ -4709,7 +4672,7 @@ def open_file_action(phrase, path=None):
             return "open_failed", os.path.basename(path)
         break
     with device_state_lock:
-        currently_open_file = path
+        state.currently_open_file = path
 
     # An audio or video file makes exactly as much noise as a YouTube track, so
     # it has to count as media, not merely as an open file. Registered here it
@@ -4728,12 +4691,12 @@ def open_file_action(phrase, path=None):
         if media_active.is_set():
             stop_media_playback()
         with subprocess_lock:
-            active_subprocesses.append(opener)
+            state.active_subprocesses.append(opener)
             media_procs[:] = [opener]
         media_active.set()
         note_media_started()
         set_playing_state(os.path.basename(path), kind)
-        ui_call(lambda t=os.path.basename(path): ui_instance.set_now_playing(t))
+        ui_call(lambda t=os.path.basename(path): state.ui_instance.set_now_playing(t))
 
     threading.Thread(target=watch_open_file, args=(path, opener, kind),
                      daemon=True).start()
@@ -4784,7 +4747,6 @@ def watch_open_file(path, opener, kind=None):
     nothing about the viewer it started. The grace period is there because that
     hand-off is not instant, and a viewer that has not appeared yet looks
     exactly like one that has already gone."""
-    global currently_open_file
     try:
         opener.wait()
     except Exception:
@@ -4796,7 +4758,7 @@ def watch_open_file(path, opener, kind=None):
         if not _pids_holding(path) and time.time() > grace:
             break
         with device_state_lock:
-            if currently_open_file != path:
+            if state.currently_open_file != path:
                 superseded = True   # closed, or another file took the slot
                 break
         time.sleep(OPEN_FILE_POLL_S)
@@ -4810,8 +4772,8 @@ def watch_open_file(path, opener, kind=None):
     # nothing playing: Liza deaf, for good, after successfully closing a video.
     if kind:
         with subprocess_lock:
-            if opener in active_subprocesses:
-                active_subprocesses.remove(opener)
+            if opener in state.active_subprocesses:
+                state.active_subprocesses.remove(opener)
             if media_procs == [opener]:
                 media_procs[:] = []
         # Only if this opener is still the thing that owns the media state --
@@ -4819,14 +4781,14 @@ def watch_open_file(path, opener, kind=None):
         if not media_procs:
             media_active.clear()
             set_playing_state(None)
-            ui_call(lambda: ui_instance.set_now_playing(None))
+            ui_call(lambda: state.ui_instance.set_now_playing(None))
 
     if superseded:
         return
     with device_state_lock:
-        if currently_open_file != path:
+        if state.currently_open_file != path:
             return
-        currently_open_file = None
+        state.currently_open_file = None
     print(f"[ACTION] {os.path.basename(path)} was closed from outside; "
           f"state cleared.", flush=True)
 
@@ -4839,9 +4801,8 @@ OPEN_FILE_POLL_S = 3.0
 
 def close_file_action():
     """('ok'|'nothing'|'close_failed', filename). Clears the state either way."""
-    global currently_open_file
     with device_state_lock:
-        path = currently_open_file
+        path = state.currently_open_file
     if not path:
         return "nothing", ""
 
@@ -4861,7 +4822,7 @@ def close_file_action():
     # cannot reach is a viewer it will never reach, and leaving the state set
     # means every later "close it" tries again and fails again.
     with device_state_lock:
-        currently_open_file = None
+        state.currently_open_file = None
 
     if not pids:
         # Nothing was holding it, which is not a failure -- it is the ordinary
@@ -4887,12 +4848,11 @@ def close_file_action():
 
 def set_ui_mode_action(mode):
     """('ok'|'already', mode). Widgets off and the mascot fullscreen, or back."""
-    global current_ui_mode
     mode = "3d" if mode in ("3d", "3-d", "three_d", "mascot") else "normal"
     with device_state_lock:
-        if current_ui_mode == mode:
+        if state.current_ui_mode == mode:
             return "already", mode
-        current_ui_mode = mode
+        state.current_ui_mode = mode
     ui_invoke("set_ui_mode", mode)
     print(f"[ACTION] UI mode -> {mode}", flush=True)
     return "ok", mode
@@ -5727,7 +5687,6 @@ ANSWER: <your spoken answer, with an action tag at the very end if rule 7 calls 
 """
 
 def ai_loop(ui, headless=False):
-    global pending_mode_intro
     time.sleep(2)
     mic_device = None
     listener = None
@@ -5906,8 +5865,8 @@ def ai_loop(ui, headless=False):
 
         # A mode card was tapped. Spoken from this thread, where the microphone
         # is known to be closed -- see TutorUI.set_mode() for why that matters.
-        if pending_mode_intro:
-            intro, pending_mode_intro = pending_mode_intro, None
+        if state.pending_mode_intro:
+            intro, state.pending_mode_intro = state.pending_mode_intro, None
             print(f"[MODE] Now in {ui.current_mode} mode.", flush=True)
             interrupt_playback()
             audio_queue.put(intro)
@@ -6041,7 +6000,7 @@ def ai_loop(ui, headless=False):
                           flush=True)
                     wake_event.clear()
                     interrupt_playback()
-                    ui_call(lambda: ui_instance.set_state("listening"))
+                    ui_call(lambda: state.ui_instance.set_state("listening"))
                     session_active = True
                     silence_counter = 0
                     continue
@@ -6053,7 +6012,7 @@ def ai_loop(ui, headless=False):
                 # sentence that CAUSED this reply. Without this they read as an
                 # immediate interruption of it, and she cuts herself off before
                 # finishing a word.
-                if time.time() - playback_started_at < BARGE_IN_LEAD_S:
+                if time.time() - state.playback_started_at < BARGE_IN_LEAD_S:
                     time.sleep(0.05)
                     continue
                 if not listener.barge_in_ready():
@@ -6068,7 +6027,7 @@ def ai_loop(ui, headless=False):
                 print("[BARGE-IN] Student spoke over the reply; stopping.", flush=True)
                 listener.hold_barge_in()
                 interrupt_playback()
-                ui_call(lambda: ui_instance.set_state("listening"))
+                ui_call(lambda: state.ui_instance.set_state("listening"))
                 session_active = True
                 silence_counter = 0
                 continue
@@ -6099,7 +6058,7 @@ def ai_loop(ui, headless=False):
                     continue
                 # Sleep already stops the player itself, but if the tap landed
                 # mid-read the top of the loop needs to act on it, not this.
-                if sleep_event.is_set() or pending_mode_intro:
+                if sleep_event.is_set() or state.pending_mode_intro:
                     stop_media_playback()
                     continue
                 if not MEDIA_BARGE_IN:
@@ -6110,7 +6069,7 @@ def ai_loop(ui, headless=False):
                 # video's own soundtrack triggered a wake check on itself and
                 # closed the file a second after it opened. See
                 # MEDIA_START_GRACE_S.
-                if time.time() - media_started_at < MEDIA_START_GRACE_S:
+                if time.time() - state.media_started_at < MEDIA_START_GRACE_S:
                     time.sleep(0.1)
                     continue
 
@@ -6292,7 +6251,7 @@ def ai_loop(ui, headless=False):
                 pending_question = pending_language = ""
                 silence_counter = 0
                 print(f"[TRANSCRIPT] {text}", flush=True)
-                ui_call(lambda t=text: ui_instance.set_transcript(t, "user"))
+                ui_call(lambda t=text: state.ui_instance.set_transcript(t, "user"))
             else:
                 # The ALSA buffer keeps playing briefly after playback_active
                 # clears; opening the mic immediately records Liza's own tail.
@@ -6302,7 +6261,7 @@ def ai_loop(ui, headless=False):
                 # out, and the student is still talking.
                 carrying = listener is not None and listener.has_carry()
                 if not carrying:
-                    settle = MIC_SETTLE_SEC - (time.time() - last_spoken_at)
+                    settle = MIC_SETTLE_SEC - (time.time() - state.last_spoken_at)
                     if settle > 0:
                         time.sleep(settle)
 
@@ -6313,7 +6272,7 @@ def ai_loop(ui, headless=False):
                 # since she stopped is what keeps both properties at once: the
                 # student's first word is recovered, hers is not.
                 preroll_ms = min(float(VAD_PREROLL_MS),
-                                 max(0.0, (time.time() - last_spoken_at) * 1000.0))
+                                 max(0.0, (time.time() - state.last_spoken_at) * 1000.0))
 
                 # A wake request is satisfied BY BEING HERE, so it is consumed
                 # here, and this is the fix for "it goes idle and immediately
@@ -6421,7 +6380,7 @@ def ai_loop(ui, headless=False):
                         # a second mode tap looked like it did nothing until
                         # Stop was pressed: Stop ended the reply early, which
                         # let the loop reach the pending intro.
-                        if sleep_event.is_set() or pending_mode_intro:
+                        if sleep_event.is_set() or state.pending_mode_intro:
                             continue
 
                         heard_seconds = audio_seconds(audio)
@@ -6528,9 +6487,9 @@ def ai_loop(ui, headless=False):
                         # A negative gap means the capture began while she was
                         # still talking, which is echo or a barge-in either way.
                         speaking_recently = (playback_active.is_set()
-                                             or (speech_started_at - last_spoken_at) < ECHO_GUARD_SEC)
+                                             or (speech_started_at - state.last_spoken_at) < ECHO_GUARD_SEC)
                         if speaking_recently and text:
-                            ai_words = echo_words(last_spoken_text)
+                            ai_words = echo_words(state.last_spoken_text)
                             user_words = echo_words(lower_text)
 
                             if user_words:
@@ -6560,7 +6519,7 @@ def ai_loop(ui, headless=False):
                             # screen is not claiming to be thinking about an
                             # answer while it is in fact still waiting on them.
                             ui.set_state("listening")
-                            ui_call(lambda t=text: ui_instance.set_transcript(t, "user"))
+                            ui_call(lambda t=text: state.ui_instance.set_transcript(t, "user"))
                             # Re-armed for the fallback path, where a blocking
                             # recognizer.listen() is about to run again and the
                             # watchdog has nothing else to watch. On the VAD path
@@ -6578,7 +6537,7 @@ def ai_loop(ui, headless=False):
 
                         print(f"[TRANSCRIPT] {text if text else '[empty]'}", flush=True)
                         if text:
-                            ui_call(lambda t=text: ui_instance.set_transcript(t, "user"))
+                            ui_call(lambda t=text: state.ui_instance.set_transcript(t, "user"))
                         if not text: continue
                 
                     except sr.WaitTimeoutError:
@@ -6774,12 +6733,12 @@ def ai_loop(ui, headless=False):
             # What they asked for, on the card, before the search has even
             # returned -- the whole request takes upwards of ten seconds and
             # this is the first point at which anything can be shown.
-            ui_call(lambda q=media_query: ui_instance.set_now_playing(q, loading=True))
+            ui_call(lambda q=media_query: state.ui_instance.set_now_playing(q, loading=True))
             print(f"[MEDIA] {media_kind} request: {media_query}", flush=True)
             hit = search_first_video(media_query, media_kind)
             reply = f"Playing {hit['title']}." if hit else f"I couldn't find a {media_kind} for that."
             if not hit:
-                ui_call(lambda: ui_instance.set_now_playing(None))
+                ui_call(lambda: state.ui_instance.set_now_playing(None))
 
             audio_queue.put(reply)
             audio_queue.put("[END_OF_RESPONSE]")
@@ -6802,7 +6761,7 @@ def ai_loop(ui, headless=False):
                 except Exception as exc:
                     print(f"[MEDIA ERROR] {exc}", flush=True)
                     # Otherwise the card is left saying "Loading…" for good.
-                    ui_call(lambda: ui_instance.set_now_playing(None))
+                    ui_call(lambda: state.ui_instance.set_now_playing(None))
 
             chat_history.append({"role": "user", "content": f"User: {text}"})
             chat_history.append({"role": "assistant", "content": reply})
@@ -6978,8 +6937,7 @@ def ai_loop(ui, headless=False):
                             else: continue 
                         elif not is_searching:
                             buffer += delta 
-                            global current_ai_response
-                            current_ai_response = full_response 
+                            state.current_ai_response = full_response 
 
                         # The FIRST flush of a reply is the one the student is
                         # sitting in silence for, and it was being held back
@@ -7050,7 +7008,7 @@ def ai_loop(ui, headless=False):
                         audio_queue.put(search_msg)
                         audio_queue.put("[END_OF_RESPONSE]")
 
-                        ui_call(lambda: ui_instance.set_state("thinking", f"Searching for: {search_query}..."))
+                        ui_call(lambda: state.ui_instance.set_state("thinking", f"Searching for: {search_query}..."))
 
                         search_context = ""
                         try:
@@ -7181,7 +7139,6 @@ def main():
     # reads to find the screen. Without this it would bind a LOCAL here, the
     # global would stay None, and every update sent from the ai thread would
     # be dropped without a word -- see ui_call().
-    global ui_instance
     if "--list-voices" in sys.argv:
         args = sys.argv[sys.argv.index("--list-voices") + 1:]
         list_cartesia_voices(args[0] if args else "")
@@ -7214,7 +7171,7 @@ def main():
 
     if HEADLESS:
         app_ui = HeadlessUI()
-        ui_instance = app_ui
+        state.ui_instance = app_ui
         # Started only after ui_instance is assigned: weather_worker's first fetch can
         # complete before that point, and ui_call() silently drops updates until then.
         if WEATHER_API_KEY:
@@ -7227,7 +7184,7 @@ def main():
     else:
         root = tk.Tk()
         app_ui = TutorUI(root)
-        ui_instance = app_ui
+        state.ui_instance = app_ui
         # THE ROUTING DECISION, made once, before the first turn can happen.
         # No profile at all means a device nobody has set up, so it opens on the
         # picker; a KG profile goes straight to the spelling and story screens
