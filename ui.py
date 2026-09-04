@@ -32,7 +32,6 @@ import tkinter as tk
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
-import assistant
 # In-place objects by name -- a local called `state` cannot shadow these, and
 # this file has four of them (set_state's own parameter among them). The one
 # value that is REASSIGNED has to go through the module; see state.py.
@@ -3374,3 +3373,20 @@ class HeadlessUI:
         sleep_event.set()
         if media_active.is_set(): assistant.stop_media_playback()
         if playback_active.is_set() or not audio_queue.empty(): assistant.interrupt_playback()
+
+
+# ---------------------------------------------------------------------------
+# The back-reference, bound LAST on purpose.
+#
+# assistant.py imports names FROM this file, and this file calls back into the
+# assistant. With `import assistant` up with the other imports, that cycle only
+# resolved when the assistant happened to be imported first: `import ui` on
+# its own ran this module as far as that line, handed control to the assistant,
+# and the assistant's `from ui import ...` then found a module that had not
+# defined anything yet. A plain ImportError, and only for whoever opened this
+# file to work on it.
+#
+# Down here every name above is already defined, so the import resolves whichever
+# module is asked for first. It binds the MODULE only -- nothing is read off it
+# until something is actually called -- which is what makes that legal at all.
+import assistant
