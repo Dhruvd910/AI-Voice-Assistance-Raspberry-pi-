@@ -638,3 +638,28 @@ RE_IMPOSSIBLE_SCRIPT = re.compile(
 # Every drop is logged with its score, so if this ever starts eating real speech
 # the log says so immediately and the number can be moved from .env.
 STT_MIN_LOGPROB = float(os.getenv("STT_MIN_LOGPROB", "-0.70"))
+
+
+# Whether "Hey Liza" is listened for DURING a Kindergarten lesson. Off, because
+# in this room it does not work and the failure is loud.
+#
+# Measured over one session, from logs/liza.log: 137 reads went to Whisper, the
+# wake word fired 25 times, and 21 of those were the phrase "हे लीज़ा" -- which
+# is what the ambient Hindi conversation near this device transcribes as. Three
+# of the 25 produced any question at all, and none of the three was a question:
+# an Urdu mis-transcription, the words "Go to sleep", and the wake word itself
+# coming back. The other 22 got "What would you like to ask me?" followed by "I
+# did not quite catch that", which is a lesson interrupted twice by nothing.
+#
+# Thirteen of those reads were HER OWN VOICE, caught because the read is up to
+# ten seconds long and she started speaking inside it.
+#
+# The strict RE_WAKE_WORD_ASLEEP pattern does not help: it also matches
+# "हे लीज़ा", which is the exact false transcription.
+#
+# A child interrupts by TAPPING her, which cannot misfire, or by talking over
+# her, which has to clear a loudness bar and so cannot be triggered by a
+# conversation across the room. Set KG_WAKE_WORD=1 to put this back in a quiet
+# room.
+KG_WAKE_WORD_ENABLED = os.getenv("KG_WAKE_WORD", "0") != "0"
+

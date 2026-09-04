@@ -204,7 +204,14 @@ KG_DOUBT_PROMPT = (
     "voice cannot read aloud. If nobody really knows the answer, say so; that "
     "is a real answer and children can hear it. Never tell them the question "
     "was silly, or wrong, or not what you were doing -- a child told that once "
-    "stops asking. Reply in the same language the child used.")
+    "stops asking.\n\n"
+    "Answer in ENGLISH, or in HINDI WRITTEN IN DEVANAGARI. Those are the only "
+    "two her voice can read, and anything else is not spoken at all -- to the "
+    "child that is the device ignoring them. If the question reaches you in "
+    "some other script it was misheard on the way in, most likely Hindi "
+    "transcribed as Urdu; answer it in Hindi, in Devanagari. If it is too "
+    "garbled to answer, say in Hindi that you did not catch it and ask them to "
+    "say it again.")
 
 
 def kg_answer_doubt(question, language="en"):
@@ -227,10 +234,33 @@ def kg_answer_doubt(question, language="en"):
                       {"role": "user", "content": f"{who} asks: {question}"}],
             max_tokens=180, temperature=0.5,
             extra_body={"reasoning": {"enabled": False}})
-        return (done.choices[0].message.content or "").strip()
+        answer = (done.choices[0].message.content or "").strip()
     except Exception as exc:
         print(f"[KG] Could not answer the doubt ({exc}).", flush=True)
         return ""
+    # The prompt asks for English or Devanagari; this is what happens when it
+    # does not get it. Observed in logs/liza.log: an Urdu question drew an Urdu
+    # answer, and the player dropped it with "Skipping unreadable script" -- so
+    # a child asked something and Liza simply went quiet. Silence is the one
+    # answer that teaches them not to ask again.
+    if answer and assistant.RE_UNREADABLE_SCRIPT.search(answer):
+        print(f"[KG] Answer came back in a script the voice cannot read; "
+              f"asking again in English: {answer!r}", flush=True)
+        try:
+            done = assistant.openrouter_client.with_options(max_retries=0).chat.completions.create(
+                model=assistant.LLM_MODEL,
+                messages=[{"role": "system", "content": KG_DOUBT_PROMPT},
+                          {"role": "user", "content":
+                           f"{who} asks: {question}\n\nAnswer in English only."}],
+                max_tokens=180, temperature=0.5,
+                extra_body={"reasoning": {"enabled": False}})
+            answer = (done.choices[0].message.content or "").strip()
+        except Exception as exc:
+            print(f"[KG] The retry failed too ({exc}).", flush=True)
+            return ""
+        if assistant.RE_UNREADABLE_SCRIPT.search(answer):
+            return ""
+    return answer
 
 
 def kg_handle_doubt(ui, question, language, recognizer, mic_device, listener):

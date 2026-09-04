@@ -34,7 +34,8 @@ import store
 import config  # noqa: F401  (imported for the .env it loads)
 # The listening settings moved to config.py, with the prose that explains
 # each of them; imported back by name because they are only ever read.
-from config import (MIC_ENERGY_CEILING, MIC_ENERGY_FLOOR, NAME_END,
+from config import (KG_WAKE_WORD_ENABLED, MIC_ENERGY_CEILING,
+                    MIC_ENERGY_FLOOR, NAME_END,
                     BARGE_IN_DEBUG, BARGE_IN_ENABLED, BARGE_IN_LEAD_S,
                     BARGE_IN_MARGIN, BARGE_IN_MS, BARGE_IN_WARMUP_FRAMES,
                     CAPTURE_RATE, CONTINUATION_MAX_ROUNDS, CONTINUATION_WAIT_S,
@@ -1286,17 +1287,22 @@ def ai_loop(ui, headless=False):
             # Never while she is speaking. The STANDBY comment below records
             # what that costs when it is got wrong: wake-word transcripts of
             # her own story narration, taken off the microphone mid-lesson.
-            if (WAKE_WORD_ENABLED and not kg_listen_waiting()
+            if (KG_WAKE_WORD_ENABLED and WAKE_WORD_ENABLED
+                    and not kg_listen_waiting()
                     and not playback_active.is_set() and audio_queue.empty()):
                 listen_started[:] = [time.time(),
                                      WAKE_LISTEN_TIMEOUT_S + WAKE_PHRASE_LIMIT_S]
                 try:
                     woke, doubt, doubt_language = listen_for_wake_word(
                         recognizer, mic_device, asleep=False, listener=listener,
-                        # A screen that asks a question of its own mid-read gets
-                        # the microphone back within a frame or two, rather than
-                        # after the ten seconds this read is allowed to run.
-                        cancel=kg_listen_waiting)
+                        # Two things end this read early. A screen asking a
+                        # question of its own, and HER STARTING TO TALK -- the
+                        # guard above is tested once, and the read that follows
+                        # runs for up to ten seconds, which is how thirteen of
+                        # her own sentences ended up transcribed as somebody
+                        # trying to wake her.
+                        cancel=lambda: (kg_listen_waiting()
+                                        or playback_active.is_set()))
                 finally:
                     listen_started[:] = [0.0, 0.0]
                 if woke:

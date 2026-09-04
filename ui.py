@@ -2963,6 +2963,27 @@ class TutorUI:
         self._kg_say_tries += 1
         tries = self._kg_say_tries
 
+        # THE SAME NEAR MISS TWICE IS THE MICROPHONE, NOT THE CHILD.
+        #
+        # By now they have had the right letters read back to them once. A child
+        # who does not know the word says something different the second time.
+        # Whisper says B for their D every single time -- logs/liza.log has it
+        # doing exactly that three times running while a child spelled HAND
+        # correctly, and the screen has no way out of that loop, because the
+        # next attempt is misheard identically. "Nobody fails their way out of
+        # this screen" was written about children, not about the microphone.
+        #
+        # So the second one is taken. The WRITTEN stage immediately after is the
+        # real assessment, and it is the one that cannot be misheard.
+        if verdict == "near" and tries >= 2:
+            praise = random.choice(kg_content.PRAISE)
+            self._kg_feedback = praise
+            self._draw_kg_spelling()
+            kg.kg_say_many([(praise, "proud"),
+                            ("Now write it.", "encouraging")])
+            self.root.after(300, lambda r=self._kg_round: self._kg_to_writing(r))
+            return
+
         if verdict == "said_the_word" and tries == 1:
             # They said the word rather than spelling it. Not wrong, just not
             # the question -- so ask the question again instead of marking it.

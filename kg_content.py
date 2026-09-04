@@ -268,6 +268,10 @@ for _story in STORIES:
 # are wrong because a microphone misheard them.
 LETTER_NAMES = {
     "ay": "a", "aye": "a", "bee": "b", "be": "b", "see": "c", "sea": "c",
+    # "and" for N is not a spelling of the letter's name -- it is what Whisper
+    # returns for a child saying "N" in the middle of a word. logs/liza.log:
+    # HAND came back as 'H A and D', which without this reads as H-A-A-N-D.
+    "and": "n", "in": "n", "hen": "n", "ess": "s", "yes": "s",
     "cee": "c", "dee": "d", "de": "d", "ee": "e", "eff": "f", "ef": "f",
     "gee": "g", "aitch": "h", "haitch": "h", "eye": "i", "jay": "j",
     "kay": "k", "el": "l", "ell": "l", "em": "m", "en": "n", "oh": "o",
@@ -320,7 +324,32 @@ def heard_spelling(text, target):
         return "correct", attempt
     if sorted(attempt) == sorted(target):
         return "jumbled", attempt
+    if _one_edit_apart(attempt, target):
+        return "near", attempt
     return "wrong", attempt
+
+
+def _one_edit_apart(attempt, target):
+    """True when one letter separates the two: swapped, missing, or extra.
+
+    This is the shape a MICROPHONE error takes on this device, and the log has
+    all three of it. A child spelling HAND came back as 'H A N B' three times
+    running -- B for D, the same way every time -- and SHOE as 'H O E', with the
+    S simply gone. A child who does not know a word does not misspell it
+    identically three times; a microphone does.
+
+    The caller decides what to do about it, and only starts believing it on the
+    second attempt. See TutorUI._kg_judge_spoken.
+    """
+    if attempt == target or abs(len(attempt) - len(target)) > 1:
+        return False
+    if len(attempt) == len(target):
+        return sum(a != b for a, b in zip(attempt, target)) == 1
+    short, long = sorted((attempt, target), key=len)
+    for cut in range(len(long)):
+        if long[:cut] + long[cut + 1:] == short:
+            return True
+    return False
 
 
 def random_word(exclude=None):
