@@ -59,6 +59,16 @@ PRAISE = [
     "Yes! You got every letter.",
 ]
 
+# Separate from PRAISE for the same reason STORY_PRAISE is: that list is about
+# spelling. "Yes! You got every letter. It is sixteen." is what sharing it with
+# the counting test produced.
+COUNT_PRAISE = [
+    "Yes! That's right.",
+    "Perfect. You counted them all.",
+    "That's it. Well counted.",
+    "Correct! You got every one.",
+]
+
 # Separate from PRAISE because that list is about spelling -- "You spelled it",
 # "You got every letter" -- and answering a question about a story is not
 # spelling anything. Sharing one list produced "Perfect. You spelled it. You
@@ -620,19 +630,57 @@ def matches_answer(said, expected):
     return bool(parts) and all(p in " ".join(spoken) for p in parts)
 
 
-def number_matches(said, value):
-    """True when a spoken answer means `value`, as a digit or a name in either
-    language. Children answer counting questions in whichever language is in
-    their head, so both are accepted whatever the question was asked in."""
+# Every way a number can arrive in a transcript: the digits, the English name
+# and the Hindi name. Built once, longest form first, so "twenty one" is matched
+# in preference to the "twenty" inside it.
+_NUMBER_LOOKUP = None
+# Neither \b nor \w behaves the way this needs across Devanagari and digits
+# together, so the boundary is spelled out.
+_NUMBER_EDGE = "0-9A-Za-z\u0900-\u097F"
+
+
+def _number_lookup():
+    global _NUMBER_LOOKUP
+    if _NUMBER_LOOKUP is None:
+        table = {}
+        for index, (english, hindi) in enumerate(NUMBER_NAMES):
+            value = index + 1
+            table[english.lower()] = value
+            table[hindi] = value
+            table[str(value)] = value
+        forms = sorted(table, key=len, reverse=True)
+        pattern = re.compile(
+            f"(?<![{_NUMBER_EDGE}])(?:" + "|".join(re.escape(f) for f in forms)
+            + f")(?![{_NUMBER_EDGE}])")
+        _NUMBER_LOOKUP = (table, pattern)
+    return _NUMBER_LOOKUP
+
+
+def spoken_numbers(said):
+    """Every number in an utterance, in the order it was said.
+
+    Digits and names, both languages, because children answer counting questions
+    in whichever language is in their head whatever the question was asked in.
+    """
     if not said:
-        return False
-    lowered = said.lower()
-    if re.search(rf"(?<!\d){value}(?!\d)", lowered):
-        return True
-    english = number_name(value, "en")
-    hindi = number_name(value, "hi")
-    return bool((english and matches_answer(said, english))
-                or (hindi and matches_answer(said, hindi)))
+        return []
+    table, pattern = _number_lookup()
+    return [table[match.group(0).lower()]
+            for match in pattern.finditer(said.lower())]
+
+
+def number_matches(said, value):
+    """True when a spoken answer means `value`.
+
+    The LAST number said is the answer, not any number in the sentence. A child
+    asked how many apples there are does not reply "fifteen": they count, out
+    loud, "one, two, three..." and the number they land on is what they mean.
+    Matching anywhere in the utterance -- what this used to do -- marked that
+    child correct on a question whose answer was three, because "three" went
+    past on the way. Reading the last one marks what they actually decided.
+    """
+    numbers = spoken_numbers(said)
+    return bool(numbers) and numbers[-1] == value
 
 
 def test_questions(kind, count=5):
@@ -641,7 +689,18 @@ def test_questions(kind, count=5):
     would be unanswerable."""
     if kind == "count":
         values = random.sample(range(1, min(21, COUNT_MAX + 1)), min(count, 20))
-        return [{"kind": "count", "value": v} for v in values]
+        # The second half of a counting question is one step off the number they
+        # just counted -- and the step goes BOTH WAYS, chosen per question. Always
+        # adding taught the child the shape of the question rather than the idea
+        # behind it: after two of them they answer "one more than that" without
+        # looking. Taking one away is the same idea run backwards and it is the
+        # other half of what a KG child is learning.
+        #
+        # One apple never has one taken away: that lands on zero, which is a
+        # harder idea than either of these and has no picture a child can count.
+        return [{"kind": "count", "value": v,
+                 "step": 1 if v < 2 else random.choice((1, -1))}
+                for v in values]
     if kind == "hi":
         bank = [e for e in HINDI_ALPHABET if e[3]]
         picked = random.sample(bank, min(count, len(bank)))

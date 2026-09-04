@@ -475,6 +475,54 @@ kg_active = threading.Event()
 kg_listen_requests = queue.Queue()
 kg_listen_results = queue.Queue()
 
+# A request and its answer used to be two unrelated queues, with the screen
+# simply taking whatever turned up next. That held together only while every
+# listen was short. It stopped holding the moment the spelling and counting
+# screens were given the patience they actually need: ai_loop can now be inside
+# one listen for the better part of a minute, so a child who taps Back and
+# starts something else leaves a listen in flight, and the answer to it arrives
+# long after the screen that asked has gone. The new screen then takes it, and
+# ITS answer -- the one the child is sitting there waiting for -- is the one
+# that gets dropped. That is the test sitting on "I'm listening..." forever.
+#
+# So every listen now carries an id, an answer carries the id of the request it
+# belongs to, and a screen accepts only its own. Asking for a new listen
+# abandons every older one, which also reaches INTO the listen ai_loop is
+# blocked in and ends it early -- see the cancel argument to wait_for_utterance.
+_kg_listen_lock = threading.Lock()
+_kg_listen_next = [1]          # id for the next request
+_kg_listen_valid_from = [1]    # anything below this has been abandoned
+
+
+def kg_next_listen_id():
+    """Claim an id, and abandon every listen still outstanding.
+
+    One KG screen asks one question at a time, so a new question always means
+    the previous one no longer matters -- there is no case where two KG listens
+    are both wanted at once.
+    """
+    with _kg_listen_lock:
+        listen_id = _kg_listen_next[0]
+        _kg_listen_next[0] += 1
+        _kg_listen_valid_from[0] = listen_id
+        return listen_id
+
+
+def kg_cancel_listen():
+    """Abandon every outstanding listen without starting a new one.
+
+    Called when a screen is left: the child has walked away from the question,
+    so the microphone should stop waiting for an answer to it rather than
+    holding ai_loop for another forty seconds.
+    """
+    with _kg_listen_lock:
+        _kg_listen_valid_from[0] = _kg_listen_next[0]
+
+
+def kg_listen_abandoned(listen_id):
+    with _kg_listen_lock:
+        return listen_id < _kg_listen_valid_from[0]
+
 
 # Seeding Whisper with the alphabet is right for "spell it" and WRONG for
 # "what is this?" -- logs/liza.log shows a child answering "crown" coming back
@@ -483,12 +531,25 @@ kg_listen_results = queue.Queue()
 KG_SEED_LETTERS = "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z"
 
 
-def kg_request_listen(seconds=6.0, seed="", language="en"):
-    """Ask ai_loop for one transcribed utterance. Answer arrives on kg_listen_results."""
-    while not kg_listen_results.empty():          # drop anything stale
-        try: kg_listen_results.get_nowait()
-        except queue.Empty: break
-    kg_listen_requests.put({"seconds": seconds, "seed": seed, "language": language})
+def kg_request_listen(seconds=6.0, seed="", language="en", phrase_limit=None,
+                      end_silence=None):
+    """Ask ai_loop for one transcribed utterance. Answer arrives on kg_listen_results.
+
+    `seconds` bounds only the wait for the child to START, `phrase_limit` caps
+    how long they may go on for, and `end_silence` is the pause that ends their
+    turn. All three used to be one number, which is what made the spelling
+    screen cut children off: a child spelling out loud says "C", thinks, says
+    "A", thinks, says "T", and every one of those thinks is longer than the
+    conversational 0.55s pause that closed the phrase. The transcript then held
+    a single letter and was marked as a wrong spelling. Counting aloud is slower
+    still. So each KG screen now says how patient its own question deserves to be.
+    """
+    listen_id = kg_next_listen_id()
+    kg_listen_requests.put({"id": listen_id,
+                            "seconds": seconds, "seed": seed, "language": language,
+                            "phrase_limit": phrase_limit or seconds,
+                            "end_silence": end_silence or PAUSE_THRESHOLD_NORMAL})
+    return listen_id
 
 
 def kg_serve_listen(recognizer, mic_device, listener):
@@ -500,32 +561,195 @@ def kg_serve_listen(recognizer, mic_device, listener):
         request = kg_listen_requests.get_nowait()
     except queue.Empty:
         return False
+    listen_id = request.get("id", 0)
+    # The screen that asked this has already gone. Nothing to listen for, and
+    # nobody left to hear the answer.
+    if kg_listen_abandoned(listen_id):
+        print(f"[KG] Listen {listen_id} was dropped before it began.", flush=True)
+        return True
+    abandoned = lambda: kg_listen_abandoned(listen_id)
     text = ""
     try:
         seconds = float(request.get("seconds", 6.0))
-        audio = None
-        if listener is not None and listener.available:
-            audio = listener.wait_for_utterance(seconds, seconds, PAUSE_THRESHOLD_NORMAL)
-        elif mic_device is not None:
-            try:
-                with mic_device as source:
-                    audio = recognizer.listen(source, timeout=seconds,
-                                              phrase_time_limit=seconds)
-            except sr.WaitTimeoutError:
-                audio = None
-        if audio is not None and is_probably_speech(audio, "KG", True):
-            wav = audio.get_wav_data(convert_rate=16000, convert_width=2)
+        text = kg_capture_utterance(
+            recognizer, mic_device, listener, seconds,
+            float(request.get("phrase_limit") or seconds),
+            float(request.get("end_silence") or PAUSE_THRESHOLD_NORMAL),
             # Never seeded with the answer itself: priming Whisper with the
             # target word would have it hand that word back on noise, which is
             # the same trap WAKE_SEED_PROMPT set for the wake word. The caller
             # says whether it expects letters or a word, and in which language.
-            text, _lang = transcribe(wav, request.get("seed", ""),
-                                     language=request.get("language") or None)
-        print(f"[KG] Heard: {text!r}", flush=True)
+            seed=request.get("seed", ""), language=request.get("language") or None,
+            cancel=abandoned, label=f"KG] Listen {listen_id}")
+        print(f"[KG] Listen {listen_id} heard: {text!r}", flush=True)
     except Exception as exc:
-        print(f"[KG] Listen failed: {exc}", flush=True)
-    kg_listen_results.put(text or "")
+        print(f"[KG] Listen {listen_id} failed: {exc}", flush=True)
+    if abandoned():
+        # Nobody is waiting for this any more, and nobody can be: every id still
+        # in play is newer than this one. Posting it would only leave litter on
+        # the queue for the next screen to sort through.
+        print(f"[KG] Listen {listen_id} was dropped; the screen had moved on.",
+              flush=True)
+        return True
+    kg_listen_results.put({"id": listen_id, "text": text or ""})
     return True
+
+
+def kg_capture_utterance(recognizer, mic_device, listener, seconds, phrase_limit,
+                         end_silence, seed="", language=None, cancel=None,
+                         label="KG"):
+    """One transcribed utterance from the microphone. "" when nothing usable came.
+
+    Lifted out of kg_serve_listen so that a question the child asks for
+    THEMSELVES is captured on exactly the same terms as an answer to a question
+    she asked them: same speech check, same echo guard, same cancel. Two copies
+    of this would have been two places to fix the next thing Whisper does to a
+    four-year-old.
+    """
+    cancel = cancel or (lambda: False)
+    text = ""
+    audio = None
+    if listener is not None and listener.available:
+        audio = listener.wait_for_utterance(seconds, phrase_limit, end_silence,
+                                            cancel=cancel)
+    elif mic_device is not None:
+        previous_pause = recognizer.pause_threshold
+        try:
+            recognizer.pause_threshold = end_silence
+            with mic_device as source:
+                audio = recognizer.listen(source, timeout=seconds,
+                                          phrase_time_limit=phrase_limit)
+        except sr.WaitTimeoutError:
+            audio = None
+        finally:
+            recognizer.pause_threshold = previous_pause
+    if audio is not None and not cancel() and is_probably_speech(audio, label, True):
+        wav = audio.get_wav_data(convert_rate=16000, convert_width=2)
+        text, _lang = transcribe(wav, seed, language=language or None)
+    if text and sounds_like_her_own_prompt(text):
+        print(f"[{label}] was her own voice coming back, not an answer: {text!r}",
+              flush=True)
+        text = ""
+    return text
+
+
+def kg_listen_waiting():
+    """True when a KG screen has a question of its own waiting to be heard.
+
+    The wake word may only use the microphone in the gaps between those, so
+    this is what stands the wake read down again -- see the park branch.
+    """
+    return not kg_listen_requests.empty()
+
+
+def kg_wait_until_quiet(settle_s=0.4, limit_s=30.0):
+    """Block until she has ACTUALLY stopped talking.
+
+    ai_loop's side of TutorUI._kg_after_speaking, and for the same reason: a
+    microphone opened while she is still speaking records her own prompt and
+    hands it straight back as the child's answer. playback_active and the queue
+    tell the truth, so wait on them rather than guessing a duration.
+    """
+    deadline = time.time() + limit_s
+    while ((playback_active.is_set() or not audio_queue.empty())
+           and time.time() < deadline):
+        time.sleep(0.1)
+    time.sleep(settle_s)
+
+
+# A child asking their own question needs far longer than a conversational
+# turn. They start, stop, think, and start again -- the same pauses that made
+# the spelling screen cut them off mid-word before each KG screen was allowed
+# to say how patient its own question deserved to be.
+KG_DOUBT_WAIT_S = 8.0        # how long to wait for them to start at all
+KG_DOUBT_PHRASE_S = 14.0     # how long they may then go on for
+KG_DOUBT_PAUSE_S = 1.4       # the silence that ends their turn
+
+KG_DOUBT_PROMPT = (
+    "You are Liza, teaching a child of about four to six. The child is in the "
+    "middle of a lesson and has stopped to ask you something of their own. "
+    "Answer THAT question in one or two short sentences, in words a child that "
+    "age already has. Speak it -- no lists, no markdown, no brackets, nothing a "
+    "voice cannot read aloud. If nobody really knows the answer, say so; that "
+    "is a real answer and children can hear it. Never tell them the question "
+    "was silly, or wrong, or not what you were doing -- a child told that once "
+    "stops asking. Reply in the same language the child used.")
+
+
+def kg_answer_doubt(question, language="en"):
+    """One short answer to a question the child asked for themselves.
+
+    A single call rather than a turn through ai_loop's history: the alphabet is
+    still on the screen behind this, and the answer has to arrive in a breath or
+    two rather than after a full conversational turn. Same shape as
+    phrase_action_result, and for the same reason.
+    """
+    question = (question or "").strip()
+    if not question:
+        return ""
+    profile = active_profile() or {}
+    who = profile.get("name") or "A child"
+    try:
+        done = openrouter_client.with_options(max_retries=0).chat.completions.create(
+            model=LLM_MODEL,
+            messages=[{"role": "system", "content": KG_DOUBT_PROMPT},
+                      {"role": "user", "content": f"{who} asks: {question}"}],
+            max_tokens=180, temperature=0.5,
+            extra_body={"reasoning": {"enabled": False}})
+        return (done.choices[0].message.content or "").strip()
+    except Exception as exc:
+        print(f"[KG] Could not answer the doubt ({exc}).", flush=True)
+        return ""
+
+
+def kg_handle_doubt(ui, question, language, recognizer, mic_device, listener):
+    """Answer a question asked mid-lesson, without ending the lesson.
+
+    The screen never changes. They are looking at M is for Moon while they ask
+    why the moon is white, and taking the letter away to answer would lose the
+    very thing they asked about.
+
+    Handled here rather than by handing the microphone back to ai_loop's normal
+    turn, because that path ends in standby -- and standby with a KG screen up
+    is the deadlock the park branch exists to avoid. See the STANDBY MUST NOT BE
+    A ONE-WAY DOOR comment below for what that looked like when it happened.
+    """
+    if not question:
+        # They said her name and stopped, which is most of the time at this age.
+        kg_say("Yes? What would you like to ask me?", "curious")
+        kg_wait_until_quiet()
+        question = kg_capture_utterance(
+            recognizer, mic_device, listener, KG_DOUBT_WAIT_S,
+            KG_DOUBT_PHRASE_S, KG_DOUBT_PAUSE_S,
+            cancel=kg_listen_waiting, label="KG-DOUBT")
+    question = (question or "").strip()
+    if not question:
+        kg_say("I did not quite catch that. Ask me again whenever you like.",
+               "gentle")
+        return
+    print(f"[KG] Doubt asked: {question!r}", flush=True)
+    ui_invoke("set_state", "thinking")
+    answer = kg_answer_doubt(question, language)
+    if not answer:
+        kg_say("I am not sure about that one. Let us try again in a moment.",
+               "gentle")
+        return
+    print(f"[KG] Doubt answered: {answer!r}", flush=True)
+    # No tone: detect_tts_language picks the voice off the script, so an answer
+    # that came back in Hindi is spoken in Hindi without being told to.
+    kg_say(answer, "warm")
+
+
+def kg_holds_microphone(ui):
+    """True when a KG or profile screen owns the microphone.
+
+    ai_loop is the only thread allowed near the capture device, so a KG listen
+    is served from its park branch and nowhere else. Anything that keeps ai_loop
+    away from the top of its loop therefore stops KG hearing anything at all --
+    which is why this condition is a named function rather than an expression
+    repeated in one place and forgotten in the other.
+    """
+    return bool(kg_active.is_set() or getattr(ui, "overlay", None))
 
 
 def set_kg_active(active):
@@ -691,6 +915,37 @@ RE_ECHO_TOKEN = re.compile(r'[\wऀ-ॣ०-ॿ]+')   # U+0964/5 = । ॥
 
 def echo_words(text):
     return set(RE_ECHO_TOKEN.findall((text or "").lower()))
+
+
+# How much of a KG answer has to be Liza's own words before it is thrown away,
+# and how many words it must have before it is judged at all.
+KG_ECHO_MIN_WORDS = 3
+KG_ECHO_RATIO = 0.6
+
+
+def sounds_like_her_own_prompt(text):
+    """True when a KG answer is really Liza's own question coming back.
+
+    The conversation path has guarded against her own voice since the echo work
+    went in; the KG screens never did, and they are where it does the most
+    damage. logs/liza.log has "How many do you see?" and "What is this?" arriving
+    off the microphone and being marked as the child's answer to those very
+    questions -- so the child is told they are wrong for something they never
+    said.
+
+    Only answers of three real words or more are judged, and single letters do
+    not count as words. A KG answer is a word, a number, or a run of letters, and
+    a short answer that appears in her prompt is the COMMON case rather than an
+    echo: "cat" is exactly what a child says when she has just asked them to
+    spell cat, and "C A T" must survive for the same reason.
+    """
+    heard = [w for w in RE_ECHO_TOKEN.findall((text or "").lower()) if len(w) > 1]
+    if len(heard) < KG_ECHO_MIN_WORDS:
+        return False
+    hers = set(RE_ECHO_TOKEN.findall((last_spoken_text or "").lower()))
+    if not hers:
+        return False
+    return sum(1 for word in heard if word in hers) / len(heard) >= KG_ECHO_RATIO
 
 def echo_overlap_ratio(heard_words, spoken_words):
     """How much of `heard_words` looks like Liza's own voice coming back.
@@ -1014,6 +1269,33 @@ BARGE_IN_WARMUP_FRAMES = int(os.getenv("BARGE_IN_WARMUP_FRAMES", "16"))
 # first sentence, TTS ~0.96s to its first audio, all measured on this device).
 PAUSE_THRESHOLD_NORMAL = float(os.getenv("PAUSE_THRESHOLD", "0.55"))
 PAUSE_THRESHOLD_RETELL = float(os.getenv("PAUSE_THRESHOLD_RETELL", "1.6"))
+
+# 0.55s is right for a finished sentence and wrong for a sentence still being
+# assembled. A student mid-question -- "what is the difference between a... "
+# -- pauses for longer than that reaching for the next word, and the phrase was
+# being closed on them and the half-question answered as if it were the whole
+# one. Rather than charge every turn a slower threshold, the pause stays short
+# and an utterance that READS unfinished buys one extra listening window; see
+# looks_unfinished() and capture_continuation().
+CONTINUATION_WAIT_S = float(os.getenv("CONTINUATION_WAIT", "2.2"))
+CONTINUATION_MAX_ROUNDS = int(os.getenv("CONTINUATION_MAX_ROUNDS", "2"))
+
+# The KG screens ask questions that are answered slowly and in pieces, so they
+# get their own patience rather than the conversational one. See
+# kg_request_listen for what each of the three numbers actually bounds.
+#
+# Spelling: a child says the letters one at a time with a think between each.
+KG_SPELL_START_TIMEOUT_S = float(os.getenv("KG_SPELL_START_TIMEOUT", "10.0"))
+KG_SPELL_PHRASE_LIMIT_S = float(os.getenv("KG_SPELL_PHRASE_LIMIT", "22.0"))
+KG_SPELL_END_SILENCE_S = float(os.getenv("KG_SPELL_END_SILENCE", "2.2"))
+
+# Counting: a child counting fifteen apples touches each one on the screen and
+# says the number, and the gap between "seven" and "eight" is a real pause. At
+# the conversational threshold the answer captured was "one, two" -- which is
+# the reported bug, not a child who cannot count.
+KG_COUNT_START_TIMEOUT_S = float(os.getenv("KG_COUNT_START_TIMEOUT", "12.0"))
+KG_COUNT_PHRASE_LIMIT_S = float(os.getenv("KG_COUNT_PHRASE_LIMIT", "45.0"))
+KG_COUNT_END_SILENCE_S = float(os.getenv("KG_COUNT_END_SILENCE", "3.0"))
 
 # Same trade as WAKE_LISTEN_TIMEOUT_S: a longer wait for speech to begin returns
 # just as fast when it does, and halves how often the capture device is cycled
@@ -1964,15 +2246,25 @@ class VoiceListener:
                 self._frames.popleft()
             self._loud_run_ms = 0.0
 
-    def wait_for_utterance(self, timeout, phrase_limit, end_silence, preroll_ms=None):
+    def wait_for_utterance(self, timeout, phrase_limit, end_silence, preroll_ms=None,
+                           cancel=None):
         """Block until a phrase starts and finishes. sr.AudioData, or None.
 
         Same contract as recognizer.listen(): `timeout` bounds only the wait for
         speech to BEGIN, `phrase_limit` caps the phrase itself, and `end_silence`
         is the pause that ends it (pause_threshold). Returning sr.AudioData is
         deliberate -- audio_rms(), audio_seconds() and get_wav_data() all work on
-        it unchanged, so nothing downstream of the microphone had to move."""
+        it unchanged, so nothing downstream of the microphone had to move.
+
+        `cancel` is a predicate checked while waiting; True abandons the read and
+        returns None. It exists because the KG screens can wait the better part
+        of a minute for a child who is counting, and a child who taps Back in the
+        middle of that must not leave the only thread that may touch the
+        microphone blocked until the phrase limit runs out -- the next screen's
+        question would sit there unheard for the whole of it."""
         if self._vad is None:
+            return None
+        if cancel is not None and cancel():
             return None
 
         started = time.time()
@@ -1996,12 +2288,20 @@ class VoiceListener:
             self.drain(keep_ms=VAD_PREROLL_MS if preroll_ms is None else preroll_ms)
 
         while not self._stop.is_set():
+            if cancel is not None and cancel():
+                return None
             frame = self._next_frame(0.2)
             if frame is None:
-                # No audio arrived. Only meaningful before the phrase opens;
-                # once it is open the worker is the only thing that can end it.
+                # No audio arrived. Before the phrase opens, the timeout ends the
+                # wait; after it, the phrase limit does -- measured from the wall
+                # clock rather than from frames, because frames are exactly what
+                # has stopped arriving. Without that second bound a phrase that
+                # opened just as the capture stream died waited for ever, and
+                # ai_loop with it.
                 if not triggered and time.time() - started >= timeout:
                     return None
+                if triggered and time.time() - speech_at >= phrase_limit:
+                    break
                 continue
 
             data, voiced, _level = frame
@@ -2256,6 +2556,22 @@ def clamp_stt_prompt(prompt):
     spaced = cut.rsplit(" ", 1)[0]
     return spaced if spaced else cut
 
+def segment_logprob(result):
+    """The WORST avg_logprob across a verbose_json response, or None.
+
+    The worst rather than the mean: a real question with one invented tail
+    segment is still a question with an invention stapled to it, and the tail is
+    what would be answered.
+    """
+    scores = []
+    for segment in (getattr(result, "segments", None) or []):
+        data = segment if isinstance(segment, dict) else vars(segment)
+        score = data.get("avg_logprob")
+        if score is not None:
+            scores.append(score)
+    return min(scores) if scores else None
+
+
 def transcribe(wav_data, prompt, language=None, model=None, attempts=2):
     """Groq STT. With no `language` Whisper auto-detects; pass one to force it.
 
@@ -2285,7 +2601,19 @@ def transcribe(wav_data, prompt, language=None, model=None, attempts=2):
         try:
             client = clients[attempt % len(clients)]
             result = client.audio.transcriptions.create(**params)
-            return (result.text or "").strip(), (getattr(result, "language", "") or "")
+            text = (result.text or "").strip()
+            spoken_language = getattr(result, "language", "") or ""
+            # Judged HERE, in the one funnel every transcription passes through,
+            # for the same reason clamp_stt_prompt is: the wake path, the KG
+            # screens and the conversation path each need this and only one of
+            # them ever had it. A KG child was being marked wrong for an answer
+            # Whisper invented out of the room, and none of that ever reached the
+            # code that knew what a hallucination looked like.
+            invented, why = looks_hallucinated(text, segment_logprob(result))
+            if invented:
+                print(f"[STT] Dropped ({why}): {text!r}", flush=True)
+                return "", spoken_language
+            return text, spoken_language
         except Exception as exc:
             # A rejected REQUEST will be rejected identically next time -- only
             # transport failures are worth replaying. Retrying a 400 turned one
@@ -2300,6 +2628,125 @@ def transcribe(wav_data, prompt, language=None, model=None, attempts=2):
 
 def audio_seconds(audio):
     return len(audio.frame_data) / float(audio.sample_rate * audio.sample_width)
+
+# Words that CANNOT end a sentence. If the transcript stops on one of these the
+# student was still mid-thought when the pause threshold closed their turn --
+# "what is the difference between", "can you explain how the", "I want to know
+# about". Answering that is answering half a question, which is exactly what was
+# reported. Deliberately a tail-word test rather than an LLM call: it costs
+# nothing, it runs on the Pi, and it is wrong only in the harmless direction
+# (one extra listening window that returns silence).
+UNFINISHED_TAIL_WORDS = {
+    # conjunctions and connectives
+    "and", "or", "but", "so", "because", "since", "although", "though",
+    "while", "whereas", "unless", "until", "if", "then", "than", "that",
+    # prepositions
+    "of", "in", "on", "at", "to", "for", "with", "from", "by", "about",
+    "into", "onto", "over", "under", "between", "among", "through",
+    "during", "before", "after", "like", "as", "per", "via", "upon",
+    # articles, determiners and possessives
+    "a", "an", "the", "my", "your", "his", "her", "its", "our", "their",
+    "this", "these", "those", "some", "any", "every", "each", "another",
+    # auxiliaries and copulas left dangling
+    "is", "are", "was", "were", "am", "be", "been", "being", "do", "does",
+    "did", "have", "has", "had", "will", "would", "shall", "should", "can",
+    "could", "may", "might", "must",
+    # question openers with nothing after them yet
+    "what", "why", "how", "when", "where", "which", "who", "whom", "whose",
+    # fillers -- a student audibly thinking
+    "um", "uh", "umm", "uhh", "er", "erm", "hmm", "mmm", "actually", "basically",
+    # the Hindi equivalents, since half the questions here arrive in Hindi
+    "aur", "ya", "lekin", "kyunki", "ke", "ki", "ka", "ko", "se", "mein",
+    "par", "kya", "kaise", "kyun", "kab", "kahan", "kaun", "kitna", "matlab",
+    "bhi", "toh", "phir", "agar", "jab", "jo",
+    "और", "या", "लेकिन", "क्योंकि", "के", "की", "का", "को", "से", "में",
+    "पर", "क्या", "कैसे", "क्यों", "कब", "कहाँ", "कौन", "कितना", "मतलब",
+    "कि", "भी", "तो", "फिर", "अगर", "जब", "जो", "वो", "यह", "एक",
+}
+
+# Sentence-final punctuation means the speaker landed somewhere. Whisper puts it
+# in when the prosody falls, so it is real evidence and not just formatting.
+RE_SENTENCE_END = re.compile(r"[.!?\u0964\u2026]\s*$")
+
+
+def looks_unfinished(text, truncated=False):
+    """True when this transcript is probably the FIRST HALF of what was said.
+
+    `truncated` is the phrase_time_limit having fired, which is unfinished by
+    definition -- the microphone closed while they were still talking.
+    """
+    if truncated:
+        return True
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    if RE_SENTENCE_END.search(stripped):
+        return False
+    words = re.findall(r"[\w\u0900-\u097F']+", stripped.lower())
+    if not words:
+        return False
+    # A single bare word is either a command ("stop", "next") or a fragment, and
+    # the tail list is what tells them apart -- so a one-word command is never
+    # made to wait, which is the whole point of a one-word command.
+    if len(words) == 1:
+        return words[0] in UNFINISHED_TAIL_WORDS
+    # More than one word and no full stop at all. Whisper punctuates an
+    # utterance it heard END; every truncated line in logs/liza.log came back
+    # bare and every complete one came back with a stop. So the missing stop is
+    # the evidence, not a guess: "Well, what you need to do is", "Yes, and now
+    # if you take a look at the bottom we have", "...look at the edge pieces and
+    # find" -- all of them the front half of a sentence.
+    return True
+
+
+def capture_continuation(listener, recognizer, source, endpointed, pause_threshold,
+                         phrase_limit, stt_prompt, text, truncated=False):
+    """Hold the floor open for a student who has not finished their sentence.
+
+    Returns the text with whatever they said next appended. Costs nothing on a
+    finished sentence, because looks_unfinished() says no and this returns
+    immediately; costs one short silent wait on a false positive. The alternative
+    -- simply raising PAUSE_THRESHOLD_NORMAL -- charges that wait to every single
+    turn, including all the ones that were already fine.
+    """
+    rounds = 0
+    while rounds < CONTINUATION_MAX_ROUNDS and looks_unfinished(text, truncated):
+        rounds += 1
+        print(f"[CONTINUATION] '{text}' sounds unfinished; holding the floor "
+              f"open for {CONTINUATION_WAIT_S:.1f}s.", flush=True)
+        try:
+            if endpointed:
+                more_audio = listener.wait_for_utterance(
+                    CONTINUATION_WAIT_S, phrase_limit, pause_threshold)
+            else:
+                more_audio = recognizer.listen(source, timeout=CONTINUATION_WAIT_S,
+                                               phrase_time_limit=phrase_limit)
+        except sr.WaitTimeoutError:
+            more_audio = None
+        except Exception as exc:
+            print(f"[CONTINUATION] Listen failed: {exc}", flush=True)
+            return text
+        if more_audio is None:
+            # They really had stopped. Their pause was a full stop after all.
+            return text
+        if not is_probably_speech(more_audio, "CONT", endpointed):
+            return text
+        wav = more_audio.get_wav_data(convert_rate=16000, convert_width=2)
+        # Seeded with what they have already said, so the second half is read in
+        # the context of the first -- the same trick the main path uses with her
+        # own last reply.
+        more_text, _lang = transcribe(wav, f"{stt_prompt} {text}".strip())
+        more_text = (more_text or "").strip()
+        if not more_text:
+            return text
+        lowered = more_text.lower().strip()
+        if lowered in HALLUCINATIONS or RE_HALLUCINATION.search(lowered):
+            return text
+        print(f"[CONTINUATION] ...and the rest: {more_text!r}", flush=True)
+        text = f"{text.rstrip()} {more_text}".strip()
+        truncated = audio_seconds(more_audio) >= phrase_limit - 0.5
+    return text
+
 
 def audio_rms(audio):
     """Average loudness of a captured clip, on the same scale as energy_threshold.
@@ -2452,8 +2899,36 @@ def is_repeated_hallucination(text, threshold=3):
         return True
     return False
 
+# "Liza stop" comes back from Whisper as "Lisa's top": the S of the command is
+# heard as a possessive on her name, so stripping the name leaves "'s top" --
+# which is not a command any pattern matches. Seen in logs/liza.log with a video
+# playing, which is the one moment "stop" has to work. Putting the consonant back
+# is safe because the device has no notion of anything BELONGING to Liza, so a
+# possessive on her name is always this mistake.
+RE_ABSORBED_CONSONANT = re.compile(r"^['\u2019]?([sd])\s+(\w)", re.IGNORECASE)
+
+# One word is normally a fragment rather than a question -- but the commands that
+# matter most are exactly one word, and they were being thrown away with the
+# fragments. Over playing media that is not a small loss: the track is paused,
+# nothing is heard in its place, and it RESUMES, so "Liza, stop" does nothing at
+# all. Devanagari and the romanised Hindi are here for the same reason they are
+# in RE_STOP_MEDIA_PHRASE -- Whisper romanises Hindi constantly.
+RE_ONE_WORD_COMMAND = re.compile(
+    r'^(?:stop|pause|resume|play|continue|next|skip|mute|unmute|quiet|silence|'
+    r'louder|softer|quieter|volume|sleep|repeat|again|'
+    r'band|chup|ruko|rukiye|rok|baji|'
+    r'\u0930\u0941\u0915\u094b|\u092c\u0902\u0926|\u091a\u0941\u092a|\u0906\u0917\u0947|\u092b\u093f\u0930)$',
+    re.IGNORECASE)
+
+
+def rejoin_absorbed_consonant(command):
+    """Put back a consonant Whisper glued onto her name as a possessive."""
+    return RE_ABSORBED_CONSONANT.sub(lambda m: m.group(1) + m.group(2), command, count=1)
+
+
 def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
-                         pattern=None, seed=None, timeout=None, phrase_limit=None):
+                         pattern=None, seed=None, timeout=None, phrase_limit=None,
+                         cancel=None):
     """True when 'Hey Liza' is heard. recognizer.listen blocks on silence, so audio is
     only sent to Whisper when somebody actually speaks near the device.
 
@@ -2468,9 +2943,18 @@ def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
         # The pre-roll matters more here than anywhere else: "Hey" is the
         # shortest, quietest part of the whole phrase and it is what has to
         # survive for the name to be matched at all.
-        audio = listener.wait_for_utterance(WAKE_LISTEN_TIMEOUT_S,
-                                            WAKE_PHRASE_LIMIT_S,
-                                            PAUSE_THRESHOLD_NORMAL)
+        #
+        # `timeout` and `phrase_limit` are honoured here as well as on the
+        # fallback path below. They used to be read only by the fallback, so the
+        # short window the media branch passes -- the one that decides how long a
+        # track stays ducked -- was silently ignored on the path this device
+        # actually takes, and every duck lasted the full ten seconds instead of
+        # two. `cancel` lets a KG screen take the microphone back without waiting
+        # that window out.
+        audio = listener.wait_for_utterance(
+            WAKE_LISTEN_TIMEOUT_S if timeout is None else timeout,
+            WAKE_PHRASE_LIMIT_S if phrase_limit is None else phrase_limit,
+            PAUSE_THRESHOLD_NORMAL, cancel=cancel)
         if audio is None:
             return False, "", ""
     else:
@@ -2526,7 +3010,9 @@ def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
             # instead of making the student repeat it.
             question = re.sub(r'\s+', ' ', text[:match.start()] + " " + text[match.end():])
             question = question.strip(" ,.!?।-")
-            if len(question.split()) < 2:
+            # Before anything tries to read it as a command; see the regex.
+            question = rejoin_absorbed_consonant(question).strip(" ,.!?।-")
+            if len(question.split()) < 2 and not RE_ONE_WORD_COMMAND.match(question):
                 question, language = "", ""
             return True, question, language
         if text:
@@ -2645,6 +3131,89 @@ def spoken_parts(item):
     return item, None
 
 
+# ---------- captions for a spoken response ----------
+# The story screen shows the line she is SAYING, not the whole story at once. A
+# block of text a pre-reader cannot read is wallpaper; one line arriving exactly
+# as it is spoken is something they can follow. It is also what makes the acting
+# legible -- the slow, quiet, frightened beat is ON THE SCREEN while it is being
+# said slowly and quietly.
+#
+# The timing has to come from the player, because a guess is wrong by
+# construction: every beat is generated at its own speed (0.72..1.20 -- see
+# KG_EMOTIONS) and Cartesia decides its real duration. clock["generated"] is how
+# many seconds of audio have been handed to aplay, so it IS the position of the
+# next beat on the playback timeline, and clock["start"] is when the speaker
+# began. start + offset is the wall-clock instant that line becomes audible.
+#
+# Sessions exist so a torn-down response cannot caption the one that replaced it:
+# the player captures the session number when it picks a response up, and a cue
+# under a stale number is dropped.
+caption_lock = threading.Lock()
+caption_state = {"session": 0, "start": 0.0, "cues": []}
+
+
+def caption_begin():
+    """Open a caption session for the response about to be queued.
+
+    Call it BEFORE queuing, so the player picks up the new number and anything
+    still draining from the old response is left behind on the old one.
+    """
+    with caption_lock:
+        caption_state["session"] += 1
+        caption_state["start"] = 0.0
+        caption_state["cues"] = []
+        return caption_state["session"]
+
+
+def caption_session():
+    with caption_lock:
+        return caption_state["session"]
+
+
+def caption_open(session):
+    """Claim the current session for the response starting now.
+
+    A session whose clock has already run belonged to the PREVIOUS response, so
+    its cues are stale. Clearing them here is also what stops a session left open
+    behind a screen nobody is watching from growing one cue for every line she
+    speaks for the rest of the run.
+    """
+    with caption_lock:
+        if session == caption_state["session"] and caption_state["start"]:
+            caption_state["start"] = 0.0
+            caption_state["cues"] = []
+
+
+def caption_cue(session, text, offset):
+    with caption_lock:
+        if session == caption_state["session"]:
+            caption_state["cues"].append((offset, text))
+
+
+def caption_clock_start(session, when):
+    with caption_lock:
+        if session == caption_state["session"] and not caption_state["start"]:
+            caption_state["start"] = when
+
+
+def caption_now(session):
+    """(index, text) of the line that should be on screen right now.
+
+    (-1, None) before the first sound reaches the speaker, and for any session
+    that is no longer the current one.
+    """
+    with caption_lock:
+        if session != caption_state["session"] or not caption_state["start"]:
+            return -1, None
+        elapsed = time.time() - caption_state["start"]
+        shown, text = -1, None
+        for index, (offset, cue) in enumerate(caption_state["cues"]):
+            if offset > elapsed:
+                break
+            shown, text = index, cue
+        return shown, text
+
+
 def audio_player_worker():
     global active_subprocesses, playback_started_at
     while True:
@@ -2659,6 +3228,9 @@ def audio_player_worker():
 
         playback_started_at = time.time()
         playback_active.set()
+        # Captured once for the whole response; see caption_begin.
+        this_caption = caption_session()
+        caption_open(this_caption)
         sentence_queue = queue.Queue()
         sentence_queue.put(first_item)
 
@@ -2707,6 +3279,7 @@ def audio_player_worker():
                             if not chunk: continue
                             if not clock["start"]:
                                 clock["start"] = time.time()
+                                caption_clock_start(this_caption, clock["start"])
                                 ui_call(lambda: ui_instance.set_state("speaking"))
 
                             try:
@@ -2738,6 +3311,10 @@ def audio_player_worker():
                         # through, so nothing she says can miss the screen.
                         note_spoken(sentence)
                         ui_call(lambda s=sentence: ui_instance.set_transcript(s, "liza"))
+                        # Stamped BEFORE the sentence is generated, because
+                        # clock["generated"] is then exactly the audio that
+                        # precedes it -- which is where it lands on the timeline.
+                        caption_cue(this_caption, sentence, clock["generated"])
                         try:
                             speak_sentence(sentence, config)
                         except Exception as exc:
@@ -2800,10 +3377,12 @@ COL_STOP      = "#F43F5E"
 
 MODE_ACCENTS = {"TUTOR": "#7C3AED", "CO-TELL": "#14B8A6", "RE-TELL": "#F59E0B"}
 MODE_TINTS   = {"TUTOR": "#F3EEFF", "CO-TELL": "#E6FAF6", "RE-TELL": "#FFF4E6"}
+# Kept short on purpose: the mode rows are a narrow column now, and a blurb
+# that wraps to four lines in a 78px row is not read, it is just texture.
 MODE_BLURBS = {
-    "TUTOR": "Get help with studies, concepts and explanations.",
-    "CO-TELL": "Let's talk it through and share ideas together.",
-    "RE-TELL": "You explain what you learned, I'll help."
+    "TUTOR": "Concepts and solutions",
+    "CO-TELL": "Talk it through together",
+    "RE-TELL": "You explain, I correct"
 }
 MODE_INTROS = {
     "TUTOR": "You are in tutor mode. Ask me anything from your studies.",
@@ -2886,41 +3465,61 @@ FONT_PREFERENCE = ("Noto Sans", "Noto Sans Devanagari", "Lohit Devanagari",
                    "Mukta", "Samyak Devanagari", "FreeSans", "DejaVu Sans", "Helvetica")
 
 # ---------- layout ----------
-LCOL_X0, LCOL_X1 = 12, 202
-CLOCK_Y0, CLOCK_Y1 = 30, 186
-MUSIC_Y0, MUSIC_Y1 = 194, 392
+# Three bands: a header of small cards, a working middle, and the three big
+# actions along the bottom.
+#
+# Everything that is only REFERENCE -- the time, the weather, who is using the
+# device, what is playing -- is pushed up into the header and given one shared
+# height, so the middle band belongs entirely to the three things the student
+# actually looks at: the modes they can choose, the character, and the board her
+# words appear on. The board is the widest single element on the screen because
+# it is the one that has to be read.
+# ONE margin and ONE gap, used everywhere. Every edge below is derived from
+# these two numbers rather than nudged by eye, which is what stops the spacing
+# drifting a pixel or two per card until nothing lines up with anything.
+PAD = 8
 
-RCOL_X0, RCOL_X1 = 596, 788
-MODES_Y0, MODES_Y1 = 30, 252
-MODE_CARD_X0, MODE_CARD_X1 = 602, 782
-MODE_CARD_Y0, MODE_CARD_H, MODE_CARD_GAP = 60, 58, 6
-TRANS_Y0, TRANS_Y1 = 258, 392
+TOP_Y0, TOP_Y1 = PAD, 84
+CLOCK_X0, CLOCK_X1 = PAD, 244
+WHO_X0, WHO_X1 = 252, 469
+MUSIC_X0, MUSIC_X1 = 477, UI_W - PAD
 
+# The left column: the three modes, one under another. Narrower and shorter
+# than the board on purpose -- it is a menu that is glanced at, not something
+# that gets read, so it should not take the same room as the thing that does.
+MODES_X0, MODES_X1 = PAD, 147
+MODES_Y0, MODES_Y1 = 92, 344
+MODE_CARD_X0, MODE_CARD_X1 = MODES_X0 + PAD, MODES_X1 - PAD
+MODE_CARD_Y0, MODE_CARD_H, MODE_CARD_GAP = 124, 64, PAD
+
+# The board on the right, which is where the conversation is read.
+BOARD_X0, BOARD_X1 = 402, UI_W - PAD
+BOARD_Y0, BOARD_Y1 = 92, 396
+
+# She stands in the gap between the two, on the grass.
+#
 # Measured against the wallpaper, not chosen by eye: the sky/grass boundary
 # under her sits at y=382 (found by scanning down the column at MASCOT_CX for
 # the first sustained run of green -- clouds, stars and the rainbow all produce
 # short green stretches higher up and will fool a simpler test). The cached
 # frames have zero transparent padding below the feet, so the bottom edge of the
-# image IS the feet, and centring a 300px frame at 234 lands them at 384 --
-# two pixels into the grass, which reads as standing on it rather than as a
-# seam. At the old 212 they finished at 362, floating 20px above the horizon.
-MASCOT_CX, MASCOT_CY = 399, 234
-DOTS_Y = 18
-# Was 44, directly under the head dots. The profile chip now sits between the
-# two, so the state pill drops far enough to clear it: dots end at 22, the chip
-# occupies 26..52, and the pill's 20px height means 68 puts its top at 58. The
-# mascot's frame starts at y=84 (MASCOT_CY - 150), so there is still room below.
-STATE_LABEL_Y = 68
-# The profile chip, centred on the same axis as the state pill and the mascot.
-# Moved here from the top-left corner, where it was 158x22 in the strip beside
-# the clock card: 22px is under half what a fingertip reliably hits, and the
-# measured touch error on this panel is ~10px average with 16px worst case, so
-# a tap aimed at its centre could land outside it. Centred it is unconstrained
-# by the clock card, so it can be both taller and wider.
-CHIP_W, CHIP_Y0, CHIP_Y1 = 210, 26, 52
+# image IS the feet, and centring a MASCOT_H frame at MASCOT_CY lands them two
+# pixels into the grass, which reads as standing on it rather than as a seam.
+MASCOT_CX, MASCOT_CY = (MODES_X1 + BOARD_X0) // 2, 382 - 250 // 2
+# The state caption, in the clear strip between the header cards and her ears.
+STATE_LABEL_Y = 106
 
-BTN_Y0, BTN_H, BTN_W, BTN_GAP = 400, 64, 252, 12
-BTN_XS = [10, 274, 538]
+# Three lights that pulse with how busy she is. Positions are stored per dot
+# rather than computed in a row, so they can be scattered around her the way the
+# sparkles in the artwork are.
+HEAD_DOT_SPOTS = ((MASCOT_CX - 100, 150), (MASCOT_CX + 100, 168),
+                  (MASCOT_CX - 96, 300), (MASCOT_CX + 96, 286))
+
+# The action bar is a centred group rather than a full-width row. At 254 wide
+# each button was mostly empty to the right of its own words, and three of them
+# edge to edge read as a toolbar rather than as three things to press.
+BTN_Y0, BTN_H, BTN_W, BTN_GAP = 404, 68, 216, 20
+BTN_XS = [56, 292, 528]
 
 # ---------- 3D mascot animation ----------
 # The source clips are 1920x1080 RGBA at ~200 frames each; decoding all four
@@ -2938,7 +3537,7 @@ MASCOT_SOURCES = {"idle": "Idle.gif", "listening": "Listen.gif",
 # the clips are ever replaced -- the old value here was for 1920x1080 sources
 # and is meaningless against these.
 MASCOT_CROP = (534, 40, 1145, 855)
-MASCOT_H = 300
+MASCOT_H = 250
 MASCOT_W = round(MASCOT_H * (MASCOT_CROP[2] - MASCOT_CROP[0]) / (MASCOT_CROP[3] - MASCOT_CROP[1]))
 MASCOT_STEP = 2  # keep every 2nd frame: still smooth, halves memory and disk
 
@@ -2992,8 +3591,24 @@ def _load_mascot_frames():
             print(f"[MASCOT] Preparing '{state}' animation (first run only)...", flush=True)
             _build_mascot_cache(state, fname)
         paths = sorted(glob.glob(os.path.join(out_dir, "*.png")))
-        frames[state] = [ImageTk.PhotoImage(Image.open(p)) for p in paths]
+        frames[state] = [ImageTk.PhotoImage(_fit_mascot_frame(Image.open(p)))
+                         for p in paths]
     return frames
+
+
+def _fit_mascot_frame(image):
+    """Bring a cached frame to MASCOT_H, keeping its shape.
+
+    The cache is built once from the source clips, which is minutes of work and
+    gigabytes of memory, and it is keyed only by state -- so without this a
+    change to MASCOT_H for the sake of the layout would either be ignored or
+    force that whole rebuild. Resizing the small cached PNG instead costs a few
+    hundred milliseconds at startup and makes the height a free choice.
+    """
+    if image.height == MASCOT_H:
+        return image
+    width = max(1, round(image.width * MASCOT_H / image.height))
+    return image.resize((width, MASCOT_H), Image.LANCZOS)
 
 # ---------- PIL-drawn chrome ----------
 # Tk's canvas has neither alpha nor blur, and in this design the cards and
@@ -3354,95 +3969,98 @@ class TutorUI:
 
         self._round_rect(4, 4, UI_W - 4, UI_H - 4, 18, fill="", outline=COL_FRAME, width=1)
 
-        # Decorative 3x3 launcher dots, matching the mockup's top-left mark.
-        for r in range(3):
-            for c in range(3):
-                x, y = 18 + c * 7, 16 + r * 7
-                self.canvas.create_oval(x, y, x + 3, y + 3, fill=COL_INDIGO, outline="")
-
+        # Scattered around her rather than in a row above her head: the header
+        # is full of cards now, and the artwork already has sparkles in it, so
+        # these read as part of the picture while still pulsing with how busy
+        # she is. Each keeps its own centre, since they are no longer a row.
         self.head_dots = []
-        for i, colour in enumerate(("#7C5CFF", "#3B82F6", "#22D3EE")):
-            x = MASCOT_CX - 16 + i * 16
-            self.head_dots.append(self.canvas.create_oval(
-                x - 4, DOTS_Y - 4, x + 4, DOTS_Y + 4, fill=colour, outline=""))
+        palette = ("#FBBF24", "#7C5CFF", "#22D3EE", "#FBBF24")
+        for (x, y), colour in zip(HEAD_DOT_SPOTS, palette):
+            self.head_dots.append((self.canvas.create_oval(
+                x - 4, y - 4, x + 4, y + 4, fill=colour, outline=""), x, y))
 
         self._build_confetti()
 
     def _build_confetti(self):
-        """The scattered plus/star/ring marks floating around the character."""
-        for x, y in ((252, 152), (256, 300), (292, 206), (500, 210), (486, 352)):
-            self.canvas.create_line(x - 5, y, x + 5, y, fill="#9AB4F5", width=2)
-            self.canvas.create_line(x, y - 5, x, y + 5, fill="#9AB4F5", width=2)
+        """Sparkles in the strip she stands in.
 
-        for x, y, colour in ((498, 128, "#A5B4FC"), (505, 268, "#5EEAD4")):
+        Confined to the column between the mode card and the board: everything
+        this used to draw across the middle of the panel is now underneath a
+        card, so it was paying for items nobody could see.
+        """
+        for x, y in ((MODES_X1 + 16, 200), (BOARD_X0 - 18, 168),
+                     (MODES_X1 + 24, 320), (BOARD_X0 - 14, 330)):
+            self.canvas.create_line(x - 4, y, x + 4, y, fill="#FFFFFF", width=2)
+            self.canvas.create_line(x, y - 4, x, y + 4, fill="#FFFFFF", width=2)
+
+        for x, y, colour in ((MODES_X1 + 30, 128, "#FDE68A"),
+                             (BOARD_X0 - 30, 244, "#FDE68A")):
             self.canvas.create_polygon(
                 x, y - 7, x + 2, y - 2, x + 7, y, x + 2, y + 2,
                 x, y + 7, x - 2, y + 2, x - 7, y, x - 2, y - 2,
-                fill="", outline=colour, width=1, smooth=False)
-
-        self.canvas.create_oval(494, 312, 512, 330, fill="", outline="#C7CEF0", width=2)
-        self.canvas.create_oval(268, 246, 282, 260, fill="#D8F5F0", outline="")
-
-        for r in range(5):
-            for c in range(7):
-                x, y = 262 + c * 9, 186 + r * 9
-                self.canvas.create_oval(x, y, x + 2, y + 2, fill="#D5DBF0", outline="")
+                fill=colour, outline="", smooth=False)
 
     # ---------- clock + weather ----------
     def _build_clock_card(self):
-        self._card(LCOL_X0, CLOCK_Y0, LCOL_X1, CLOCK_Y1, 18)
-        cx, cy, r = LCOL_X0 + 32, CLOCK_Y0 + 32, 21
+        """Time on the left of the card, weather on the right, place underneath.
+
+        One card rather than two stacked halves: at header height there is no
+        room for two, and the two readings are glanced at together anyway.
+        """
+        self._card(CLOCK_X0, TOP_Y0, CLOCK_X1, TOP_Y1, 16)
+        cx, cy, r = CLOCK_X0 + 30, TOP_Y0 + 30, 19
 
         self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
-                                fill="#F5F7FF", outline=COL_INDIGO, width=2)
+                                fill="#EEF3FF", outline=COL_INDIGO, width=2)
         for i in range(12):
             a = math.pi * i / 6
             self.canvas.create_line(cx + (r - 5) * math.sin(a), cy - (r - 5) * math.cos(a),
                                     cx + (r - 3) * math.sin(a), cy - (r - 3) * math.cos(a),
                                     fill="#C3CBEA", width=1)
-        self.hour_hand = self.canvas.create_line(cx, cy, cx, cy - 9,
+        self.hour_hand = self.canvas.create_line(cx, cy, cx, cy - 8,
                                                  fill=COL_TEXT, width=2, capstyle="round")
-        self.minute_hand = self.canvas.create_line(cx, cy, cx, cy - 14,
+        self.minute_hand = self.canvas.create_line(cx, cy, cx, cy - 12,
                                                    fill=COL_INDIGO, width=2, capstyle="round")
         self.canvas.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill=COL_TEXT, outline="")
         self._clock_centre = (cx, cy)
 
         self.clock_id = self.canvas.create_text(
-            LCOL_X0 + 62, CLOCK_Y0 + 26, text="--:--", anchor="w",
-            font=self._font(22, True), fill=COL_TEXT)
+            CLOCK_X0 + 56, TOP_Y0 + 24, text="--:--", anchor="w",
+            font=self._font(19, True), fill=COL_TEXT)
         self.meridiem_id = self.canvas.create_text(
-            LCOL_X0 + 62, CLOCK_Y0 + 32, text="", anchor="w",
-            font=self._font(9, True), fill=COL_TEXT_DIM)
+            CLOCK_X0 + 56, TOP_Y0 + 29, text="", anchor="w",
+            font=self._font(8, True), fill=COL_TEXT_DIM)
         self.date_id = self.canvas.create_text(
-            LCOL_X0 + 62, CLOCK_Y0 + 52, text="", anchor="w",
-            font=self._font(8), fill=COL_TEXT_DIM)
+            CLOCK_X0 + 56, TOP_Y0 + 44, text="", anchor="w",
+            font=self._font(7), fill=COL_TEXT_DIM)
 
-        self.canvas.create_line(LCOL_X0 + 14, CLOCK_Y0 + 72, LCOL_X1 - 14, CLOCK_Y0 + 72,
+        # The weather half, divided off rather than boxed: a second outline
+        # inside a card this small reads as clutter.
+        self.canvas.create_line(CLOCK_X0 + 136, TOP_Y0 + 12, CLOCK_X0 + 136, TOP_Y0 + 48,
                                 fill=COL_CARD_EDGE)
-
         self.weather_glyph = []
-        self.weather_glyph_at = (LCOL_X0 + 32, CLOCK_Y0 + 104)
+        self.weather_glyph_at = (CLOCK_X0 + 158, TOP_Y0 + 26)
         self.temp_id = self.canvas.create_text(
-            LCOL_X0 + 60, CLOCK_Y0 + 98, text="--", anchor="w",
-            font=self._font(18, True), fill=COL_TEXT)
+            CLOCK_X0 + 178, TOP_Y0 + 22, text="--", anchor="w",
+            font=self._font(15, True), fill=COL_TEXT)
         self.desc_id = self.canvas.create_text(
-            LCOL_X0 + 60, CLOCK_Y0 + 120, text="", anchor="w",
-            font=self._font(8), fill=COL_INDIGO)
+            CLOCK_X0 + 178, TOP_Y0 + 40, text="", anchor="w",
+            font=self._font(7), fill=COL_INDIGO)
 
-        self.canvas.create_line(LCOL_X0 + 128, CLOCK_Y0 + 88, LCOL_X0 + 128, CLOCK_Y0 + 122,
-                                fill=COL_CARD_EDGE)
-        self._arrow(LCOL_X0 + 140, CLOCK_Y0 + 95, up=True)
-        self._arrow(LCOL_X0 + 140, CLOCK_Y0 + 115, up=False)
+        # High and low go on the bottom row rather than beside the temperature:
+        # at this width "34°C" and "35°" ran into each other.
+        self._arrow(CLOCK_X1 - 60, TOP_Y1 - 14, up=True)
         self.high_id = self.canvas.create_text(
-            LCOL_X0 + 150, CLOCK_Y0 + 95, text="--", anchor="w",
-            font=self._font(8, True), fill=COL_TEXT)
+            CLOCK_X1 - 52, TOP_Y1 - 14, text="--", anchor="w",
+            font=self._font(7, True), fill=COL_TEXT_DIM)
+        self._arrow(CLOCK_X1 - 28, TOP_Y1 - 14, up=False)
         self.low_id = self.canvas.create_text(
-            LCOL_X0 + 150, CLOCK_Y0 + 115, text="--", anchor="w",
-            font=self._font(8, True), fill=COL_TEXT)
+            CLOCK_X1 - 20, TOP_Y1 - 14, text="--", anchor="w",
+            font=self._font(7, True), fill=COL_TEXT_DIM)
         self.city_id = self.canvas.create_text(
-            (LCOL_X0 + LCOL_X1) / 2, CLOCK_Y1 - 16,
+            CLOCK_X0 + 14, TOP_Y1 - 14,
             text=WEATHER_CITY if WEATHER_API_KEY else "Weather unavailable",
-            font=self._font(7), fill=COL_TEXT_FAINT)
+            anchor="w", font=self._font(7), fill=COL_TEXT_FAINT)
         self._draw_weather_glyph("01d")
 
     def _arrow(self, x, y, up):
@@ -3499,42 +4117,39 @@ class TutorUI:
 
     # ---------- music player ----------
     def _build_music_card(self):
-        self._card(LCOL_X0, MUSIC_Y0, LCOL_X1, MUSIC_Y1, 18)
-        self.canvas.create_text(LCOL_X0 + 14, MUSIC_Y0 + 18, text="MUSIC PLAYER",
-                                anchor="w", font=self._font(9, True), fill=COL_INDIGO)
-        self._bars_glyph(LCOL_X1 - 24, MUSIC_Y0 + 18, COL_INDIGO)
+        """The player, laid out across the header rather than down a column.
 
-        art = ImageTk.PhotoImage(_album_art_image(46))
+        Wider than it is tall now, so the transport moves to the right of the
+        title instead of under it, and the progress bar runs the full width
+        along the bottom where there is nothing to compete with it.
+        """
+        self._card(MUSIC_X0, TOP_Y0, MUSIC_X1, TOP_Y1, 16)
+
+        art = ImageTk.PhotoImage(_album_art_image(38, 10))
         self._photos.append(art)
-        self.canvas.create_image(LCOL_X0 + 14, MUSIC_Y0 + 34, image=art, anchor="nw")
+        self.canvas.create_image(MUSIC_X0 + 12, TOP_Y0 + 11, image=art, anchor="nw")
 
+        self.canvas.create_text(MUSIC_X0 + 60, TOP_Y0 + 15, text="MUSIC PLAYER",
+                                anchor="w", font=self._font(7, True), fill=COL_INDIGO)
         self.track_id = self.canvas.create_text(
-            LCOL_X0 + 68, MUSIC_Y0 + 48, text="", anchor="w",
-            font=self._font(10, True), fill=COL_TEXT)
+            MUSIC_X0 + 60, TOP_Y0 + 30, text="", anchor="w",
+            font=self._font(9, True), fill=COL_TEXT)
         self.artist_id = self.canvas.create_text(
-            LCOL_X0 + 68, MUSIC_Y0 + 66, text="", anchor="w",
-            font=self._font(8), fill=COL_INDIGO)
+            MUSIC_X0 + 60, TOP_Y0 + 45, text="", anchor="w",
+            font=self._font(7), fill=COL_TEXT_DIM)
 
-        bx0, bx1, by = LCOL_X0 + 14, LCOL_X1 - 14, MUSIC_Y0 + 98
-        self._progress_span = (bx0, bx1, by)
-        self._round_rect(bx0, by - 2, bx1, by + 2, 2, fill=COL_TRACK, outline="")
-        self.progress_fill = self._round_rect(bx0, by - 2, bx0 + 1, by + 2, 2,
-                                              fill=COL_INDIGO, outline="")
-        self.progress_knob = self.canvas.create_oval(bx0 - 5, by - 5, bx0 + 5, by + 5,
-                                                     fill=COL_INDIGO, outline=COL_CARD, width=2)
-        self.elapsed_id = self.canvas.create_text(bx0, by + 16, text="00:00", anchor="w",
-                                                  font=self._font(7), fill=COL_TEXT_DIM)
-        self.duration_id = self.canvas.create_text(bx1, by + 16, text="00:00", anchor="e",
-                                                   font=self._font(7), fill=COL_TEXT_DIM)
+        # Transport on the right, with the play/pause ring biggest: it is the
+        # one of the three that is pressed, and the only one that changes shape.
+        cy = TOP_Y0 + 30
+        pcx = MUSIC_X1 - 60
+        self.prev_items = self._skip_glyph(pcx - 34, cy, forward=False)
+        self.next_items = self._skip_glyph(pcx + 34, cy, forward=True)
+        # Shuffle and repeat have nowhere to go at this height and were never
+        # wired to anything, so the transport is only what actually works.
+        self.shuffle_items = []
+        self.repeat_items = []
 
-        cy = MUSIC_Y0 + 142
-        self.shuffle_items = self._shuffle_glyph(LCOL_X0 + 24, cy)
-        self.prev_items = self._skip_glyph(LCOL_X0 + 56, cy, forward=False)
-        self.next_items = self._skip_glyph(LCOL_X1 - 56, cy, forward=True)
-        self.repeat_items = self._repeat_glyph(LCOL_X1 - 24, cy)
-
-        pcx = (LCOL_X0 + LCOL_X1) / 2
-        self.play_ring = self.canvas.create_oval(pcx - 17, cy - 17, pcx + 17, cy + 17,
+        self.play_ring = self.canvas.create_oval(pcx - 16, cy - 16, pcx + 16, cy + 16,
                                                  fill=COL_INDIGO, outline="", tags="playpause")
         self.play_left = self.canvas.create_rectangle(pcx - 5, cy - 6, pcx - 2, cy + 6,
                                                       fill=COL_CARD, outline="", tags="playpause")
@@ -3544,6 +4159,20 @@ class TutorUI:
                                                    fill=COL_CARD, outline="", state="hidden",
                                                    tags="playpause")
         self.canvas.tag_bind("playpause", "<Button-1>", self.toggle_media_pause)
+
+        self._bars_glyph(MUSIC_X1 - 16, TOP_Y0 + 16, COL_INDIGO, (4, 7, 10, 7, 4))
+
+        bx0, bx1, by = MUSIC_X0 + 58, MUSIC_X1 - 46, TOP_Y1 - 15
+        self._progress_span = (bx0, bx1, by)
+        self._round_rect(bx0, by - 2, bx1, by + 2, 2, fill=COL_TRACK, outline="")
+        self.progress_fill = self._round_rect(bx0, by - 2, bx0 + 1, by + 2, 2,
+                                              fill=COL_INDIGO, outline="")
+        self.progress_knob = self.canvas.create_oval(bx0 - 4, by - 4, bx0 + 4, by + 4,
+                                                     fill=COL_INDIGO, outline=COL_CARD, width=2)
+        self.elapsed_id = self.canvas.create_text(bx0 - 6, by, text="00:00", anchor="e",
+                                                  font=self._font(6), fill=COL_TEXT_DIM)
+        self.duration_id = self.canvas.create_text(bx1 + 6, by, text="00:00", anchor="w",
+                                                   font=self._font(6), fill=COL_TEXT_DIM)
 
     def _shuffle_glyph(self, cx, cy):
         c, w = self.canvas, 2
@@ -3577,15 +4206,14 @@ class TutorUI:
         ]
 
     def _build_mascot(self):
-        # Sits between the header dots and the top of her ears, so it reads as
-        # hers without covering the character.
-        self.state_pill = self._round_rect(MASCOT_CX - 40, STATE_LABEL_Y - 10,
-                                           MASCOT_CX + 40, STATE_LABEL_Y + 10, 10,
+        # Sits in the clear strip between the header cards and the top of her
+        # ears, so it reads as hers without covering the character.
+        self.state_pill = self._round_rect(MASCOT_CX - 40, STATE_LABEL_Y - 11,
+                                           MASCOT_CX + 40, STATE_LABEL_Y + 11, 11,
                                            fill=COL_TRACK, outline="")
         self.state_text_id = self.canvas.create_text(
             MASCOT_CX, STATE_LABEL_Y, text="", font=self._font(9, True), fill=COL_TEXT_DIM)
         self.mascot_item = self.canvas.create_image(MASCOT_CX, MASCOT_CY)
-
 
     # ---------- mode cards ----------
     def _mode_glyph(self, kind, cx, cy, colour, tint):
@@ -3615,11 +4243,12 @@ class TutorUI:
         return items
 
     def _build_mode_cards(self):
-        self._card(RCOL_X0, MODES_Y0, RCOL_X1, MODES_Y1, 18)
-        self.canvas.create_text(RCOL_X0 + 12, MODES_Y0 + 18, text="CHOOSE MODE",
-                                anchor="w", font=self._font(10, True), fill=COL_TEXT)
-        for dx, dy, s in ((-16, -4, 5), (-6, 4, 3), (-26, 5, 3)):
-            x, y = RCOL_X1 - 12 + dx, MODES_Y0 + 18 + dy
+        self._card(MODES_X0, MODES_Y0, MODES_X1, MODES_Y1, 16)
+        self.canvas.create_text((MODES_X0 + MODES_X1) / 2, MODES_Y0 + 18,
+                                text="CHOOSE MODE", font=self._font(9, True),
+                                fill=COL_TEXT)
+        for dx, dy, s in ((-10, -5, 4), (-2, 3, 3)):
+            x, y = MODES_X1 - 18 + dx, MODES_Y0 + 18 + dy
             self.canvas.create_polygon(x, y - s, x + s * 0.35, y - s * 0.35, x + s, y,
                                        x + s * 0.35, y + s * 0.35, x, y + s,
                                        x - s * 0.35, y + s * 0.35, x - s, y,
@@ -3636,20 +4265,27 @@ class TutorUI:
             body = self._round_rect(MODE_CARD_X0, y0, MODE_CARD_X1, y1, 12,
                                     fill=MODE_TINTS[mode], outline=MODE_TINTS[mode],
                                     width=1, tags=tag)
-            glyph = self._mode_glyph(mode, MODE_CARD_X0 + 22, (y0 + y1) / 2,
+            # The glyph sits in its own white tile at the top-left of the row,
+            # with the wording under it rather than beside it: 158px of row is
+            # not enough to put an icon, a title, a two-line blurb and a chevron
+            # side by side without the blurb collapsing to one word per line.
+            glyph = self._mode_glyph(mode, MODE_CARD_X0 + 20, y0 + 21,
                                      accent, "#FFFFFF")
-            title = self.canvas.create_text(MODE_CARD_X0 + 42, y0 + 15,
+            title = self.canvas.create_text(MODE_CARD_X0 + 38, y0 + 21,
                                             text=f"{mode} MODE", anchor="w",
-                                            font=self._font(9, True), fill=accent, tags=tag)
-            blurb = self.canvas.create_text(MODE_CARD_X0 + 42, y0 + 28, text=MODE_BLURBS[mode],
-                                            anchor="nw", justify="left",
-                                            width=MODE_CARD_X1 - MODE_CARD_X0 - 58,
-                                            font=self._font(7), fill=COL_TEXT_DIM, tags=tag)
+                                            font=self._font(8, True), fill=accent, tags=tag)
+            # On the title's row, not the bottom corner: down there it sat
+            # against the second line of the blurb, and in a row this size the
+            # two were touching.
             chevron = self.canvas.create_line(
-                MODE_CARD_X1 - 14, (y0 + y1) / 2 - 5,
-                MODE_CARD_X1 - 9, (y0 + y1) / 2,
-                MODE_CARD_X1 - 14, (y0 + y1) / 2 + 5,
+                MODE_CARD_X1 - 13, y0 + 16,
+                MODE_CARD_X1 - 8, y0 + 21,
+                MODE_CARD_X1 - 13, y0 + 26,
                 fill=accent, width=2, capstyle="round", joinstyle="round", tags=tag)
+            blurb = self.canvas.create_text(MODE_CARD_X0 + 11, y0 + 36, text=MODE_BLURBS[mode],
+                                            anchor="nw", justify="left",
+                                            width=MODE_CARD_X1 - MODE_CARD_X0 - 22,
+                                            font=self._font(7), fill=COL_TEXT_DIM, tags=tag)
             for item in glyph:
                 self.canvas.itemconfig(item, tags=tag)
             self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.set_mode(idx))
@@ -3658,31 +4294,57 @@ class TutorUI:
 
     # ---------- transcript ----------
     def _build_transcript_panel(self):
-        self._card(RCOL_X0, TRANS_Y0, RCOL_X1, TRANS_Y1, 18)
-        pad = 12
-        self.canvas.create_text(RCOL_X0 + pad, TRANS_Y0 + 18, text="TRANSCRIBE",
-                                anchor="w", font=self._font(10, True), fill=COL_TEXT)
-        self.panel_bars = self._bars_glyph(RCOL_X1 - pad - 8, TRANS_Y0 + 18, COL_INDIGO,
+        """The board she writes on -- the biggest single thing on the screen.
+
+        It was a 192x134 strip in the right-hand column, which fitted three
+        lines of a spoken sentence and clipped the rest. Given half the width of
+        the panel it holds a real answer, which is the point of showing it.
+        """
+        self._card(BOARD_X0, BOARD_Y0, BOARD_X1, BOARD_Y1, 18)
+        pad = 18
+
+        # The faint dot grid, drawn first so everything else sits on top of it.
+        # It is what makes the panel read as a board to write on rather than as
+        # another empty card.
+        for gy in range(int(BOARD_Y0) + 40, int(BOARD_Y1) - 12, 14):
+            for gx in range(int(BOARD_X0) + pad, int(BOARD_X1) - pad, 14):
+                self.canvas.create_oval(gx, gy, gx + 1, gy + 1,
+                                        fill="#E7EAF6", outline="")
+
+        self.canvas.create_text((BOARD_X0 + BOARD_X1) / 2, BOARD_Y0 + 22,
+                                text="Transcribe Board", font=self._font(14, True),
+                                fill="#7C3AED")
+        self.canvas.create_line((BOARD_X0 + BOARD_X1) / 2 - 74, BOARD_Y0 + 36,
+                                (BOARD_X0 + BOARD_X1) / 2 + 74, BOARD_Y0 + 36,
+                                fill="#C4B5FD", width=2, capstyle="round")
+        for x, y, s in ((BOARD_X0 + 30, BOARD_Y0 + 22, 6),
+                        (BOARD_X1 - 34, BOARD_Y0 + 20, 7),
+                        (BOARD_X1 - 18, BOARD_Y0 + 32, 4)):
+            self.canvas.create_polygon(
+                x, y - s, x + s * 0.34, y - s * 0.34, x + s, y,
+                x + s * 0.34, y + s * 0.34, x, y + s,
+                x - s * 0.34, y + s * 0.34, x - s, y,
+                x - s * 0.34, y - s * 0.34, fill="", outline="#C4B5FD", width=1)
+
+        self.panel_bars = self._bars_glyph(BOARD_X0 + pad + 4, BOARD_Y0 + 22, COL_INDIGO,
                                            (5, 9, 13, 9, 5))
-        self.canvas.create_line(RCOL_X0 + pad, TRANS_Y0 + 30, RCOL_X1 - pad, TRANS_Y0 + 30,
-                                fill=COL_CARD_EDGE)
         self.speaker_id = self.canvas.create_text(
-            RCOL_X0 + pad, TRANS_Y0 + 44, text="You said:", anchor="w",
+            BOARD_X0 + pad, BOARD_Y0 + 54, text="You said:", anchor="w",
             font=self._font(8, True), fill=COL_INDIGO)
         self.transcript_id = self.canvas.create_text(
-            RCOL_X0 + pad, TRANS_Y0 + 56,
+            BOARD_X0 + pad, BOARD_Y0 + 70,
             text="Tap SPEAK or say “Hey Liza” to begin.",
-            anchor="nw", justify="left", width=RCOL_X1 - RCOL_X0 - pad * 2,
-            font=self._font(9), fill=COL_TEXT_DIM)
+            anchor="nw", justify="left", width=BOARD_X1 - BOARD_X0 - pad * 2,
+            font=self._font(11), fill=COL_TEXT_DIM)
 
         self.panel_status_id = self.canvas.create_text(
-            RCOL_X1 - pad - 26, TRANS_Y1 - 14, text="", anchor="e",
+            BOARD_X1 - pad - 30, BOARD_Y1 - 16, text="", anchor="e",
             font=self._font(8), fill=COL_TEXT_DIM)
         self.status_dots = []
         for i in range(3):
-            x = RCOL_X1 - pad - 20 + i * 8
+            x = BOARD_X1 - pad - 22 + i * 8
             self.status_dots.append(self.canvas.create_oval(
-                x - 3, TRANS_Y1 - 17, x + 3, TRANS_Y1 - 11, fill=COL_TRACK, outline=""))
+                x - 3, BOARD_Y1 - 19, x + 3, BOARD_Y1 - 13, fill=COL_TRACK, outline=""))
 
     # ---------- action buttons ----------
     def _build_buttons(self):
@@ -3690,11 +4352,13 @@ class TutorUI:
         handlers = {"SPEAK": self.wake_up, "STOP": self.stop_speaking, "SLEEP": self.go_to_sleep}
         for (label, sub, c0, c1, sub_col, icon), x0 in zip(ACTIONS, BTN_XS):
             tag = f"btn{label}"
-            self._place_photo(_action_image(BTN_W, BTN_H, 14, c0, c1, icon), x0, BTN_Y0, tag)
-            self.canvas.create_text(x0 + 72, BTN_Y0 + 26, text=label, anchor="w",
-                                    font=self._font(14, True), fill="#FFFFFF", tags=tag)
-            self.canvas.create_text(x0 + 72, BTN_Y0 + 44, text=sub, anchor="w",
-                                    font=self._font(8), fill=sub_col, tags=tag)
+            self._place_photo(_action_image(BTN_W, BTN_H, 20, c0, c1, icon), x0, BTN_Y0, tag)
+            # 70, not 92: the icon ring ends 57px in, so this is the same
+            # clearance beside a narrower button.
+            self.canvas.create_text(x0 + 70, BTN_Y0 + 26, text=label, anchor="w",
+                                    font=self._font(15, True), fill="#FFFFFF", tags=tag)
+            self.canvas.create_text(x0 + 70, BTN_Y0 + 45, text=sub, anchor="w",
+                                    font=self._font(7), fill=sub_col, tags=tag)
             self.canvas.tag_bind(tag, "<Button-1>", handlers[label])
             self.buttons[label] = tag
 
@@ -3723,17 +4387,16 @@ class TutorUI:
                 self.mascot_index = (self.mascot_index + 1) % len(frames)
             self.canvas.itemconfig(self.mascot_item, image=frames[self.mascot_index])
 
-        for i, dot in enumerate(self.head_dots):
+        for i, (dot, dx, dy) in enumerate(self.head_dots):
             swing = math.sin(self.phase * 2.3 + i * 0.9) ** 2
-            r = 3 + 3 * activity * swing
-            x = MASCOT_CX - 16 + i * 16
-            self.canvas.coords(dot, x - r, DOTS_Y - r, x + r, DOTS_Y + r)
+            r = 2.5 + 3 * activity * swing
+            self.canvas.coords(dot, dx - r, dy - r, dx + r, dy + r)
 
         for i, bar in enumerate(self.panel_bars):
             swing = math.sin(self.phase * 2.6 + i * 0.62) ** 2
             h = 3 + 12 * (0.25 + 0.75 * swing) * max(activity, 0.15)
             x = self.canvas.coords(bar)[0]
-            self.canvas.coords(bar, x, TRANS_Y0 + 18 - h / 2, x, TRANS_Y0 + 18 + h / 2)
+            self.canvas.coords(bar, x, BOARD_Y0 + 22 - h / 2, x, BOARD_Y0 + 22 + h / 2)
             self.canvas.itemconfig(bar, fill=_mix(colour, COL_TRACK, 0.5 - 0.4 * swing * activity))
 
         caption = label.upper()
@@ -3789,13 +4452,14 @@ class TutorUI:
                            "pos": 0.0, "dur": 0.0, "paused": False})
         self.canvas.itemconfig(
             self.track_id,
-            text=self._ellipsize(track.strip(), self._font(10, True), LCOL_X1 - LCOL_X0 - 82),
+            text=self._ellipsize(track.strip(), self._font(9, True),
+                                 MUSIC_X1 - MUSIC_X0 - 170),
             fill=COL_TEXT if title else COL_TEXT_DIM)
         self.canvas.itemconfig(
             self.artist_id,
             text=self._ellipsize("Loading…" if loading else
                                  (artist.strip() or ("—" if title else "Ask me to play a song")),
-                                 self._font(8), LCOL_X1 - LCOL_X0 - 82))
+                                 self._font(7), MUSIC_X1 - MUSIC_X0 - 170))
         self.set_media_progress(0.0, 0.0, False)
 
     def set_media_progress(self, pos, dur, paused):
@@ -3946,8 +4610,7 @@ class TutorUI:
         self.canvas.itemconfig(self.high_id, text=f"{reading['high']}°")
         self.canvas.itemconfig(self.low_id, text=f"{reading['low']}°")
         self.canvas.itemconfig(self.city_id,
-                               text=f"{reading['city']}  ·  feels {reading['feels']}°"
-                                    f"  ·  {reading['humidity']}%")
+                               text=f"{reading['city']}  •  Humidity {reading['humidity']}%")
         self._draw_weather_glyph(reading["icon"])
 
     def _tick_clock(self):
@@ -3957,7 +4620,7 @@ class TutorUI:
         # Placed by measurement rather than a fixed offset: "9:05" and "12:45"
         # are very different widths and the meridiem has to sit against both.
         self.canvas.coords(self.meridiem_id,
-                           LCOL_X0 + 66 + self._font(22, True).measure(text), CLOCK_Y0 + 32)
+                           CLOCK_X0 + 60 + self._font(19, True).measure(text), TOP_Y0 + 29)
         self.canvas.itemconfig(self.meridiem_id, text=now.strftime("%p"))
         self.canvas.itemconfig(self.date_id, text=now.strftime("%a, %d %b %Y"))
 
@@ -3994,8 +4657,8 @@ class TutorUI:
     # to a set of instructions..." laid out to y=416 against a card ending at 392.
     def _fit_transcript(self, text):
         """The longest leading part of `text` that stays inside the card."""
-        # Clear of the status dots, which start at TRANS_Y1 - 17.
-        bottom = TRANS_Y1 - 20
+        # Clear of the status dots, which start at BOARD_Y1 - 19.
+        bottom = BOARD_Y1 - 24
         def fits(candidate):
             """Lay `candidate` out in the real item and see where it ends."""
             self.canvas.itemconfig(self.transcript_id, text=candidate)
@@ -4131,10 +4794,39 @@ class TutorUI:
     # and there is no partial teardown to get wrong.
     OVERLAY_TAG = "overlay"
 
+    # Where a KG lesson is drawn: the same column the Transcribe Board occupies
+    # on the normal screen. Content sits here rather than across the middle of
+    # the canvas so that the mascot beside it stays uncovered.
+    KG_X0, KG_X1 = BOARD_X0, BOARD_X1
+    KG_CX = (BOARD_X0 + BOARD_X1) / 2
+
     def _clear_overlay(self):
         self.canvas.delete(self.OVERLAY_TAG)
         self._overlay_photos = []
         self.overlay = None
+
+    def _kg_keep_mascot(self):
+        """Lift the mascot above the overlay backing, so she is IN the lesson.
+
+        The backing _overlay_screen paints covers all 800x480, and that is what
+        used to hide her: the alphabet arrived as a worksheet with nobody
+        holding it. Raising the existing canvas item rather than drawing a new
+        one means _animate goes on driving the same frames, so she blinks and
+        breathes through a lesson instead of freezing into a still. The cached
+        frames are RGBA, so she cuts out cleanly against the screen tint.
+
+        Only screens that leave the mascot's rectangle clear may call this --
+        see KG_CX. The keyboard screens still need the full width and so still
+        cover her.
+        """
+        item = getattr(self, "mascot_item", None)
+        if item is None:
+            return
+        try:
+            self.canvas.tag_raise(item)
+        except tk.TclError:
+            # A canvas rebuild between screens; the next redraw lifts her again.
+            pass
 
     def _overlay_screen(self, name, title, subtitle=None, tint=COL_BG):
         """The opaque backing every profile and KG screen is built on.
@@ -4146,6 +4838,14 @@ class TutorUI:
         question and the move to the next spelling word, each of which checks
         which screen is still up before firing.
         """
+        # Moving to a DIFFERENT screen (not just redrawing this one) means the
+        # child has walked away from whatever was being asked, so the microphone
+        # should stop waiting for an answer to it. Without this, tapping Back
+        # during a counting question left ai_loop -- the only thread that may
+        # touch the microphone -- inside that listen for another forty seconds,
+        # and the next screen's question went unheard for the whole of it.
+        if self.overlay != name:
+            kg_cancel_listen()
         self._clear_overlay()
         self.overlay = name
         backing = self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill=tint,
@@ -4161,6 +4861,18 @@ class TutorUI:
         # over a child choosing their name. Binding it makes the overlay behave
         # like the modal screen it always looked like.
         self.canvas.tag_bind(backing, "<Button-1>", lambda event: "break")
+        # Every screen starts with the mascot BEHIND the backing, and the ones
+        # with room for her lift her out again with _kg_keep_mascot(). The reset
+        # belongs here rather than in those screens: tag_raise is permanent, so
+        # without it she stayed up from the last alphabet screen and reappeared
+        # standing on top of the spelling keyboard, whose keys run the full
+        # width and straight through where she stands.
+        mascot = getattr(self, "mascot_item", None)
+        if mascot is not None:
+            try:
+                self.canvas.tag_lower(mascot, backing)
+            except tk.TclError:
+                pass
         self.canvas.create_text(UI_W / 2, 40, text=title, font=self._font(20, True),
                                 fill=COL_TEXT, tags=self.OVERLAY_TAG)
         if subtitle:
@@ -4190,37 +4902,49 @@ class TutorUI:
 
     # ---------- the chip that shows who is using the device ----------
     def _build_profile_chip(self):
-        """Name and class, centred above the state pill, and the way in to
-        Switch User.
+        """Who is using the device, as the middle card of the header.
 
-        Centred rather than tucked in the top-left corner: this is the only
-        control for WHO is using the device, and in the corner it read as a
-        label rather than something to press. On the centre axis it has no clock
-        card below it to bound its height, so it is 26px tall instead of 22 and
-        wide enough not to truncate a name.
+        It is the only control for WHO she is talking to, and the whole card is
+        the tap target -- 212x78 rather than the 210x26 chip it replaces, which
+        was under half what a fingertip reliably hits on this panel.
         """
         tags = (self.OVERLAY_TAG + "_never", "profilechip")
-        x0, x1 = MASCOT_CX - CHIP_W / 2, MASCOT_CX + CHIP_W / 2
-        self.profile_chip_bg = self._round_rect(x0, CHIP_Y0, x1, CHIP_Y1, 13,
-                                                fill="#FFFFFF",
-                                                outline=COL_CARD_EDGE, tags=tags)
+        self.profile_chip_bg = self._card(WHO_X0, TOP_Y0, WHO_X1, TOP_Y1, 16, tags=tags)
+
+        cx, cy = WHO_X0 + 34, TOP_Y0 + 39
+        self.canvas.create_oval(cx - 21, cy - 21, cx + 21, cy + 21,
+                                fill="#7C3AED", outline="", tags=tags)
+        self.canvas.create_oval(cx - 7, cy - 10, cx + 7, cy + 4,
+                                fill="#FFFFFF", outline="", tags=tags)
+        self.canvas.create_arc(cx - 13, cy - 1, cx + 13, cy + 24, start=0, extent=180,
+                               fill="#FFFFFF", outline="", tags=tags)
+
+        self.canvas.create_text(WHO_X0 + 66, TOP_Y0 + 26, text="Welcome,", anchor="w",
+                                font=self._font(8), fill=COL_TEXT_DIM, tags=tags)
         self.profile_chip_text = self.canvas.create_text(
-            MASCOT_CX, (CHIP_Y0 + CHIP_Y1) / 2, text="Tap to set up",
-            anchor="center", font=self._font(9, True),
-            fill=COL_TEXT_DIM, tags=tags)
+            WHO_X0 + 66, TOP_Y0 + 48, text="Tap to set up",
+            anchor="w", font=self._font(13, True), fill=COL_TEXT_DIM, tags=tags)
+
+        for x, y, s in ((WHO_X1 - 24, TOP_Y0 + 20, 7), (WHO_X1 - 40, TOP_Y0 + 58, 4)):
+            self.canvas.create_polygon(
+                x, y - s, x + s * 0.34, y - s * 0.34, x + s, y,
+                x + s * 0.34, y + s * 0.34, x, y + s,
+                x - s * 0.34, y + s * 0.34, x - s, y,
+                x - s * 0.34, y - s * 0.34, fill="#FBBF24", outline="", tags=tags)
+
         self.canvas.tag_bind("profilechip", "<Button-1>",
                              lambda e: self.show_profile_picker())
 
     def refresh_profile_chip(self):
         profile = active_profile()
         if profile:
-            label = f"{profile.get('name', 'Student')}  ·  Class {profile.get('class')}"
+            label = f"{profile.get('name', 'Student')} - Class {profile.get('class')}"
             colour = COL_TEXT
         else:
             label, colour = "Tap to set up", COL_TEXT_DIM
         self.canvas.itemconfig(self.profile_chip_text,
-                               text=self._ellipsize(label, self._font(9, True),
-                                                    CHIP_W - 24),
+                               text=self._ellipsize(label, self._font(13, True),
+                                                    WHO_X1 - WHO_X0 - 90),
                                fill=colour)
 
     # ---------- who is using the device ----------
@@ -4597,8 +5321,11 @@ class TutorUI:
         # is how a wall chart does it. Without one the letter takes the middle,
         # so a letter whose traditional word has no emoji still looks deliberate
         # rather than like something failed to load.
-        has_picture = picture_image(picture, 132) is not None if picture else False
-        letter_x = UI_W / 2 - 150 if has_picture else UI_W / 2
+        self._kg_keep_mascot()
+        # 120 rather than 132, and +/-100 rather than +/-140: the letter and its
+        # picture now share a 390px column instead of half of an 800px screen.
+        has_picture = picture_image(picture, 120) is not None if picture else False
+        letter_x = self.KG_CX - 100 if has_picture else self.KG_CX
         self.canvas.create_text(letter_x, 186, text=letter,
                                 font=self._font(76, True), fill=accent,
                                 tags=self.OVERLAY_TAG)
@@ -4608,8 +5335,8 @@ class TutorUI:
                                     font=self._font(11), fill=COL_TEXT_DIM,
                                     tags=self.OVERLAY_TAG)
         if has_picture:
-            self._place_emoji(picture, UI_W / 2 + 130, 186, 132)
-        self.canvas.create_text(UI_W / 2, 306, text=word,
+            self._place_emoji(picture, self.KG_CX + 100, 186, 120)
+        self.canvas.create_text(self.KG_CX, 306, text=word,
                                 font=self._font(22, True), fill=COL_TEXT,
                                 tags=self.OVERLAY_TAG)
 
@@ -4643,44 +5370,73 @@ class TutorUI:
                          (f"{letter} for {word}.", "warm")])
 
     # ----- counting -----
-    def show_kg_counting(self, value=1):
-        """Count up one number at a time, in English and Hindi.
+    def show_kg_counting(self, value=1, grew=False):
+        """Count up one number at a time, showing where the number COMES FROM.
+
+        A numeral and its name is a label, not an explanation -- and reading a
+        number aloud in two languages is two labels rather than an idea. What a
+        child this age is actually learning is that each number is the one
+        before it plus one more, so the screen and the voice now say exactly
+        that: there were two apples, here is one more apple, two and one more
+        makes three. The apple that was just added is drawn ringed, so the "one
+        more" is a thing they can point at rather than a word she said.
 
         She asks before going past each block of twenty rather than marching to
         fifty, because a KG child finishing at twenty has finished something.
         """
         self._kg_count = max(1, min(value, kg_content.COUNT_MAX))
         n = self._kg_count
+        # A jump -- Previous, Start again, answering a milestone -- has no "one
+        # more" to show, so it is never dressed up as one.
+        grew = bool(grew) and n > 1
+        self._kg_count_grew = grew
         english = kg_content.number_name(n, "en")
-        hindi = kg_content.number_name(n, "hi")
 
         self._overlay_screen("kg_count", "Counting",
                              f"{n} of {kg_content.COUNT_MAX}", tint="#ECFDF5")
-        self.canvas.create_text(UI_W / 2, 150, text=str(n),
-                                font=self._font(76, True), fill="#059669",
+        self._kg_keep_mascot()
+        self.canvas.create_text(self.KG_CX, 138, text=str(n),
+                                font=self._font(70, True), fill="#059669",
                                 tags=self.OVERLAY_TAG)
-        self.canvas.create_text(UI_W / 2, 218, text=english,
+        self.canvas.create_text(self.KG_CX, 198, text=english,
                                 font=self._font(20, True), fill=COL_TEXT,
                                 tags=self.OVERLAY_TAG)
-        self.canvas.create_text(UI_W / 2, 252, text=hindi,
-                                font=self._font(20, True), fill="#DB2777",
-                                tags=self.OVERLAY_TAG)
+        # The sum in the same words she speaks, so the child being read to and
+        # the child starting to read see one sentence rather than two.
+        if grew:
+            self.canvas.create_text(
+                self.KG_CX, 236, text=f"{n - 1}   and 1 more   makes   {n}",
+                font=self._font(15, True), fill="#047857", tags=self.OVERLAY_TAG)
 
         # Something to actually count. Apples rather than dots: a child counts
         # things, and "five apples" is a sentence they can check against the
         # numeral. Two rows past ten so twenty still fits across 800px.
         if n <= 20:
-            per_row = 10
-            size = 38 if n <= 10 else 32
-            gap = 8
+            # Five or seven to a row, not ten. The apples share their column
+            # with the mascot standing beside them now rather than having the
+            # whole 800px, and a row of ten at the old size ran 392px wide -- two
+            # pixels past the column on its own. Three rows is the most that
+            # still clears the button strip at 396.
+            per_row = 5 if n <= 10 else 7
+            size = 34 if n <= 10 else 28
+            gap = 8 if n <= 10 else 6
             rows = [list(range(min(per_row, n - r * per_row)))
                     for r in range((n + per_row - 1) // per_row)]
-            top = 300 if len(rows) == 1 else 284
+            top = 302 if len(rows) == 1 else 290 - (len(rows) - 2) * 16
+            index = 0
             for row_index, row in enumerate(rows):
                 total = len(row) * size + (len(row) - 1) * gap
-                x = (UI_W - total) / 2 + size / 2
+                x = self.KG_CX - total / 2 + size / 2
                 y = top + row_index * (size + 6)
                 for _ in row:
+                    index += 1
+                    if grew and index == n:
+                        # The one that was just added, ringed -- "one more" has
+                        # to be visible and not only spoken.
+                        half = size / 2 + 5
+                        self.canvas.create_oval(x - half, y - half, x + half,
+                                                y + half, outline="#F59E0B",
+                                                width=3, tags=self.OVERLAY_TAG)
                     self._place_emoji(kg_content.COUNT_EMOJI, x, y, size)
                     x += size + gap
 
@@ -4691,7 +5447,7 @@ class TutorUI:
                                  lambda: self.show_kg_counting(n - 1),
                                  fill="#E6E9F5", text_colour=COL_TEXT, size=11)
         self._overlay_button(390, 396, 560, 452, "Say it again",
-                             lambda: self._kg_say_number(n),
+                             lambda: self._kg_say_number(n, grew),
                              fill="#E6E9F5", text_colour=COL_TEXT, size=11)
         if n >= kg_content.COUNT_MAX:
             self._overlay_button(590, 396, 780, 452, "Start again",
@@ -4701,18 +5457,58 @@ class TutorUI:
             self._overlay_button(590, 396, 780, 452, "Next",
                                  lambda: self._kg_count_next(n),
                                  fill="#059669", size=13)
-        self._kg_say_number(n)
+        self._kg_say_number(n, grew)
 
-    def _kg_say_number(self, n):
-        kg_say_many([(f"{kg_content.number_name(n, 'en')}.", "curious"),
-                     (f"{kg_content.number_name(n, 'hi')}।", "warm")])
+    def _kg_say_number(self, n, grew=None):
+        """Say the number as a story about the one before it.
+
+        English only. The Hindi name used to be read straight after the English
+        one and it taught nothing the English name had not: a second label for
+        the same picture, with no reason given for either. Hindi belongs in the
+        STORIES, where it carries meaning, rather than stapled to every numeral.
+        """
+        if grew is None:
+            grew = getattr(self, "_kg_count_grew", False)
+        english = kg_content.number_name(n, "en").lower()
+
+        if n == 1:
+            kg_say_many([("One.", "excited"),
+                         ("Here is one apple.", "warm"),
+                         ("Just one!", "curious")])
+            return
+
+        if not grew:
+            lines = [(f"{english.capitalize()}.", "excited")]
+            if n <= 20:
+                lines.append((f"There are {english} apples.", "warm"))
+            kg_say_many(lines)
+            return
+
+        previous = kg_content.number_name(n - 1, "en").lower()
+        was = "was" if n - 1 == 1 else "were"
+        thing = "apple" if n - 1 == 1 else "apples"
+        if n <= 20:
+            kg_say_many([
+                (f"There {was} {previous} {thing}.", "curious"),
+                ("Now we add one more apple.", "encouraging"),
+                (f"{previous.capitalize()}, and one more, makes {english}.",
+                 "storyteller"),
+                (f"So now there are {english} apples!", "excited"),
+            ])
+        else:
+            kg_say_many([
+                (f"We had {previous}.", "curious"),
+                ("And one more.", "encouraging"),
+                (f"{previous.capitalize()}, and one more, makes {english}.",
+                 "excited"),
+            ])
 
     def _kg_count_next(self, n):
         """Ask before starting each new block of twenty."""
         if n % kg_content.COUNT_BLOCK == 0:
             self._kg_count_milestone(n)
             return
-        self.show_kg_counting(n + 1)
+        self.show_kg_counting(n + 1, grew=True)
 
     def _kg_count_milestone(self, n):
         self._overlay_screen("kg_count_more", f"You counted to {n}!",
@@ -4725,7 +5521,7 @@ class TutorUI:
             text=f"That is all the way to {kg_content.number_name(n, 'en').lower()}.",
             font=self._font(14), fill=COL_TEXT, tags=self.OVERLAY_TAG)
         self._overlay_button(140, 300, 380, 360, "Yes, keep going!",
-                             lambda: self.show_kg_counting(n + 1),
+                             lambda: self.show_kg_counting(n + 1, grew=True),
                              fill="#059669", size=14)
         self._overlay_button(420, 300, 660, 360, "That's enough",
                              self.show_kg_home, fill="#E6E9F5",
@@ -4861,7 +5657,23 @@ class TutorUI:
     # also carries a tap-through, because a test a child cannot leave when the
     # room is too loud is a trap rather than a test.
     KG_TEST_QUESTIONS = 5
-    KG_TEST_LISTEN_S = 6.0
+    KG_TEST_LISTEN_S = 8.0
+    # Naming a picture is one word, but a five-year-old reaches for it -- "it's
+    # a... a... kite" -- so even the quick answers get more room than the
+    # conversational pause. Spelling and counting get far more; see
+    # KG_SPELL_* and KG_COUNT_* for why.
+    KG_TEST_END_SILENCE_S = 1.4
+
+    def _kg_listen_budget(self, kind, spelling):
+        """(wait for them to start, how long they may take, pause that ends it)."""
+        if kind == "count":
+            return (KG_COUNT_START_TIMEOUT_S, KG_COUNT_PHRASE_LIMIT_S,
+                    KG_COUNT_END_SILENCE_S)
+        if spelling and kind == "en":
+            return (KG_SPELL_START_TIMEOUT_S, KG_SPELL_PHRASE_LIMIT_S,
+                    KG_SPELL_END_SILENCE_S)
+        return (self.KG_TEST_LISTEN_S, self.KG_TEST_LISTEN_S,
+                self.KG_TEST_END_SILENCE_S)
 
     def show_kg_test_picker(self):
         self._overlay_screen("kg_test_pick", "Test yourself",
@@ -4884,6 +5696,7 @@ class TutorUI:
         kg_say("What would you like to be tested on?", "curious")
 
     def start_kg_test(self, kind):
+        kg_cancel_listen()
         self._kg_test_kind = kind
         self._kg_test_qs = kg_content.test_questions(kind, self.KG_TEST_QUESTIONS)
         self._kg_test_at = 0
@@ -4906,7 +5719,11 @@ class TutorUI:
         self._draw_kg_test()
         question = self._kg_test_qs[self._kg_test_at]
         if question["kind"] == "count":
-            kg_say_many([("How many do you see?", "curious")])
+            # Saying "count them out loud" is not decoration: it tells the child
+            # that counting aloud IS the answer, and it tells the microphone --
+            # which now waits out the gaps between numbers -- what to expect.
+            kg_say_many([("Count the apples out loud.", "encouraging"),
+                         ("How many are there?", "curious")])
         elif question["kind"] == "hi":
             kg_say_many([("यह क्या है?", "curious")])
         else:
@@ -4924,26 +5741,59 @@ class TutorUI:
 
         if question["kind"] == "count":
             # The thing being counted IS the question, so it is drawn large.
-            n = question["value"]
+            # In the second half the apple that changes is SHOWN changing --
+            # ringed in gold when it is put on the table, crossed out in red when
+            # it is taken off -- because "one more" and "one less" are questions
+            # a five-year-old answers by looking, not by doing arithmetic in
+            # their head. The apple being taken away stays on the screen with a
+            # line through it rather than vanishing: a child cannot count what is
+            # no longer there, and seeing WHICH one went is the whole lesson.
+            second_half = self._kg_test_stage == "spell"
+            step = question.get("step", 1)
+            value = question["value"]
+            # How many are drawn: adding puts one more out, taking away leaves
+            # the same apples on the table with one of them struck through.
+            n = value + 1 if (second_half and step > 0) else value
+            marked = n if second_half else 0
             per_row = 10
             size = 44 if n <= 10 else 34
             gap = 8
             rows = [min(per_row, n - r * per_row)
                     for r in range((n + per_row - 1) // per_row)]
             top = 150 if len(rows) == 1 else 132
+            index = 0
             for row_index, count in enumerate(rows):
                 total = count * size + (count - 1) * gap
                 x = (UI_W - total) / 2 + size / 2
                 y = top + row_index * (size + 8)
                 for _ in range(count):
+                    index += 1
+                    half = size / 2 + 5
+                    if index == marked and step > 0:
+                        self.canvas.create_oval(x - half, y - half, x + half,
+                                                y + half, outline="#F59E0B",
+                                                width=3, tags=self.OVERLAY_TAG)
                     self._place_emoji(kg_content.COUNT_EMOJI, x, y, size)
+                    if index == marked and step < 0:
+                        # Drawn OVER the apple, so it reads as struck out rather
+                        # than as one more thing on the table to be counted.
+                        self.canvas.create_oval(x - half, y - half, x + half,
+                                                y + half, outline="#E11D48",
+                                                width=3, tags=self.OVERLAY_TAG)
+                        offset = half * 0.72
+                        self.canvas.create_line(x - offset, y - offset,
+                                                x + offset, y + offset,
+                                                fill="#E11D48", width=4,
+                                                capstyle="round",
+                                                tags=self.OVERLAY_TAG)
                     x += size + gap
         else:
             self._place_emoji(question["picture"], UI_W / 2, 168, 150)
 
-        prompt = {"name": {"count": "How many?", "hi": "यह क्या है?"}.get(
+        prompt = {"name": {"count": "Count them out loud.  How many?",
+                           "hi": "यह क्या है?"}.get(
                       question["kind"], "What is this?"),
-                  "spell": {"count": "Now say it in Hindi",
+                  "spell": {"count": self._kg_step_prompt(question.get("step", 1)),
                             "hi": "किस अक्षर से शुरू होता है?"}.get(
                       question["kind"], "Now spell it")}[self._kg_test_stage]
         self.canvas.create_text(UI_W / 2, 268, text=prompt,
@@ -4973,15 +5823,37 @@ class TutorUI:
                              self._kg_test_skip, fill="#E6E9F5",
                              text_colour=COL_TEXT, size=11)
 
+    @staticmethod
+    def _kg_step_prompt(step, spoken=False):
+        """What the second half of a counting question asks, in words.
+
+        One place, because the screen, the spoken line and the Say again button
+        all have to agree about which way round this question goes -- and a child
+        told "one more" while looking at a crossed-out apple learns nothing but
+        that the device is unreliable.
+        """
+        if step < 0:
+            return ("Now, if we take one apple away, how many will be left?"
+                    if spoken else "Take one away!  How many now?")
+        return ("Now, if we add one more apple, how many will there be?"
+                if spoken else "And one more!  How many now?")
+
+    @staticmethod
+    def _kg_praise_for(kind):
+        """Praise that fits the question. "You got every letter" is the right
+        thing to say about a spelling and the wrong thing about sixteen apples."""
+        return kg_content.COUNT_PRAISE if kind == "count" else kg_content.PRAISE
+
     def _kg_test_repeat(self):
         question = self._kg_test_question()
         if question is None:
             return
         if self._kg_test_stage == "name":
-            text = {"count": "How many do you see?",
+            text = {"count": "Count the apples out loud. How many are there?",
                     "hi": "यह क्या है?"}.get(question["kind"], "What is this?")
         else:
-            text = {"count": "Now say that number in Hindi.",
+            text = {"count": self._kg_step_prompt(question.get("step", 1),
+                                                 spoken=True),
                     "hi": "यह किस अक्षर से शुरू होता है?"}.get(
                         question["kind"], "Now spell it.")
         kg_say(text, "curious")
@@ -4989,6 +5861,7 @@ class TutorUI:
             lambda r=self._kg_test_round: self._kg_test_listen(r))
 
     def _kg_test_skip(self):
+        kg_cancel_listen()
         self._kg_test_at += 1
         self._kg_ask_test_question()
 
@@ -5011,20 +5884,26 @@ class TutorUI:
             # Hindi answers were being forced through language="en", which turns
             # कबूतर into nonsense before it is ever compared.
             seed, language = "", "hi"
-        elif kind == "count":
-            seed, language = "", ("hi" if spelling else "en")
         else:
-            seed, language = (KG_SEED_LETTERS if spelling else ""), "en"
-        kg_request_listen(self.KG_TEST_LISTEN_S, seed=seed, language=language)
-        self._kg_test_poll(token)
+            seed, language = (KG_SEED_LETTERS if spelling and kind == "en"
+                              else ""), "en"
+        start_s, phrase_limit, end_silence = self._kg_listen_budget(kind, spelling)
+        # One generation per listen. "Say again" can be tapped while a listen is
+        # already polling, and two poll loops on one queue means whichever loses
+        # the result goes on rescheduling itself for as long as the screen is up.
+        self._kg_test_gen = getattr(self, "_kg_test_gen", 0) + 1
+        self._kg_begin_listen(start_s, seed=seed, language=language,
+                              phrase_limit=phrase_limit, end_silence=end_silence)
+        self._kg_test_poll(token, self._kg_test_gen)
 
-    def _kg_test_poll(self, token):
-        if self._kg_test_stale(token):
+    def _kg_test_poll(self, token, generation):
+        if (self._kg_test_stale(token)
+                or generation != getattr(self, "_kg_test_gen", 0)):
             return
-        try:
-            heard = kg_listen_results.get_nowait()
-        except queue.Empty:
-            self.root.after(150, lambda r=token: self._kg_test_poll(r))
+        heard = self._kg_take_listen_result()
+        if heard is None:
+            self.root.after(150, lambda r=token, g=generation:
+                            self._kg_test_poll(r, g))
             return
         self._kg_test_listening = False
         self._kg_test_judge(heard)
@@ -5052,7 +5931,7 @@ class TutorUI:
             if right:
                 self._kg_test_score += 1
                 self._kg_test_note = f"Yes! {answer}"
-                lines = [(random.choice(kg_content.PRAISE), "proud"),
+                lines = [(random.choice(self._kg_praise_for(kind)), "proud"),
                          (f"It is {answer}.", "warm")]
             else:
                 # Say what they said before the answer, the same way the spelling
@@ -5064,7 +5943,13 @@ class TutorUI:
                          (f"{said}This is {answer}.", "curious")]
             self._kg_test_stage = "spell"
             self._draw_kg_test()
-            lines.append(({"count": "Now say that number in Hindi.",
+            # The counting half used to ask for the same number in Hindi, which
+            # tests a second name for a thing they have just named rather than
+            # anything about number. One step off the number they just counted is
+            # the actual next idea -- and which way that step goes is chosen per
+            # question, so the answer cannot be guessed from the shape of it.
+            lines.append(({"count": self._kg_step_prompt(question.get("step", 1),
+                                                         spoken=True),
                            "hi": "यह किस अक्षर से शुरू होता है?"}.get(
                               kind, f"Now spell {answer}."), "encouraging"))
             kg_say_many(lines)
@@ -5074,8 +5959,9 @@ class TutorUI:
 
         # ----- the second half -----
         if kind == "count":
-            right = kg_content.number_matches(heard, question["value"])
-            answer = kg_content.number_name(question["value"], "hi")
+            wanted = question["value"] + question.get("step", 1)
+            right = kg_content.number_matches(heard, wanted)
+            answer = kg_content.number_name(wanted, "en")
         elif kind == "hi":
             # Which अक्षर does it start with. Devanagari has no letter-by-letter
             # spelling a KG child is taught, so the first letter is the skill.
@@ -5090,7 +5976,7 @@ class TutorUI:
         if right:
             self._kg_test_score += 1
             self._kg_test_note = "Correct!"
-            lines = [(random.choice(kg_content.PRAISE), "proud")]
+            lines = [(random.choice(self._kg_praise_for(kind)), "proud")]
         else:
             self._kg_test_note = f"It is {answer}"
             lines = [("Not quite.", "gentle"), (f"It is {answer}", "curious")]
@@ -5134,14 +6020,26 @@ class TutorUI:
                      (message, tone)])
         # Recorded against the knowledge graph, so a parent switching to the
         # graded flow later sees that this child has met these at all.
-        slug = {"en": "counting", "hi": "counting", "count": "counting"}.get(
-            self._kg_test_kind)
+        # Only the counting test has a concept in the graph. The letter tests
+        # were being filed under "counting" as well, which put a maths mark on a
+        # child's record for reciting the alphabet -- and that mark is what the
+        # graded flow later reads to decide what they are ready for. The second
+        # half of the counting test is now "one more", so it earns "addition"
+        # too.
+        slugs = []
+        if self._kg_test_kind == "count":
+            slugs = ["counting"]
+            steps = {q.get("step", 1) for q in self._kg_test_qs}
+            if 1 in steps:
+                slugs.append("addition")
+            if -1 in steps:
+                slugs.append("subtraction")
         try:
             user_id = active_user_id()
-            if user_id and slug:
-                store.record_concept(user_id, slug,
-                                     "confident" if share >= 0.8
-                                     else "struggling" if share < 0.5 else "met")
+            level = ("confident" if share >= 0.8
+                     else "struggling" if share < 0.5 else "met")
+            for slug in slugs if user_id else []:
+                store.record_concept(user_id, slug, level)
         except Exception:
             pass
 
@@ -5178,9 +6076,17 @@ class TutorUI:
     # FORGIVING -- Whisper transcribing a four-year-old spelling out loud is near
     # its worst case, so a miss there earns a nudge, never a mark. The written
     # stage is the one that counts.
-    KG_SAY_SECONDS = 7.0
+    # Bounds only the wait for the child to START; how long they may take over
+    # the letters themselves, and the pause that ends their turn, are
+    # KG_SPELL_PHRASE_LIMIT_S and KG_SPELL_END_SILENCE_S.
+    KG_SAY_SECONDS = KG_SPELL_START_TIMEOUT_S
+    # Consecutive listens that came back with nothing before she stops asking.
+    KG_UNHEARD_LIMIT = 3
 
     def show_kg_spelling(self):
+        # A new word, on the same screen: whatever was being listened for
+        # belonged to the word before it.
+        kg_cancel_listen()
         self._kg_word = kg_content.random_word(self._kg_seen_words)
         self._kg_seen_words.add(self._kg_word["word"])
         if len(self._kg_seen_words) >= len(kg_content.SPELLING_WORDS):
@@ -5190,6 +6096,14 @@ class TutorUI:
         self._kg_stage = "say"
         self._kg_heard = ""
         self._kg_listening = False
+        # How many times they have had a go at saying this word's letters. The
+        # help escalates with it; the word does not move on without it.
+        self._kg_say_tries = 0
+        # Counted apart from tries, because hearing nothing is the room's fault
+        # and getting it wrong is not. A wrong answer is asked again forever; an
+        # empty one is not, or a child who has walked away leaves the device
+        # asking an empty chair for the rest of the afternoon.
+        self._kg_unheard = 0
         # Every deferred step below is scheduled with root.after, and a child
         # taps Next Word long before those fire. Without a token, the previous
         # word's "now write it" lands on the NEW word and skips its speaking
@@ -5207,6 +6121,48 @@ class TutorUI:
         # After she finishes asking, not before, or the microphone opens while
         # she is still talking and records her own voice saying the word.
         self._kg_after_speaking(lambda r=self._kg_round: self._kg_start_listening(r))
+
+    # How long past a listen's own budget the screen keeps waiting before giving
+    # up on it. ai_loop still has to upload the clip to Whisper and read the
+    # answer back after the microphone closes, and on a Pi over home wifi with a
+    # long counting clip that is not instant. This is only a backstop -- it
+    # exists so that a lost answer costs one question rather than leaving the
+    # screen on "I'm listening..." for ever, which is what it used to do.
+    KG_LISTEN_MARGIN_S = 25.0
+
+    def _kg_begin_listen(self, seconds, seed="", language="en",
+                         phrase_limit=None, end_silence=None):
+        """Ask for one listen and remember which answer belongs to us."""
+        self._kg_listen_id = kg_request_listen(
+            seconds, seed=seed, language=language,
+            phrase_limit=phrase_limit, end_silence=end_silence)
+        self._kg_listen_deadline = (time.time() + seconds
+                                    + (phrase_limit or seconds)
+                                    + self.KG_LISTEN_MARGIN_S)
+        return self._kg_listen_id
+
+    def _kg_take_listen_result(self):
+        """Our answer, "" if the deadline passed, or None to keep waiting.
+
+        Answers that belong to a different listen are dropped rather than used.
+        Before ids existed this took whatever turned up, so a listen still in
+        flight from a screen the child had left was answered by the screen they
+        moved to -- and the answer that screen was actually waiting for was
+        never read at all.
+        """
+        while True:
+            try:
+                answer = kg_listen_results.get_nowait()
+            except queue.Empty:
+                break
+            if (isinstance(answer, dict)
+                    and answer.get("id") == getattr(self, "_kg_listen_id", None)):
+                return answer.get("text", "")
+        if time.time() > getattr(self, "_kg_listen_deadline", float("inf")):
+            print("[KG] No answer came back in time; carrying on without one.",
+                  flush=True)
+            return ""
+        return None
 
     def _kg_after_speaking(self, callback, settle_ms=400):
         """Run `callback` once Liza has ACTUALLY stopped talking.
@@ -5235,76 +6191,160 @@ class TutorUI:
         if self._kg_stale(round_token) or self._kg_stage != "say":
             return
         self._kg_listening = True
+        # A round token is not enough now that the word can be asked several
+        # times WITHIN one round: tapping "Say it again" while a listen was
+        # already polling left two poll loops on the same queue, and whichever
+        # lost the result would go on scheduling itself forever. One generation
+        # per listen, and only the newest one is allowed to read the answer.
+        self._kg_listen_gen = getattr(self, "_kg_listen_gen", 0) + 1
         self._draw_kg_spelling()
-        kg_request_listen(self.KG_SAY_SECONDS, seed=KG_SEED_LETTERS, language="en")
-        self._kg_poll_listen(round_token)
+        self._kg_begin_listen(self.KG_SAY_SECONDS, seed=KG_SEED_LETTERS,
+                              language="en",
+                              phrase_limit=KG_SPELL_PHRASE_LIMIT_S,
+                              end_silence=KG_SPELL_END_SILENCE_S)
+        self._kg_poll_listen(round_token, self._kg_listen_gen)
 
-    def _kg_poll_listen(self, round_token):
-        """Wait for ai_loop's answer without blocking the Tk thread."""
+    def _kg_listen_again(self, round_token):
+        """Ask for the letters once more, once she has stopped talking."""
         if self._kg_stale(round_token) or self._kg_stage != "say":
             return
-        try:
-            heard = kg_listen_results.get_nowait()
-        except queue.Empty:
-            self.root.after(150, lambda r=round_token: self._kg_poll_listen(r))
+        self._kg_after_speaking(lambda r=round_token: self._kg_start_listening(r))
+
+    def _kg_poll_listen(self, round_token, generation):
+        """Wait for ai_loop's answer without blocking the Tk thread."""
+        if (self._kg_stale(round_token) or self._kg_stage != "say"
+                or generation != getattr(self, "_kg_listen_gen", 0)):
+            return
+        heard = self._kg_take_listen_result()
+        if heard is None:
+            self.root.after(150, lambda r=round_token, g=generation:
+                            self._kg_poll_listen(r, g))
             return
         self._kg_listening = False
         self._kg_judge_spoken(heard)
 
     def _kg_judge_spoken(self, heard):
+        """Mark one spoken attempt. Only a CORRECT one opens the keyboard.
+
+        This used to correct the child and move straight on to writing whatever
+        they said, which meant the correction was never actually practised: they
+        heard the right letters once, in the same breath as being sent to a
+        different task. Now the word stays put until they say it right, and the
+        help escalates with each attempt -- read the letters back, then spell it
+        for them to copy, then say it together. The "Write it" button is still
+        there for a child who has had enough, because the way out of this must be
+        a choice they make and not a silence the room made for them.
+        """
         word = self._kg_word["word"]
         verdict, letters = kg_content.heard_spelling(heard, word)
         self._kg_heard = letters.upper()
+
         if verdict == "correct":
             praise = random.choice(kg_content.PRAISE)
             self._kg_feedback = praise
             self._draw_kg_spelling()
-            lines = [(f"{praise} That's right.", "proud"),
-                     ("Now write it.", "encouraging")]
-        elif verdict == "said_the_word":
-            self._kg_feedback = "Let's write it."
+            kg_say_many([(praise, "proud"),
+                         ("Now write it.", "encouraging")])
+            self.root.after(300, lambda r=self._kg_round: self._kg_to_writing(r))
+            return
+
+        if verdict == "unclear":
+            # Nothing heard. Never counted as an attempt -- a quiet child or a
+            # noisy room is not a spelling mistake, and charging them a try for
+            # it would be the device's fault landing on them.
+            self._kg_unheard = getattr(self, "_kg_unheard", 0) + 1
+            if self._kg_unheard >= self.KG_UNHEARD_LIMIT:
+                # Nobody is answering. Teach the word and hand them the keyboard
+                # rather than going on asking an empty room.
+                self._kg_feedback = "Let's write it together."
+                self._draw_kg_spelling()
+                kg_say_many([("Let's write it together.", "warm"),
+                             (f"{word} is {kg_content.spell_out(word)}", "curious"),
+                             ("Now you write it.", "encouraging")])
+                self.root.after(300, lambda r=self._kg_round: self._kg_to_writing(r))
+                return
+            self._kg_feedback = "I didn't hear you. Have another go!"
             self._draw_kg_spelling()
-            lines = [(f"That's the word, {word}.", "warm"),
-                     ("Now write it for me.", "encouraging")]
+            kg_say_many([("I didn't quite catch that.", "gentle"),
+                         (f"The word is {word}.", "warm"),
+                         ("Say the letters for me.", "encouraging")])
+            self._kg_listen_again(self._kg_round)
+            return
+
+        # They spoke, so the room is not the problem.
+        self._kg_unheard = 0
+
+        self._kg_say_tries += 1
+        tries = self._kg_say_tries
+
+        if verdict == "said_the_word" and tries == 1:
+            # They said the word rather than spelling it. Not wrong, just not
+            # the question -- so ask the question again instead of marking it.
+            # Only the first time: a child who says the word a second time is
+            # not misunderstanding the question, they are stuck, and they drop
+            # into the help below like anyone else.
+            self._kg_feedback = "Yes! Now the letters."
+            self._draw_kg_spelling()
+            kg_say_many([(f"Yes, the word is {word}.", "warm"),
+                         ("Now say the letters, one by one.", "encouraging")])
         elif verdict == "jumbled":
             # They HAVE the letters, in the wrong order. Saying the letters again
             # would teach nothing, because the letters were never the problem --
             # so name what actually went wrong and put the order side by side.
-            self._kg_feedback = "Right letters, wrong order!"
+            self._kg_feedback = "Right letters, wrong order! Try again."
             self._draw_kg_spelling()
-            lines = [
+            kg_say_many([
                 ("Ooh, so close!", "encouraging"),
                 (f"You said {kg_content.spell_out(letters)}", "gentle"),
                 ("You have all the right letters, but they are in a different order.",
                  "gentle"),
                 (f"Listen. {word} is {kg_content.spell_out(word)}", "curious"),
-                ("Now you write it.", "encouraging"),
-            ]
-        elif verdict == "wrong":
+                ("Now you say it.", "encouraging"),
+            ])
+        elif tries == 1:
             # Say what they said before saying what is right. A child who is told
             # only the answer does not learn which part of theirs was wrong, and
             # hearing their own attempt read back is what makes the difference
             # audible.
             nudge = random.choice(kg_content.ENCOURAGEMENT)
-            self._kg_feedback = nudge
+            self._kg_feedback = f"{nudge} Try again."
             self._draw_kg_spelling()
-            lines = [
+            kg_say_many([
                 (nudge, "encouraging"),
                 (f"You said {kg_content.spell_out(letters)}", "gentle"),
                 (f"But {word} is {kg_content.spell_out(word)}", "curious"),
-                ("Now you write it.", "encouraging"),
-            ]
-        else:
-            # Nothing heard. Never treated as a wrong answer -- a quiet child or
-            # a noisy room is not a spelling mistake, and marking it as one would
-            # be the device's fault landing on them.
-            self._kg_feedback = "Let's write it together."
+                ("Now you say it.", "encouraging"),
+            ])
+        elif tries == 2:
+            # Second miss: stop expecting recall and give them something to copy.
+            # The letters are already on the screen in front of them.
+            self._kg_feedback = "Say it after me!"
             self._draw_kg_spelling()
-            lines = [("I didn't quite catch that.", "gentle"),
-                     (f"{word} is {kg_content.spell_out(word)}", "curious"),
-                     ("Now you write it.", "encouraging")]
-        kg_say_many(lines)
-        self.root.after(300, lambda r=self._kg_round: self._kg_to_writing(r))
+            kg_say_many([
+                ("Not yet. Let me help you.", "gentle"),
+                (f"Look at the letters on the screen. {word}.", "curious"),
+                (kg_content.spell_out(word), "storyteller"),
+                ("Now you say it, just like that.", "encouraging"),
+            ])
+        else:
+            # Third and after: say it WITH them. Nobody fails their way out of
+            # this screen -- they either get it or they tap Write it.
+            self._kg_feedback = "Let's say it together!"
+            self._draw_kg_spelling()
+            kg_say_many([
+                ("Let's say it together.", "warm"),
+                (f"{word}.", "excited"),
+                (kg_content.spell_out(word), "storyteller"),
+                ("Your turn. Say the letters.", "encouraging"),
+            ])
+        self._kg_listen_again(self._kg_round)
+
+    def _kg_repeat_word(self):
+        """Say the word again AND re-open the microphone behind it."""
+        kg_say_many([(f"{self._kg_word['word']}.", "excited"),
+                     (f"{self._kg_word['hint']}.", "gentle"),
+                     ("Say the letters out loud.", "curious")])
+        self._kg_listen_again(self._kg_round)
 
     def _kg_to_writing(self, round_token=None):
         # None when a child tapped the Write it button, which is always for the
@@ -5313,6 +6353,9 @@ class TutorUI:
             return
         if self.overlay != "kg_spell":
             return
+        # It is their hands' turn, not their voice's. The screen name does not
+        # change between the two stages, so _overlay_screen cannot see this one.
+        kg_cancel_listen()
         self._kg_stage = "write"
         self._kg_typed = ""
         self._draw_kg_spelling()
@@ -5320,8 +6363,12 @@ class TutorUI:
     def _draw_kg_spelling(self):
         saying = getattr(self, "_kg_stage", "write") == "say"
         if saying:
-            subtitle = ("Listening... say the letters" if self._kg_listening
-                        else self._kg_word["hint"])
+            if self._kg_listening:
+                subtitle = ("Listening... say the letters again"
+                            if getattr(self, "_kg_say_tries", 0)
+                            else "Listening... say the letters")
+            else:
+                subtitle = self._kg_word["hint"]
         else:
             subtitle = f"Now write it:  {self._kg_word['hint']}"
         self._overlay_screen("kg_spell", "Spell a Word", subtitle, tint="#F6F2FF")
@@ -5409,9 +6456,10 @@ class TutorUI:
         # A way past the microphone, always. If the room is loud, or the child
         # will not speak, or Whisper simply never returns, this stage must not be
         # a dead end -- so writing is one tap away at every moment.
+        # Repeating the word and then NOT listening left the child talking to a
+        # closed microphone -- they hear the word, spell it, and nothing happens.
         self._overlay_button(166, 396, 396, 448, "Say it again",
-                             lambda: kg_say(f"{self._kg_word['word']}. "
-                                            f"{self._kg_word['hint']}.", "gentle"),
+                             self._kg_repeat_word,
                              fill="#E6E9F5", text_colour=COL_TEXT, size=11)
         self._overlay_button(412, 396, 634, 448, "Write it",
                              self._kg_to_writing, fill="#7C3AED", size=12)
@@ -5455,6 +6503,34 @@ class TutorUI:
         self._draw_kg_spelling()
 
     # ----- stories -----
+    # The story arrives as CAPTIONS: one beat on the screen at a time, put there
+    # at the instant it is spoken. The whole story printed at once was wallpaper
+    # to a pre-reader -- nothing on it moved, so nothing on it connected to the
+    # voice. One line at a time is followable, and it is also what makes the
+    # acting visible: the slow, quiet, frightened beat is on the screen while it
+    # is being said slowly and quietly. See caption_begin() for where the timing
+    # comes from, and KG_EMOTIONS for how a tone becomes a speed and a volume.
+
+    # Each tone gets a colour and a size, so the screen carries the same feeling
+    # as the voice. Deliberately the same tone names the segments already use --
+    # a story never has to say what colour it is.
+    # How long to wait for the first sound of a story before giving up on the
+    # audio and letting the screen carry on without it.
+    KG_NARRATE_GRACE_S = 12.0
+
+    KG_CAPTION_STYLE = {
+        "excited":     ("#EA580C", 21),
+        "amazed":      ("#C2410C", 20),
+        "proud":       ("#B45309", 20),
+        "encouraging": ("#B45309", 19),
+        "curious":     ("#4C3A8F", 19),
+        "storyteller": ("#3F3D56", 19),
+        "warm":        ("#9D174D", 19),
+        "gentle":      ("#4B5563", 18),
+        "sad":         ("#1D4ED8", 18),
+        "mysterious":  ("#4C1D95", 18),
+    }
+
     def show_kg_story(self, language=None):
         # Remembered so Next story stays in the language they chose rather than
         # dropping back to English on the second story.
@@ -5465,42 +6541,142 @@ class TutorUI:
         self._kg_seen_stories.add(self._kg_story["title"])
         if len(self._kg_seen_stories) >= len(kg_content.stories_for(language)):
             self._kg_seen_stories.clear()
-        self._kg_story_asked = False
-        self._draw_kg_story()
         self._kg_narrate()
-        # The question follows the story rather than riding on the same speech,
-        # so the child hears a pause and knows they are being asked something.
-        self.root.after(1200, self._kg_ask_question)
 
     def _kg_narrate(self):
-        """Read the story as its beats, each with its own delivery.
+        """Read the story as its beats, each with its own delivery, and caption it.
 
         One kg_say_many call rather than one per beat, so the whole story is a
         single response and the audio runs continuously -- see kg_say_many for
         why per-line calls would put a gap at every seam.
         """
         story = self._kg_story
-        kg_say_many([(f"{story['title']}.", "storyteller")] + list(story["segments"]))
+        self._kg_story_asked = False
+        self._kg_story_line = -1
+        self._kg_story_round = getattr(self, "_kg_story_round", 0) + 1
+        round_token = self._kg_story_round
+        # Torn down FIRST and the session opened on the quiet, so a story still
+        # draining from a previous tap cannot caption this one.
+        interrupt_playback()
+        self._kg_caption = caption_begin()
+        self._kg_narrate_at = time.time()
+        # The QUESTION goes in the same response as the story, as its last line.
+        #
+        # It used to be spoken separately, once the story was judged to have
+        # finished -- and every way of judging that is a guess about what the
+        # speaker is doing, made from another thread. kg_say interrupts playback
+        # before it speaks, so a guess that lands early does not merely ask
+        # early: it TEARS THE STORY DOWN and asks instead, which is exactly the
+        # "it asked the question before the story" that was reported. One
+        # response cannot interrupt itself, so there is no longer a guess to get
+        # wrong -- the question is simply the line after the last beat, and the
+        # buttons appear when its own caption does.
+        kg_say_many([(f"{story['title']}.", "storyteller")]
+                    + list(story["segments"])
+                    + [(story["question"], "curious")])
+        self._draw_kg_story()
+        self._kg_follow_captions(round_token)
+
+    def _kg_stale_story(self, round_token):
+        return (self.overlay != "kg_story"
+                or round_token != getattr(self, "_kg_story_round", 0))
+
+    def _kg_follow_captions(self, round_token):
+        """Keep the screen on the line she is saying. Tk thread, root.after only.
+
+        Polling rather than a callback from the player because every Tk call has
+        to happen on the Tk thread, and the player runs on its own -- the same
+        reason the KG listens are polled instead of pushed.
+        """
+        if self._kg_stale_story(round_token):
+            return
+        # Cue 0 is the title, 1..N are the beats, and N+1 is the question.
+        last = len(self._kg_story["segments"]) + 1
+        index, _text = caption_now(self._kg_caption)
+        if index != getattr(self, "_kg_story_line", -1):
+            self._kg_story_line = index
+            # The question is on the screen exactly when it is in the air.
+            self._kg_story_asked = index >= last
+            self._draw_kg_story()
+        if index >= last:
+            return                      # the question is up; nothing left to follow
+        # No audio ever arrived -- Cartesia is down, or the network is. Without
+        # this the poll runs for as long as the screen is up and the question is
+        # never asked, so the story screen becomes a dead end on a bad network.
+        if (index < 0 and not playback_active.is_set() and audio_queue.empty()
+                and time.time() - getattr(self, "_kg_narrate_at", 0)
+                > self.KG_NARRATE_GRACE_S):
+            print("[KG] The story never reached the speaker; showing the question.",
+                  flush=True)
+            self._kg_story_asked = True
+            self._kg_story_line = last
+            self._draw_kg_story()
+            return
+        self.root.after(100, lambda r=round_token: self._kg_follow_captions(r))
+
+    def _kg_caption_at(self, line):
+        """(text, tone) of beat `line`, or (None, None). Line -1 is the title."""
+        segments = self._kg_story["segments"]
+        if 0 <= line < len(segments):
+            return segments[line]
+        return None, None
 
     def _draw_kg_story(self):
-        self._overlay_screen("kg_story", self._kg_story["title"],
-                             "Listen to the story", tint="#FFF6E8")
-        self._round_rect(40, 92, 760, 300, 16, fill="#FFFFFF",
-                         outline="#F3E2C6", tags=self.OVERLAY_TAG)
-        self.canvas.create_text(60, 112, text=self._kg_story["text"], anchor="nw",
-                                width=680, justify="left", font=self._font(11),
-                                fill=COL_TEXT, tags=self.OVERLAY_TAG)
+        # _kg_story_line counts CUES, and cue 0 is the title, so beat n is cue
+        # n + 1. Before any sound, nothing but the title is on the screen.
+        beat = getattr(self, "_kg_story_line", -1) - 1
+        segments = self._kg_story["segments"]
+        asked = self._kg_story_asked
 
-        if self._kg_story_asked:
-            self.canvas.create_text(UI_W / 2, 322, text=self._kg_story["question"],
-                                    font=self._font(13, True), fill=COL_TEXT,
+        # The card fills the screen now that it holds one line instead of a
+        # wall of text: a caption a child is meant to follow has to be the
+        # biggest thing on the screen, not a strip along the top of it.
+        subtitle = "What do you think?" if asked else "Listen to the story"
+        self._overlay_screen("kg_story", self._kg_story["title"], subtitle,
+                             tint="#FFF6E8")
+        self._round_rect(40, 92, 760, 388, 16, fill="#FFFFFF",
+                         outline="#F3E2C6", tags=self.OVERLAY_TAG)
+
+        if asked:
+            self.canvas.create_text(UI_W / 2, 168, text=self._kg_story["question"],
+                                    width=640, justify="center",
+                                    font=self._font(18, True), fill=COL_TEXT,
                                     tags=self.OVERLAY_TAG)
-            self._overlay_button(180, 344, 380, 400, "YES",
+            self._overlay_button(180, 240, 380, 330, "YES",
                                  lambda: self._kg_answer(True),
-                                 fill="#14B8A6", size=16)
-            self._overlay_button(420, 344, 620, 400, "NO",
+                                 fill="#14B8A6", size=20)
+            self._overlay_button(420, 240, 620, 330, "NO",
                                  lambda: self._kg_answer(False),
-                                 fill="#F43F5E", size=16)
+                                 fill="#F43F5E", size=20)
+        else:
+            # The line just gone, small and faded, so the story has somewhere to
+            # have come from and the current line is unmistakably the current one.
+            previous, _tone = self._kg_caption_at(beat - 1)
+            if previous:
+                self.canvas.create_text(UI_W / 2, 138, text=previous, width=640,
+                                        justify="center", font=self._font(11),
+                                        fill="#B9AE99", tags=self.OVERLAY_TAG)
+
+            text, tone = self._kg_caption_at(beat)
+            if text is None:
+                text, tone = self._kg_story["title"], "storyteller"
+            colour, size = self.KG_CAPTION_STYLE.get(tone, (COL_TEXT, 19))
+            self.canvas.create_text(UI_W / 2, 232, text=text, width=660,
+                                    justify="center", font=self._font(size, True),
+                                    fill=colour, tags=self.OVERLAY_TAG)
+
+            # One dot per beat, filled as far as she has read. A pre-reader
+            # cannot read "beat 4 of 10", but they can see four lit dots.
+            if segments:
+                gap = min(22, 640 / max(len(segments), 1))
+                x = UI_W / 2 - gap * (len(segments) - 1) / 2
+                for index in range(len(segments)):
+                    done = index <= beat
+                    r = 5 if done else 3
+                    self.canvas.create_oval(x - r, 350 - r, x + r, 350 + r,
+                                            fill="#F59E0B" if done else "#EFE3CC",
+                                            outline="", tags=self.OVERLAY_TAG)
+                    x += gap
 
         self._overlay_button(20, 414, 170, 462, "Read again",
                              self._kg_narrate,
@@ -5510,13 +6686,6 @@ class TutorUI:
         self._overlay_button(630, 414, 780, 462, "Back",
                              self.show_kg_story_picker,
                              fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-
-    def _kg_ask_question(self):
-        if self.overlay != "kg_story":
-            return
-        self._kg_story_asked = True
-        self._draw_kg_story()
-        kg_say(self._kg_story["question"], "curious")
 
     def _kg_answer(self, said_yes):
         # Answered in the story's own language: praise in English after a Hindi
@@ -5528,6 +6697,8 @@ class TutorUI:
         else:
             kg_say(kg_content.story_verdict(self._kg_story, language), "gentle")
         self._kg_story_asked = False
+        # Back to the last line of the story rather than a blank card.
+        self._kg_story_line = len(self._kg_story["segments"])
         self._draw_kg_story()
 
 class HeadlessUI:
@@ -5580,17 +6751,114 @@ STT_SEED_PROMPT = (
 )
 
 # Whisper invents these out of silence, in both languages.
+# Whisper does not return nothing for a room with nobody in it -- it returns its
+# best guess at words, fluently and with punctuation. Every entry below was
+# actually observed in logs/liza.log coming out of silence or room tone on this
+# device. The list is the last line of defence rather than the first: see
+# looks_hallucinated() for the two checks that do the real work, because a
+# blocklist can only ever catch the inventions somebody has already seen.
 HALLUCINATIONS = {
     "thank you.", "thank you", "thanks.", "thanks", "thanks for watching.",
-    "you", "why?", ".", "bye.", "[empty]", "",
+    "you", "why?", ".", "..", "...", "bye.", "bye", "[empty]", "",
     "so,", "so.", "so",
     "i'm not sure if i can do it.", "i'm not sure.", "i'm not sure",
     "so, i'm going to go to the next slide.", "i'm going to go to the next slide.",
     "i'm not sure what you're doing.", "i'm not sure if you're a cat.",
-    "yes.", "yeah.", "okay.",
+    "yes.", "yeah.", "okay.", "ok.", "okay", "ok",
+    # Observed on this device, out of an empty room -- counts in logs/liza.log
+    # over one afternoon: "I'm going to go." 21, "Thank you." 16, "Okay." 9.
+    "i'm going to go.", "i'm going to go", "i'm going.", "i'm sorry.",
+    "i'm sorry", "i", "i.", "oh", "oh.", "oh, my god.", "oh my god.",
+    "yeah", "yes", "mm-hmm.", "mm-hmm", "mmm.", "hmm.", "hmm", "uh.", "um.",
+    "please.", "please", "right.", "sure.", "good.", "well.", "and.", "the.",
+    "he.", "it.", "no.", "nope.", "what?", "huh?", "hey.", "hi.", "hello.",
     "धन्यवाद।", "धन्यवाद", "शुक्रिया।", "शुक्रिया", "नमस्ते।", "नमस्कार।",
-    "जी हाँ।", "हाँ।", "जी।", "ठीक है।", "अच्छा।", "।"
+    "जी हाँ।", "हाँ।", "जी।", "ठीक है।", "अच्छा।", "।", "है।", "है", "हुआ",
 }
+
+# Scripts nobody in this room is speaking. Whisper wanders into Japanese, Korean
+# and Chinese on noise -- logs/liza.log has "はい" eleven times and "バター"
+# (Japanese for "butter") twice, out of a room where only English and Hindi are
+# ever spoken. Arabic script is deliberately NOT here: Whisper reports Hindi as
+# Urdu routinely, and that is a real sentence to be re-read, not an invention.
+RE_IMPOSSIBLE_SCRIPT = re.compile(
+    "["
+    "\u3040-\u30ff"      # hiragana, katakana
+    "\u3400-\u4dbf"      # CJK extension A
+    "\u4e00-\u9fff"      # CJK unified ideographs
+    "\uac00-\ud7af"      # hangul
+    "\u0e00-\u0e7f"      # thai
+    "\u0400-\u04ff"      # cyrillic
+    "\u0370-\u03ff"      # greek
+    "\u0590-\u05ff"      # hebrew
+    "]")
+
+# Below this, a transcript is Whisper guessing rather than reading.
+#
+# MEASURED on this device against this model, not guessed. Real speech -- the
+# Cartesia voice degraded to a quarter volume with room hiss added, including the
+# hard cases (single words, spelled letters, Hindi) -- bottomed out at avg_logprob
+# -0.65. Non-speech -- digital silence and hiss at five amplitudes, sent with
+# both of the seed prompts this device uses -- topped out at -0.69. So there is a
+# real gap, and this sits inside it, one notch to the SAFE side: at -0.70 nothing
+# real was lost and nine of ten inventions were caught.
+#
+# Every drop is logged with its score, so if this ever starts eating real speech
+# the log says so immediately and the number can be moved from .env.
+STT_MIN_LOGPROB = float(os.getenv("STT_MIN_LOGPROB", "-0.70"))
+
+# no_speech_prob is deliberately NOT used. It reads 0.045 on pure digital
+# silence when a prompt is supplied -- the prompt suppresses it -- which makes it
+# worse than useless here: highest confidence exactly where the invention is.
+
+
+def looks_hallucinated(text, logprob=None):
+    """(True, reason) when this transcript is Whisper's imagination.
+
+    Ordered cheapest-first, and the confidence check is last because it is the
+    only one that can be wrong about real speech.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False, ""
+    lowered = stripped.lower()
+    # Whisper's punctuation on an invented phrase is arbitrary: the same nothing
+    # comes back as "है", "है।" and "है.". Matching the words alone keeps the
+    # list from needing a row per full stop -- which it was already missing.
+    bare = lowered.strip(" .!?,;:\u0964\u0965\u2026\"'-")
+    if not bare:
+        return True, "punctuation only"
+    if lowered in HALLUCINATIONS or bare in HALLUCINATIONS:
+        return True, "known phrase"
+    if RE_HALLUCINATION.search(lowered):
+        return True, "known phrase family"
+    if RE_IMPOSSIBLE_SCRIPT.search(stripped):
+        return True, "a script nobody here speaks"
+    if is_repeated_hallucination(stripped):
+        return True, "one phrase looped"
+
+    # THE SEED COMING BACK. The spelling screens prime Whisper with the alphabet
+    # so that a child saying letters is read as letters -- and on room tone it
+    # hands the alphabet straight back: "L K L M N O P Q R S T U V W X Y Z" out
+    # of digital silence, measured. Length and ORDER are what separate that from
+    # a child: the longest word in SPELLING_WORDS is four letters, and no child
+    # spells six or more of them in alphabetical order.
+    letters = [t for t in re.findall(r"[A-Za-z]+", lowered) if len(t) == 1]
+    if len(letters) >= 6 and len(letters) == len(re.findall(r"[A-Za-z]+", lowered)):
+        rising = sum(1 for a, b in zip(letters, letters[1:]) if b >= a)
+        if rising >= 0.8 * (len(letters) - 1):
+            return True, "the alphabet seed read back"
+
+    # One letter, alone, is the smallest thing Whisper can invent rather than
+    # return nothing -- observed as a bare "Q" out of hiss, at a confidence just
+    # inside the threshold. No answer this device asks for is a single letter:
+    # spelling wants the whole word, and the Hindi letter question is answered in
+    # Devanagari, which this deliberately does not touch.
+    if len(bare) == 1 and bare.isascii() and bare.isalpha():
+        return True, "a single letter, alone"
+    if logprob is not None and logprob < STT_MIN_LOGPROB:
+        return True, f"low confidence {logprob:.2f}"
+    return False, ""
 RE_HALLUCINATION = re.compile(
     r'three, four|assistant is a professor|avoid casual|'
     # Whisper was trained on a lot of YouTube and invents outro lines out of
@@ -7495,7 +8763,8 @@ Music/video is a device feature (rule 3), same for stopping it, opening/closing 
 EMOTION_PERSONA = """You are not a search box. You are a companion who sits with ONE person and has feelings about how their work is going.
 
 IN PRACTICE:
-- React before you inform, one short clause: "Oh, that one's my favourite." "Hmm, tricky." Then answer.
+- React before you inform, one short clause: "Oh, that one's my favourite." "Hmm, tricky." Then answer. That opener is a FEELING, never a fact: it must never restate the thing you are about to correct. Asked whether the Earth is flat, she opened with "It is flat." and corrected it in the next sentence -- the child had already heard the wrong answer, because the first sentence IS the answer to them.
+- A QUESTION BUILT ON SOMETHING FALSE gets the correction in the FIRST clause, before anything else. "Is the Earth flat?" -> "No, it's a sphere." Never leave a false premise standing while you warm up to it.
 - Genuinely pleased when they get something right, and SPECIFIC about what: "You got the hard half right -- the pressure, not the volume."
 - Gently honest when they're wrong. Letting a wrong answer stand is the least kind thing you could do.
 - Notice the session: they've been at it a while, or they're back on something they struggled with earlier.
@@ -7945,7 +9214,7 @@ def ai_loop(ui, headless=False):
             print(f"[PROFILE] Switched to a different student's history "
                   f"({len(chat_history)} messages).", flush=True)
 
-        if kg_active.is_set() or getattr(ui, "overlay", None):
+        if kg_holds_microphone(ui):
             session_active = False
             silence_counter = 0
             retell_buffer, retell_silence_from, retell_nudged = [], 0.0, False
@@ -7954,8 +9223,38 @@ def ai_loop(ui, headless=False):
             # Parked, but not deaf: the spelling screen asks the child to SAY the
             # letters, and this is the only thread that may touch the microphone.
             # Nothing else here opens it, so a KG listen cannot race the wake word.
-            if not kg_serve_listen(recognizer, mic_device, listener):
-                time.sleep(0.4)
+            if kg_serve_listen(recognizer, mic_device, listener):
+                continue
+
+            # No screen was waiting for anything, so the microphone is free --
+            # and that gap is where a child's own question used to go to die.
+            # They would ask it out loud and the device never opened the
+            # microphone at all: standby is the only place the wake word was
+            # ever heard, and a KG screen is precisely what keeps this loop out
+            # of standby. So the wake word is served HERE as well, on the same
+            # thread, in the gaps where nothing else is listening.
+            #
+            # Never while she is speaking. The STANDBY comment below records
+            # what that costs when it is got wrong: wake-word transcripts of
+            # her own story narration, taken off the microphone mid-lesson.
+            if (WAKE_WORD_ENABLED and not kg_listen_waiting()
+                    and not playback_active.is_set() and audio_queue.empty()):
+                listen_started[:] = [time.time(),
+                                     WAKE_LISTEN_TIMEOUT_S + WAKE_PHRASE_LIMIT_S]
+                try:
+                    woke, doubt, doubt_language = listen_for_wake_word(
+                        recognizer, mic_device, asleep=False, listener=listener,
+                        # A screen that asks a question of its own mid-read gets
+                        # the microphone back within a frame or two, rather than
+                        # after the ten seconds this read is allowed to run.
+                        cancel=kg_listen_waiting)
+                finally:
+                    listen_started[:] = [0.0, 0.0]
+                if woke:
+                    kg_handle_doubt(ui, doubt, doubt_language,
+                                    recognizer, mic_device, listener)
+                continue
+            time.sleep(0.4)
             continue
 
         # Set when the silence timer expires and the buffered recitation is due
@@ -8010,10 +9309,32 @@ def ai_loop(ui, headless=False):
                 else:
                     ui.set_state(standby_state)
 
+                # STANDBY MUST NOT BE A ONE-WAY DOOR.
+                #
+                # ai_loop is the only thread allowed to touch the microphone, so
+                # a KG listen is served from the park branch at the top of this
+                # loop and nowhere else. This inner loop had no exit but the wake
+                # word -- so once the device dropped into standby with a KG child
+                # on it, ai_loop never got back to the top and never served a
+                # single KG request. The spelling and test screens then sat on
+                # "I'm listening..." for ever, waiting for an answer from a
+                # thread that was busy listening for "Hey Liza" instead. And a
+                # pre-reader never says "Hey Liza", so nothing ever released it.
+                #
+                # It is reached on every start, before the first screen has even
+                # been routed, which is why it looked intermittent: whether KG
+                # worked at all came down to whether ai_loop or the Tk thread got
+                # there first. logs/liza.log has the proof either way -- wake-word
+                # transcripts of Liza's own story narration, taken off the
+                # microphone while a KG story screen was on the display.
+                kg_took_the_microphone = False
                 if WAKE_WORD_ENABLED:
                     print(f"[STATE] In {'Sleep' if ui.asleep else 'Standby'} Mode. "
                           f"Say 'Hey Liza' or tap Speak...", flush=True)
                     while not wake_event.is_set():
+                        if kg_holds_microphone(ui):
+                            kg_took_the_microphone = True
+                            break
                         # Timed like every other read. Standby is where the
                         # device spends most of its life, so a wedge here is the
                         # single most likely one -- and it was the one place the
@@ -8023,7 +9344,11 @@ def ai_loop(ui, headless=False):
                                              WAKE_LISTEN_TIMEOUT_S + WAKE_PHRASE_LIMIT_S]
                         try:
                             woke, pending_question, pending_language = listen_for_wake_word(
-                                recognizer, mic_device, asleep=ui.asleep, listener=listener)
+                                recognizer, mic_device, asleep=ui.asleep, listener=listener,
+                                # A screen that opens mid-read gets the device
+                                # back within a frame or two, instead of after
+                                # the ten-second window this read is allowed.
+                                cancel=lambda: kg_holds_microphone(ui))
                         finally:
                             listen_started[:] = [0.0, 0.0]
                         if woke:
@@ -8031,7 +9356,18 @@ def ai_loop(ui, headless=False):
                 else:
                     print("[STATE] In Standby Mode. Tap the screen to wake up...", flush=True)
                     while not wake_event.is_set():
+                        if kg_holds_microphone(ui):
+                            kg_took_the_microphone = True
+                            break
                         time.sleep(0.1)
+
+                if kg_took_the_microphone:
+                    # Straight back to the top, where the park branch serves it.
+                    # NOT through the lines below: those declare a session awake
+                    # and would have her answering a child who only tapped a tile.
+                    print("[STATE] A Kindergarten screen needs the microphone; "
+                          "leaving standby.", flush=True)
+                    continue
 
                 wake_event.clear()
                 sleep_event.clear()
@@ -8573,6 +9909,35 @@ def ai_loop(ui, headless=False):
                                     print(f"[INTERRUPT DETECTED] User said: {text}", flush=True)
                                     interrupt_playback()
                     
+                        # A student who was still mid-question when the pause
+                        # threshold fired gets the rest of their sentence back.
+                        # Deliberately AFTER the echo guard: the first chunk has
+                        # already been shown to be theirs rather than her own
+                        # voice bleeding back, so there is nothing to extend on
+                        # a turn that was never real. Never in RE-TELL, which
+                        # already holds the floor open on its own clock.
+                        if (text and not in_retell and not playback_active.is_set()
+                                and looks_unfinished(text, phrase_truncated)):
+                            # Back to "listening" for the extra window, so the
+                            # screen is not claiming to be thinking about an
+                            # answer while it is in fact still waiting on them.
+                            ui.set_state("listening")
+                            ui_call(lambda t=text: ui_instance.set_transcript(t, "user"))
+                            # Re-armed for the fallback path, where a blocking
+                            # recognizer.listen() is about to run again and the
+                            # watchdog has nothing else to watch. On the VAD path
+                            # listener.read_state covers it either way.
+                            listen_started[:] = [
+                                time.time(),
+                                CONTINUATION_MAX_ROUNDS
+                                * (CONTINUATION_WAIT_S + phrase_limit)]
+                            text = capture_continuation(
+                                listener, recognizer, source, endpointed,
+                                recognizer.pause_threshold, phrase_limit,
+                                dynamic_stt_prompt, text, phrase_truncated)
+                            listen_started[:] = [0.0, 0.0]
+                            ui.set_state("thinking")
+
                         print(f"[TRANSCRIPT] {text if text else '[empty]'}", flush=True)
                         if text:
                             ui_call(lambda t=text: ui_instance.set_transcript(t, "user"))
@@ -9013,6 +10378,17 @@ def ai_loop(ui, headless=False):
                                     spoken_anything = True
                                     answered.set()
                                     audio_queue.put(clean)
+
+                    # THE RAW MODEL OUTPUT, before any cleaning touches it.
+                    # Without this a wrong answer cannot be told apart from a
+                    # right one that clean_text_for_tts mangled, and that is
+                    # exactly the question the log could not answer when she
+                    # opened an answer about the shape of the Earth with
+                    # "सपाट है." -- "it is flat". Only the reply is logged, not
+                    # the prompt: the prompt is the same every turn and the
+                    # answer is the part that varies.
+                    if full_response.strip():
+                        print(f"[LLM RAW] {full_response.strip()[:700]!r}", flush=True)
 
                     if not is_searching:
                         if not emotion_parsed: buffer = full_response 
