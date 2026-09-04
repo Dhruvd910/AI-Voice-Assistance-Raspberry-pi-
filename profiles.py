@@ -344,3 +344,17 @@ def touch_active(path=None):
                 save_store(data, path)
                 return profile
     return None
+
+
+def active_profile():
+    """The profile in use, or None. Never raises -- the UI draws either way.
+
+    Lives here rather than in the assistant because the screen, the action tags
+    and the Kindergarten flow all ask who is using the device, and none of them
+    should have to import the assistant to find out."""
+    try:
+        return get_active_profile()
+    except Exception as exc:
+        print(f"[PROFILE] Could not read the profile store: {exc}", flush=True)
+        return None
+

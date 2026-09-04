@@ -7,8 +7,8 @@ names crossed back the other way, and exactly one piece of shared mutable state
 (pending_mode_intro).
 
 HOW THIS TALKS TO THE ASSISTANT
-    `import assistant` binds the MODULE, and every call through it -- assistant.kg_say,
-    assistant.active_profile -- happens when a button is tapped, never while this
+    `import assistant` binds the MODULE, and every call through it -- kg.kg_say,
+    profiles.active_profile -- happens when a button is tapped, never while this
     file is being imported. That is what makes the cycle safe: assistant.py imports
     this file at its top, and by the time any of these run, both halves are
     fully built. Do not change any of those to `from assistant import ...`; that
@@ -40,6 +40,7 @@ from state import (audio_queue, kg_listen_results, media_active,
                    playback_active, sleep_event, stop_playback_event,
                    wake_event)
 import kg_content
+import media
 import profiles
 import store
 from config import (KG_COUNT_END_SILENCE_S, KG_COUNT_PHRASE_LIMIT_S,
@@ -1144,7 +1145,7 @@ class TutorUI:
 
     def toggle_media_pause(self, event=None):
         if media_active.is_set():
-            assistant.mpv_command(["cycle", "pause"])
+            media.mpv_command(["cycle", "pause"])
         return "break"
 
     # ---------- emotion ----------
@@ -1491,7 +1492,7 @@ class TutorUI:
         # touch the microphone -- inside that listen for another forty seconds,
         # and the next screen's question went unheard for the whole of it.
         if self.overlay != name:
-            assistant.kg_cancel_listen()
+            kg.kg_cancel_listen()
         self._clear_overlay()
         self.overlay = name
         backing = self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill=tint,
@@ -1582,7 +1583,7 @@ class TutorUI:
                              lambda e: self.show_profile_picker())
 
     def refresh_profile_chip(self):
-        profile = assistant.active_profile()
+        profile = profiles.active_profile()
         if profile:
             label = f"{profile.get('name', 'Student')} - Class {profile.get('class')}"
             colour = COL_TEXT
@@ -1616,7 +1617,7 @@ class TutorUI:
                                  lambda p=profile: self.choose_profile(p),
                                  fill=tint, text_colour=accent, size=13,
                                  sub=f"Class {klass}")
-        active = assistant.active_profile()
+        active = profiles.active_profile()
         if active:
             # Two buttons once somebody is set up: add a NEW child, or correct
             # the one already in use. Side by side rather than one centred, and
@@ -1624,7 +1625,7 @@ class TutorUI:
             self._overlay_button(130, 396, 410, 452, "+  Add a student",
                                  self.show_profile_setup, fill=COL_INDIGO, size=13)
             self._overlay_button(426, 396, 670, 452, "Edit this student",
-                                 lambda: self.show_profile_setup(assistant.active_profile()),
+                                 lambda: self.show_profile_setup(profiles.active_profile()),
                                  fill="#E6E9F5", text_colour=COL_TEXT, size=12,
                                  sub=self._ellipsize(
                                      f"{active.get('name', 'Student')} · "
@@ -1656,7 +1657,7 @@ class TutorUI:
         live, the one place the KG routing exists to keep them out of. Routing on
         the active profile makes Close mean "back", not "leave KG".
         """
-        self.route_for_profile(assistant.active_profile())
+        self.route_for_profile(profiles.active_profile())
 
     # ---------- creating and editing a profile ----------
     def show_profile_setup(self, profile=None):
@@ -1806,7 +1807,7 @@ class TutorUI:
         if not remaining:
             # Nobody left: the device is back to its first-run state, so it asks
             # who is using it rather than dropping into a nameless session.
-            assistant.set_kg_active(False)
+            kg.set_kg_active(False)
             self.show_profile_setup()
             return
         # delete_profile has already moved the active pointer to a survivor;
@@ -1869,16 +1870,16 @@ class TutorUI:
         """KG goes to the spelling and story screens; everyone else to the
         normal flow. The one place that decision is made."""
         if profile and profiles.is_kindergarten(profile.get("class")):
-            assistant.set_kg_active(True)
+            kg.set_kg_active(True)
             self.show_kg_home(greet=True)
         else:
-            assistant.set_kg_active(False)
+            kg.set_kg_active(False)
             self._clear_overlay()
 
     # ---------- Kindergarten ----------
     def show_kg_home(self, greet=False):
-        assistant.set_kg_active(True)
-        profile = assistant.active_profile() or {}
+        kg.set_kg_active(True)
+        profile = profiles.active_profile() or {}
         name = profile.get("name", "")
         self._overlay_screen("kg_home", f"Hello {name}!" if name else "Hello!",
                              "What would you like to do?", tint="#FFF9F0")
@@ -1922,7 +1923,7 @@ class TutorUI:
                              self.show_profile_picker, fill="#E6E9F5",
                              text_colour=COL_TEXT, size=11)
         if greet and name:
-            assistant.kg_say(f"Hello {name}! What would you like to do today?", "warm")
+            kg.kg_say(f"Hello {name}! What would you like to do today?", "warm")
 
     def _kg_tile_glyph(self, kind, cx, cy, tag):
         """The picture on a home tile. Drawn under the label, same tag, so
@@ -2010,9 +2011,9 @@ class TutorUI:
 
     def _kg_say_letter(self, letter, word, language):
         if language == "hi":
-            assistant.kg_say_many([(f"{letter}", "curious"), (f"{letter} से {word}।", "warm")])
+            kg.kg_say_many([(f"{letter}", "curious"), (f"{letter} से {word}।", "warm")])
         else:
-            assistant.kg_say_many([(f"{letter}.", "curious"),
+            kg.kg_say_many([(f"{letter}.", "curious"),
                          (f"{letter} for {word}.", "warm")])
 
     # ----- counting -----
@@ -2118,7 +2119,7 @@ class TutorUI:
         english = kg_content.number_name(n, "en").lower()
 
         if n == 1:
-            assistant.kg_say_many([("One.", "excited"),
+            kg.kg_say_many([("One.", "excited"),
                          ("Here is one apple.", "warm"),
                          ("Just one!", "curious")])
             return
@@ -2127,14 +2128,14 @@ class TutorUI:
             lines = [(f"{english.capitalize()}.", "excited")]
             if n <= 20:
                 lines.append((f"There are {english} apples.", "warm"))
-            assistant.kg_say_many(lines)
+            kg.kg_say_many(lines)
             return
 
         previous = kg_content.number_name(n - 1, "en").lower()
         was = "was" if n - 1 == 1 else "were"
         thing = "apple" if n - 1 == 1 else "apples"
         if n <= 20:
-            assistant.kg_say_many([
+            kg.kg_say_many([
                 (f"There {was} {previous} {thing}.", "curious"),
                 ("Now we add one more apple.", "encouraging"),
                 (f"{previous.capitalize()}, and one more, makes {english}.",
@@ -2142,7 +2143,7 @@ class TutorUI:
                 (f"So now there are {english} apples!", "excited"),
             ])
         else:
-            assistant.kg_say_many([
+            kg.kg_say_many([
                 (f"We had {previous}.", "curious"),
                 ("And one more.", "encouraging"),
                 (f"{previous.capitalize()}, and one more, makes {english}.",
@@ -2172,7 +2173,7 @@ class TutorUI:
         self._overlay_button(420, 300, 660, 360, "That's enough",
                              self.show_kg_home, fill="#E6E9F5",
                              text_colour=COL_TEXT, size=13)
-        assistant.kg_say_many([(f"Wow! You counted all the way to {n}!", "excited"),
+        kg.kg_say_many([(f"Wow! You counted all the way to {n}!", "excited"),
                      ("Shall we keep going?", "curious")])
 
     # ----- put the letters in A-Z order -----
@@ -2195,7 +2196,7 @@ class TutorUI:
         self._kg_order_picked = []
         self._kg_order_done = False
         self._draw_kg_order()
-        assistant.kg_say_many([("Put the letters in order!", "encouraging"),
+        kg.kg_say_many([("Put the letters in order!", "encouraging"),
                      ("Tap them from A to Z.", "curious")])
 
     def _draw_kg_order(self):
@@ -2252,7 +2253,7 @@ class TutorUI:
             # Wrong one. Say which letter actually comes next rather than only
             # that this one is wrong -- "not that one" tells a child nothing
             # about the alphabet.
-            assistant.kg_say_many([("Not that one.", "gentle"),
+            kg.kg_say_many([("Not that one.", "gentle"),
                          (f"After {self._kg_order_picked[-1]}, comes {expected}."
                           if self._kg_order_picked
                           else f"{expected} comes first.", "curious")])
@@ -2260,11 +2261,11 @@ class TutorUI:
         self._kg_order_picked.append(letter)
         if len(self._kg_order_picked) < len(self._kg_order_target):
             self._draw_kg_order()
-            assistant.kg_say(letter, "curious")
+            kg.kg_say(letter, "curious")
             return
         self._kg_order_done = True
         self._draw_kg_order()
-        assistant.kg_say_many([(random.choice(kg_content.PRAISE), "proud"),
+        kg.kg_say_many([(random.choice(kg_content.PRAISE), "proud"),
                      (" ".join(self._kg_order_target) + ".", "excited")])
         self.root.after(4500, self._kg_order_next_if_still_here)
 
@@ -2290,7 +2291,7 @@ class TutorUI:
         self._kg_book_glyph(580, 196, hindi)
         self._overlay_button(300, 396, 500, 448, "Back", self.show_kg_home,
                              fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        assistant.kg_say_many([("Would you like a story in English,", "curious"),
+        kg.kg_say_many([("Would you like a story in English,", "curious"),
                      ("या हिंदी में?", "curious")])
 
     # ----- tests -----
@@ -2339,10 +2340,10 @@ class TutorUI:
             self._kg_tile_glyph(label.split()[0], x0 + 115, 176, tag)
         self._overlay_button(300, 396, 500, 452, "Back", self.show_kg_home,
                              fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        assistant.kg_say("What would you like to be tested on?", "curious")
+        kg.kg_say("What would you like to be tested on?", "curious")
 
     def start_kg_test(self, kind):
-        assistant.kg_cancel_listen()
+        kg.kg_cancel_listen()
         self._kg_test_kind = kind
         self._kg_test_qs = kg_content.test_questions(kind, self.KG_TEST_QUESTIONS)
         self._kg_test_at = 0
@@ -2368,12 +2369,12 @@ class TutorUI:
             # Saying "count them out loud" is not decoration: it tells the child
             # that counting aloud IS the answer, and it tells the microphone --
             # which now waits out the gaps between numbers -- what to expect.
-            assistant.kg_say_many([("Count the apples out loud.", "encouraging"),
+            kg.kg_say_many([("Count the apples out loud.", "encouraging"),
                          ("How many are there?", "curious")])
         elif question["kind"] == "hi":
-            assistant.kg_say_many([("यह क्या है?", "curious")])
+            kg.kg_say_many([("यह क्या है?", "curious")])
         else:
-            assistant.kg_say_many([("What is this?", "curious")])
+            kg.kg_say_many([("What is this?", "curious")])
         self._kg_after_speaking(
             lambda r=self._kg_test_round: self._kg_test_listen(r))
 
@@ -2502,12 +2503,12 @@ class TutorUI:
                                                  spoken=True),
                     "hi": "यह किस अक्षर से शुरू होता है?"}.get(
                         question["kind"], "Now spell it.")
-        assistant.kg_say(text, "curious")
+        kg.kg_say(text, "curious")
         self._kg_after_speaking(
             lambda r=self._kg_test_round: self._kg_test_listen(r))
 
     def _kg_test_skip(self):
-        assistant.kg_cancel_listen()
+        kg.kg_cancel_listen()
         self._kg_test_at += 1
         self._kg_ask_test_question()
 
@@ -2531,7 +2532,7 @@ class TutorUI:
             # कबूतर into nonsense before it is ever compared.
             seed, language = "", "hi"
         else:
-            seed, language = (assistant.KG_SEED_LETTERS if spelling and kind == "en"
+            seed, language = (kg.KG_SEED_LETTERS if spelling and kind == "en"
                               else ""), "en"
         start_s, phrase_limit, end_silence = self._kg_listen_budget(kind, spelling)
         # One generation per listen. "Say again" can be tapped while a listen is
@@ -2598,7 +2599,7 @@ class TutorUI:
                                                          spoken=True),
                            "hi": "यह किस अक्षर से शुरू होता है?"}.get(
                               kind, f"Now spell {answer}."), "encouraging"))
-            assistant.kg_say_many(lines)
+            kg.kg_say_many(lines)
             self._kg_after_speaking(
                 lambda r=self._kg_test_round: self._kg_test_listen(r))
             return
@@ -2627,7 +2628,7 @@ class TutorUI:
             self._kg_test_note = f"It is {answer}"
             lines = [("Not quite.", "gentle"), (f"It is {answer}", "curious")]
         self._draw_kg_test()
-        assistant.kg_say_many(lines)
+        kg.kg_say_many(lines)
         # The index moves when the NEXT question actually starts, not here.
         # Incrementing now left a 3.2s gap in which the screen still on display
         # belonged to a question the index had already passed -- and on the last
@@ -2662,7 +2663,7 @@ class TutorUI:
         self._overlay_button(420, 300, 660, 358, "Back",
                              self.show_kg_home, fill="#E6E9F5",
                              text_colour=COL_TEXT, size=13)
-        assistant.kg_say_many([(f"You scored {score} out of {total}!", "excited"),
+        kg.kg_say_many([(f"You scored {score} out of {total}!", "excited"),
                      (message, tone)])
         # Recorded against the knowledge graph, so a parent switching to the
         # graded flow later sees that this child has met these at all.
@@ -2732,7 +2733,7 @@ class TutorUI:
     def show_kg_spelling(self):
         # A new word, on the same screen: whatever was being listened for
         # belonged to the word before it.
-        assistant.kg_cancel_listen()
+        kg.kg_cancel_listen()
         self._kg_word = kg_content.random_word(self._kg_seen_words)
         self._kg_seen_words.add(self._kg_word["word"])
         if len(self._kg_seen_words) >= len(kg_content.SPELLING_WORDS):
@@ -2758,7 +2759,7 @@ class TutorUI:
         self._kg_round = getattr(self, "_kg_round", 0) + 1
         self._draw_kg_spelling()
         word = self._kg_word["word"]
-        assistant.kg_say_many([
+        kg.kg_say_many([
             ("Spell this word.", "encouraging"),
             (f"{word}.", "excited"),
             (f"{self._kg_word['hint']}.", "gentle"),
@@ -2779,7 +2780,7 @@ class TutorUI:
     def _kg_begin_listen(self, seconds, seed="", language="en",
                          phrase_limit=None, end_silence=None):
         """Ask for one listen and remember which answer belongs to us."""
-        self._kg_listen_id = assistant.kg_request_listen(
+        self._kg_listen_id = kg.kg_request_listen(
             seconds, seed=seed, language=language,
             phrase_limit=phrase_limit, end_silence=end_silence)
         self._kg_listen_deadline = (time.time() + seconds
@@ -2844,7 +2845,7 @@ class TutorUI:
         # per listen, and only the newest one is allowed to read the answer.
         self._kg_listen_gen = getattr(self, "_kg_listen_gen", 0) + 1
         self._draw_kg_spelling()
-        self._kg_begin_listen(self.KG_SAY_SECONDS, seed=assistant.KG_SEED_LETTERS,
+        self._kg_begin_listen(self.KG_SAY_SECONDS, seed=kg.KG_SEED_LETTERS,
                               language="en",
                               phrase_limit=KG_SPELL_PHRASE_LIMIT_S,
                               end_silence=KG_SPELL_END_SILENCE_S)
@@ -2889,7 +2890,7 @@ class TutorUI:
             praise = random.choice(kg_content.PRAISE)
             self._kg_feedback = praise
             self._draw_kg_spelling()
-            assistant.kg_say_many([(praise, "proud"),
+            kg.kg_say_many([(praise, "proud"),
                          ("Now write it.", "encouraging")])
             self.root.after(300, lambda r=self._kg_round: self._kg_to_writing(r))
             return
@@ -2904,14 +2905,14 @@ class TutorUI:
                 # rather than going on asking an empty room.
                 self._kg_feedback = "Let's write it together."
                 self._draw_kg_spelling()
-                assistant.kg_say_many([("Let's write it together.", "warm"),
+                kg.kg_say_many([("Let's write it together.", "warm"),
                              (f"{word} is {kg_content.spell_out(word)}", "curious"),
                              ("Now you write it.", "encouraging")])
                 self.root.after(300, lambda r=self._kg_round: self._kg_to_writing(r))
                 return
             self._kg_feedback = "I didn't hear you. Have another go!"
             self._draw_kg_spelling()
-            assistant.kg_say_many([("I didn't quite catch that.", "gentle"),
+            kg.kg_say_many([("I didn't quite catch that.", "gentle"),
                          (f"The word is {word}.", "warm"),
                          ("Say the letters for me.", "encouraging")])
             self._kg_listen_again(self._kg_round)
@@ -2931,7 +2932,7 @@ class TutorUI:
             # into the help below like anyone else.
             self._kg_feedback = "Yes! Now the letters."
             self._draw_kg_spelling()
-            assistant.kg_say_many([(f"Yes, the word is {word}.", "warm"),
+            kg.kg_say_many([(f"Yes, the word is {word}.", "warm"),
                          ("Now say the letters, one by one.", "encouraging")])
         elif verdict == "jumbled":
             # They HAVE the letters, in the wrong order. Saying the letters again
@@ -2939,7 +2940,7 @@ class TutorUI:
             # so name what actually went wrong and put the order side by side.
             self._kg_feedback = "Right letters, wrong order! Try again."
             self._draw_kg_spelling()
-            assistant.kg_say_many([
+            kg.kg_say_many([
                 ("Ooh, so close!", "encouraging"),
                 (f"You said {kg_content.spell_out(letters)}", "gentle"),
                 ("You have all the right letters, but they are in a different order.",
@@ -2955,7 +2956,7 @@ class TutorUI:
             nudge = random.choice(kg_content.ENCOURAGEMENT)
             self._kg_feedback = f"{nudge} Try again."
             self._draw_kg_spelling()
-            assistant.kg_say_many([
+            kg.kg_say_many([
                 (nudge, "encouraging"),
                 (f"You said {kg_content.spell_out(letters)}", "gentle"),
                 (f"But {word} is {kg_content.spell_out(word)}", "curious"),
@@ -2966,7 +2967,7 @@ class TutorUI:
             # The letters are already on the screen in front of them.
             self._kg_feedback = "Say it after me!"
             self._draw_kg_spelling()
-            assistant.kg_say_many([
+            kg.kg_say_many([
                 ("Not yet. Let me help you.", "gentle"),
                 (f"Look at the letters on the screen. {word}.", "curious"),
                 (kg_content.spell_out(word), "storyteller"),
@@ -2977,7 +2978,7 @@ class TutorUI:
             # this screen -- they either get it or they tap Write it.
             self._kg_feedback = "Let's say it together!"
             self._draw_kg_spelling()
-            assistant.kg_say_many([
+            kg.kg_say_many([
                 ("Let's say it together.", "warm"),
                 (f"{word}.", "excited"),
                 (kg_content.spell_out(word), "storyteller"),
@@ -2987,7 +2988,7 @@ class TutorUI:
 
     def _kg_repeat_word(self):
         """Say the word again AND re-open the microphone behind it."""
-        assistant.kg_say_many([(f"{self._kg_word['word']}.", "excited"),
+        kg.kg_say_many([(f"{self._kg_word['word']}.", "excited"),
                      (f"{self._kg_word['hint']}.", "gentle"),
                      ("Say the letters out loud.", "curious")])
         self._kg_listen_again(self._kg_round)
@@ -3001,7 +3002,7 @@ class TutorUI:
             return
         # It is their hands' turn, not their voice's. The screen name does not
         # change between the two stages, so _overlay_screen cannot see this one.
-        assistant.kg_cancel_listen()
+        kg.kg_cancel_listen()
         self._kg_stage = "write"
         self._kg_typed = ""
         self._draw_kg_spelling()
@@ -3058,7 +3059,7 @@ class TutorUI:
         self._overlay_button(20, 396, 150, 448, "Undo", self._kg_undo,
                              fill="#E6E9F5", text_colour=COL_TEXT, size=11)
         self._overlay_button(166, 396, 316, 448, "Say it again",
-                             lambda: assistant.kg_say(f"{self._kg_word['word']}. "
+                             lambda: kg.kg_say(f"{self._kg_word['word']}. "
                                             f"{self._kg_word['hint']}."),
                              fill="#E6E9F5", text_colour=COL_TEXT, size=11)
         self._overlay_button(484, 396, 634, 448, "Next word",
@@ -3127,7 +3128,7 @@ class TutorUI:
             praise = random.choice(kg_content.PRAISE)
             self._kg_feedback = praise
             self._draw_kg_spelling()
-            assistant.kg_say(f"{praise} {target}. {kg_content.spell_out(target)}")
+            kg.kg_say(f"{praise} {target}. {kg_content.spell_out(target)}")
             # Long enough for the praise to finish before the next word starts.
             self.root.after(4200, self._kg_next_if_still_spelling)
         else:
@@ -3135,7 +3136,7 @@ class TutorUI:
             self._kg_feedback = nudge
             self._kg_typed = ""
             self._draw_kg_spelling()
-            assistant.kg_say(f"{nudge} {target} is spelled {kg_content.spell_out(target)}. "
+            kg.kg_say(f"{nudge} {target} is spelled {kg_content.spell_out(target)}. "
                    f"Now you try. {target}.")
 
     def _kg_next_if_still_spelling(self):
@@ -3217,7 +3218,7 @@ class TutorUI:
         # response cannot interrupt itself, so there is no longer a guess to get
         # wrong -- the question is simply the line after the last beat, and the
         # buttons appear when its own caption does.
-        assistant.kg_say_many([(f"{story['title']}.", "storyteller")]
+        kg.kg_say_many([(f"{story['title']}.", "storyteller")]
                     + list(story["segments"])
                     + [(story["question"], "curious")])
         self._draw_kg_story()
@@ -3339,9 +3340,9 @@ class TutorUI:
         language = getattr(self, "_kg_story_lang", "en")
         correct = said_yes == self._kg_story["answer"]
         if correct:
-            assistant.kg_say(kg_content.story_praise(language), "proud")
+            kg.kg_say(kg_content.story_praise(language), "proud")
         else:
-            assistant.kg_say(kg_content.story_verdict(self._kg_story, language), "gentle")
+            kg.kg_say(kg_content.story_verdict(self._kg_story, language), "gentle")
         self._kg_story_asked = False
         # Back to the last line of the story rather than a blank card.
         self._kg_story_line = len(self._kg_story["segments"])
@@ -3390,6 +3391,9 @@ class HeadlessUI:
 # module is asked for first. It binds the MODULE only -- nothing is read off it
 # until something is actually called -- which is what makes that legal at all.
 import assistant
+# The Kindergarten flow underneath these screens; bound here for the same
+# import-order reason as the line above it.
+import kg
 # Captions are cued by the player, so they come from audio.py; bound here for
 # the same reason as the line above it.
 import audio
