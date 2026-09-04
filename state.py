@@ -28,6 +28,7 @@ THERE ARE TWO KINDS OF STATE HERE AND THEY ARE REACHED DIFFERENTLY.
 
 import queue
 import threading
+import time
 
 # ---------------------------------------------------------------- the screen
 # The live TutorUI, or HeadlessUI with no display. None until main() builds it,
@@ -101,3 +102,35 @@ kg_listen_results = queue.Queue()
 _kg_listen_lock = threading.Lock()
 _kg_listen_next = [1]          # id for the next request
 _kg_listen_valid_from = [1]    # anything below this has been abandoned
+
+
+# ---------------------------------------------------------------- accessors
+# The only writers for the values above, kept here beside what they write. They
+# were in the assistant, which meant the media player and the action tags had to
+# import the assistant to record that a song had started -- one of the last
+# things holding those two seams shut.
+
+def set_playing_state(title=None, kind=None):
+    """Single writer for currently_playing; title=None means nothing plays."""
+    global currently_playing
+    with device_state_lock:
+        currently_playing = {"title": title, "kind": kind} if title else None
+
+
+def get_device_state():
+    """(playing, open_file, ui_mode) -- a snapshot, safe to read at leisure."""
+    with device_state_lock:
+        playing = dict(currently_playing) if currently_playing else None
+        return playing, currently_open_file, current_ui_mode
+
+
+def note_media_started():
+    """Single funnel for 'a player just came up', whoever started it.
+
+    A function rather than an assignment at each site because there are two of
+    them -- start_media_playback() and open_file_action() -- and only the first
+    ever set the grace period. The second is how "open the gravity file" plays a
+    video, so that path came up with NO guard at all and the barge-in branch was
+    free to listen into the first second of it."""
+    global media_started_at
+    media_started_at = time.time()

@@ -53,3 +53,10 @@ KG_SPELL_END_SILENCE_S = float(os.getenv("KG_SPELL_END_SILENCE", "2.2"))
 KG_COUNT_START_TIMEOUT_S = float(os.getenv("KG_COUNT_START_TIMEOUT", "12.0"))
 KG_COUNT_PHRASE_LIMIT_S = float(os.getenv("KG_COUNT_PHRASE_LIMIT", "45.0"))
 KG_COUNT_END_SILENCE_S = float(os.getenv("KG_COUNT_END_SILENCE", "3.0"))
+
+
+# Where sound goes. The same ALSA device twice: mpv prefixes ALSA names with
+# "alsa/", aplay does not.
+AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE", "plug:'dmix:CARD=Device_1,DEV=0'")
+# Same device, but mpv prefixes ALSA names with "alsa/".
+MPV_AUDIO_DEVICE = os.getenv("MPV_AUDIO_DEVICE", "alsa/plug:'dmix:CARD=Device_1,DEV=0'")
