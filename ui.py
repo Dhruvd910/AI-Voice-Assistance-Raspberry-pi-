@@ -128,22 +128,26 @@ FONT_PREFERENCE = ("Noto Sans", "Noto Sans Devanagari", "Lohit Devanagari",
 # drifting a pixel or two per card until nothing lines up with anything.
 PAD = 8
 
-TOP_Y0, TOP_Y1 = PAD, 84
-CLOCK_X0, CLOCK_X1 = PAD, 244
-WHO_X0, WHO_X1 = 252, 469
-MUSIC_X0, MUSIC_X1 = 477, UI_W - PAD
+# These are measured FROM UI/Home/Home.png, which is a 2x render of the screen
+# this artwork was drawn for: each asset was matched against it to find where it
+# belongs, rather than guessed. The three header cards are one size (204x62) and
+# evenly spaced, which is why they no longer reach the edges.
+TOP_Y0, TOP_Y1 = 17, 79
+CLOCK_X0, CLOCK_X1 = 99, 303
+WHO_X0, WHO_X1 = 322, 526
+MUSIC_X0, MUSIC_X1 = 541, 745
 
 # The left column: the three modes, one under another. Narrower and shorter
 # than the board on purpose -- it is a menu that is glanced at, not something
 # that gets read, so it should not take the same room as the thing that does.
-MODES_X0, MODES_X1 = PAD, 147
-MODES_Y0, MODES_Y1 = 92, 344
-MODE_CARD_X0, MODE_CARD_X1 = MODES_X0 + PAD, MODES_X1 - PAD
-MODE_CARD_Y0, MODE_CARD_H, MODE_CARD_GAP = 124, 64, PAD
+MODES_X0, MODES_X1 = 14, 173
+MODES_Y0, MODES_Y1 = 124, 363
+MODE_CARD_X0, MODE_CARD_X1 = 21, 166
+MODE_CARD_Y0, MODE_CARD_H, MODE_CARD_GAP = 159, 62, 4
 
 # The board on the right, which is where the conversation is read.
-BOARD_X0, BOARD_X1 = 402, UI_W - PAD
-BOARD_Y0, BOARD_Y1 = 92, 396
+BOARD_X0, BOARD_X1 = 454, 783
+BOARD_Y0, BOARD_Y1 = 109, 375
 
 # She stands in the gap between the two, on the grass.
 #
@@ -154,7 +158,9 @@ BOARD_Y0, BOARD_Y1 = 92, 396
 # frames have zero transparent padding below the feet, so the bottom edge of the
 # image IS the feet, and centring a MASCOT_H frame at MASCOT_CY lands them two
 # pixels into the grass, which reads as standing on it rather than as a seam.
-MASCOT_CX, MASCOT_CY = (MODES_X1 + BOARD_X0) // 2, 382 - 250 // 2
+# Between the mode panel and the board, nudged left of the exact midpoint to
+# sit where she stands in the mockup.
+MASCOT_CX, MASCOT_CY = 292, 382 - 250 // 2
 # The state caption, in the clear strip between the header cards and her ears.
 STATE_LABEL_Y = 106
 
@@ -167,8 +173,8 @@ HEAD_DOT_SPOTS = ((MASCOT_CX - 100, 150), (MASCOT_CX + 100, 168),
 # The action bar is a centred group rather than a full-width row. At 254 wide
 # each button was mostly empty to the right of its own words, and three of them
 # edge to edge read as a toolbar rather than as three things to press.
-BTN_Y0, BTN_H, BTN_W, BTN_GAP = 404, 68, 216, 20
-BTN_XS = [56, 292, 528]
+BTN_Y0, BTN_H, BTN_W, BTN_GAP = 397, 69, 154, 5
+BTN_XS = [169, 328, 489]
 
 # ---------- 3D mascot animation ----------
 # The source clips are 1920x1080 RGBA at ~200 frames each; decoding all four
@@ -198,7 +204,32 @@ MASCOT_3D_H = 440
 MASCOT_3D_W = round(MASCOT_3D_H * (MASCOT_CROP[2] - MASCOT_CROP[0]) / (MASCOT_CROP[3] - MASCOT_CROP[1]))
 MASCOT_3D_CY = 228
 
-UI_BG_IMAGE = os.path.join(MASCOT_DIR, "AI Background.png")
+# The artwork for the screen. Every one of these is optional: ui_asset returns
+# None when a file is missing and each builder falls back to what it drew
+# before, so half a UI folder is a half-restyled screen rather than a dead one.
+UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI")
+UI_BG_IMAGE = os.path.join(UI_DIR, "Home", "Background.png")
+if not os.path.exists(UI_BG_IMAGE):
+    UI_BG_IMAGE = os.path.join(MASCOT_DIR, "AI Background.png")
+
+_ui_assets = {}
+
+def ui_asset(*parts):
+    """A PNG from the UI folder, as RGBA, or None if it is not there.
+
+    Cached: these are placed on every redraw of a screen, and decoding a PNG
+    each time is not free on a Pi. None rather than an exception because a
+    missing file must cost a nicer button, not the screen."""
+    key = parts
+    if key not in _ui_assets:
+        path = os.path.join(UI_DIR, *parts)
+        try:
+            _ui_assets[key] = Image.open(path).convert("RGBA")
+        except Exception:
+            print(f"[UI] No artwork at {os.path.join(*parts)}; drawing it instead.",
+                  flush=True)
+            _ui_assets[key] = None
+    return _ui_assets[key]
 
 def _background_image(w, h):
     """The wallpaper, scaled to COVER w*h and centre-cropped.
@@ -578,6 +609,17 @@ class TutorUI:
         return self.canvas.create_image(cx, cy, image=photo, anchor="center",
                                         tags=self.OVERLAY_TAG)
 
+    def _place_overlay_asset(self, image, x, y, tag=None):
+        """Artwork on a modal screen. Cleared with the rest of the overlay.
+
+        _overlay_photos rather than _photos: _clear_overlay empties that list, so
+        a child walking through forty letters cannot accumulate forty dead
+        bitmaps."""
+        photo = ImageTk.PhotoImage(image)
+        self._overlay_photos.append(photo)
+        tags = (self.OVERLAY_TAG, tag) if tag else (self.OVERLAY_TAG,)
+        return self.canvas.create_image(x, y, image=photo, anchor="nw", tags=tags)
+
     def _place_photo(self, image, x, y, tags=None):
         """Photos are anchored NW and pulled back by the shadow padding, so
         callers can pass the card's own top-left corner."""
@@ -586,6 +628,18 @@ class TutorUI:
         kw = {"tags": tags} if tags else {}
         return self.canvas.create_image(x - SHADOW_PAD, y - SHADOW_PAD,
                                         image=photo, anchor="nw", **kw)
+
+    def _place_asset(self, image, x, y, tags=None):
+        """Place artwork with its top-left exactly at (x, y).
+
+        Not _place_photo, which pulls back by SHADOW_PAD: the cards THAT places
+        are PIL-drawn with their shadow baked into a margin. These have no such
+        margin -- the coordinates were measured off the mockup and mean what
+        they say."""
+        photo = ImageTk.PhotoImage(image)
+        self._photos.append(photo)
+        kw = {"tags": tags} if tags else {}
+        return self.canvas.create_image(x, y, image=photo, anchor="nw", **kw)
 
     def _card(self, x0, y0, x1, y1, r=16, fill=COL_CARD, edge=COL_CARD_EDGE, tags=None):
         return self._place_photo(
@@ -656,7 +710,11 @@ class TutorUI:
         One card rather than two stacked halves: at header height there is no
         room for two, and the two readings are glanced at together anyway.
         """
-        self._card(CLOCK_X0, TOP_Y0, CLOCK_X1, TOP_Y1, 16)
+        art = ui_asset("Home", "Weather_bg.png")
+        if art is not None:
+            self._place_asset(art, CLOCK_X0, TOP_Y0)
+        else:
+            self._card(CLOCK_X0, TOP_Y0, CLOCK_X1, TOP_Y1, 16)
         cx, cy, r = CLOCK_X0 + 30, TOP_Y0 + 30, 19
 
         self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
@@ -772,7 +830,11 @@ class TutorUI:
         title instead of under it, and the progress bar runs the full width
         along the bottom where there is nothing to compete with it.
         """
-        self._card(MUSIC_X0, TOP_Y0, MUSIC_X1, TOP_Y1, 16)
+        art = ui_asset("Home", "Music_bg.png")
+        if art is not None:
+            self._place_asset(art, MUSIC_X0, TOP_Y0)
+        else:
+            self._card(MUSIC_X0, TOP_Y0, MUSIC_X1, TOP_Y1, 16)
 
         art = ImageTk.PhotoImage(_album_art_image(38, 10))
         self._photos.append(art)
@@ -891,11 +953,24 @@ class TutorUI:
                                           outline=colour, width=2))
         return items
 
+    # One image per mode, each carrying its own title, blurb, avatar and arrow.
+    MODE_ART = {"TUTOR": "Tutor.png", "CO-TELL": "Co_tell.png",
+                "RE-TELL": "Re_tell.png"}
+
     def _build_mode_cards(self):
-        self._card(MODES_X0, MODES_Y0, MODES_X1, MODES_Y1, 16)
-        self.canvas.create_text((MODES_X0 + MODES_X1) / 2, MODES_Y0 + 18,
-                                text="CHOOSE MODE", font=self._font(9, True),
-                                fill=COL_TEXT)
+        panel = ui_asset("Home", "Mode BG.png")
+        if panel is not None:
+            self._place_asset(panel, MODES_X0, MODES_Y0)
+            # The panel art carries no wording, so the heading is still drawn --
+            # over the rainbow, which is why it is dark rather than tinted.
+            self.canvas.create_text((MODES_X0 + MODES_X1) / 2, MODES_Y0 + 19,
+                                    text="MODE", font=self._font(15, True),
+                                    fill="#3A2E6E")
+        else:
+            self._card(MODES_X0, MODES_Y0, MODES_X1, MODES_Y1, 16)
+            self.canvas.create_text((MODES_X0 + MODES_X1) / 2, MODES_Y0 + 18,
+                                    text="CHOOSE MODE", font=self._font(9, True),
+                                    fill=COL_TEXT)
         for dx, dy, s in ((-10, -5, 4), (-2, 3, 3)):
             x, y = MODES_X1 - 18 + dx, MODES_Y0 + 18 + dy
             self.canvas.create_polygon(x, y - s, x + s * 0.35, y - s * 0.35, x + s, y,
@@ -911,6 +986,22 @@ class TutorUI:
             accent = MODE_ACCENTS[mode]
             tag = f"mode{i}"
 
+            art = ui_asset("Home", self.MODE_ART[mode])
+            if art is not None:
+                self._place_asset(art, MODE_CARD_X0, y0, tag)
+                # Which mode is chosen cannot be shown by recolouring a picture,
+                # so it is a ring around the chosen one. Created for every row
+                # and hidden until _refresh_cards picks one.
+                ring = self._round_rect(MODE_CARD_X0 - 2, y0 - 2,
+                                        MODE_CARD_X1 + 2, y1 + 2, 14,
+                                        fill="", outline=accent, width=3, tags=tag)
+                self.canvas.itemconfigure(ring, state="hidden")
+                self.canvas.tag_bind(tag, "<Button-1>",
+                                     lambda e, idx=i: self.set_mode(idx))
+                self.cards.append({"body": None, "title": None, "blurb": None,
+                                   "chevron": None, "ring": ring,
+                                   "accent": accent, "tint": MODE_TINTS[mode]})
+                continue
             body = self._round_rect(MODE_CARD_X0, y0, MODE_CARD_X1, y1, 12,
                                     fill=MODE_TINTS[mode], outline=MODE_TINTS[mode],
                                     width=1, tags=tag)
@@ -939,7 +1030,8 @@ class TutorUI:
                 self.canvas.itemconfig(item, tags=tag)
             self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.set_mode(idx))
             self.cards.append({"body": body, "title": title, "blurb": blurb,
-                               "chevron": chevron, "accent": accent, "tint": MODE_TINTS[mode]})
+                               "chevron": chevron, "ring": None,
+                               "accent": accent, "tint": MODE_TINTS[mode]})
 
     # ---------- transcript ----------
     def _build_transcript_panel(self):
@@ -949,39 +1041,51 @@ class TutorUI:
         lines of a spoken sentence and clipped the rest. Given half the width of
         the panel it holds a real answer, which is the point of showing it.
         """
-        self._card(BOARD_X0, BOARD_Y0, BOARD_X1, BOARD_Y1, 18)
+        art = ui_asset("Home", "Transcribe Board.png")
+        if art is not None:
+            # The card, its heading and the little stars are all painted into
+            # this one, so none of that chrome is drawn again below.
+            self._place_asset(art, BOARD_X0, BOARD_Y0)
+        else:
+            self._card(BOARD_X0, BOARD_Y0, BOARD_X1, BOARD_Y1, 18)
         pad = 18
+        # Everything in this block is the heading the ARTWORK already carries --
+        # the dot grid, the title, its underline, the little stars. Drawn again
+        # on top of it they would simply double up.
+        if art is None:
+            for gy in range(int(BOARD_Y0) + 40, int(BOARD_Y1) - 12, 14):
+                for gx in range(int(BOARD_X0) + pad, int(BOARD_X1) - pad, 14):
+                    self.canvas.create_oval(gx, gy, gx + 1, gy + 1,
+                                            fill="#E7EAF6", outline="")
 
-        # The faint dot grid, drawn first so everything else sits on top of it.
-        # It is what makes the panel read as a board to write on rather than as
-        # another empty card.
-        for gy in range(int(BOARD_Y0) + 40, int(BOARD_Y1) - 12, 14):
-            for gx in range(int(BOARD_X0) + pad, int(BOARD_X1) - pad, 14):
-                self.canvas.create_oval(gx, gy, gx + 1, gy + 1,
-                                        fill="#E7EAF6", outline="")
+            self.canvas.create_text((BOARD_X0 + BOARD_X1) / 2, BOARD_Y0 + 22,
+                                    text="Transcribe Board", font=self._font(14, True),
+                                    fill="#7C3AED")
+            self.canvas.create_line((BOARD_X0 + BOARD_X1) / 2 - 74, BOARD_Y0 + 36,
+                                    (BOARD_X0 + BOARD_X1) / 2 + 74, BOARD_Y0 + 36,
+                                    fill="#C4B5FD", width=2, capstyle="round")
+            for x, y, s in ((BOARD_X0 + 30, BOARD_Y0 + 22, 6),
+                            (BOARD_X1 - 34, BOARD_Y0 + 20, 7),
+                            (BOARD_X1 - 18, BOARD_Y0 + 32, 4)):
+                self.canvas.create_polygon(
+                    x, y - s, x + s * 0.34, y - s * 0.34, x + s, y,
+                    x + s * 0.34, y + s * 0.34, x, y + s,
+                    x - s * 0.34, y + s * 0.34, x - s, y,
+                    x - s * 0.34, y - s * 0.34, fill="", outline="#C4B5FD", width=1)
 
-        self.canvas.create_text((BOARD_X0 + BOARD_X1) / 2, BOARD_Y0 + 22,
-                                text="Transcribe Board", font=self._font(14, True),
-                                fill="#7C3AED")
-        self.canvas.create_line((BOARD_X0 + BOARD_X1) / 2 - 74, BOARD_Y0 + 36,
-                                (BOARD_X0 + BOARD_X1) / 2 + 74, BOARD_Y0 + 36,
-                                fill="#C4B5FD", width=2, capstyle="round")
-        for x, y, s in ((BOARD_X0 + 30, BOARD_Y0 + 22, 6),
-                        (BOARD_X1 - 34, BOARD_Y0 + 20, 7),
-                        (BOARD_X1 - 18, BOARD_Y0 + 32, 4)):
-            self.canvas.create_polygon(
-                x, y - s, x + s * 0.34, y - s * 0.34, x + s, y,
-                x + s * 0.34, y + s * 0.34, x, y + s,
-                x - s * 0.34, y + s * 0.34, x - s, y,
-                x - s * 0.34, y - s * 0.34, fill="", outline="#C4B5FD", width=1)
-
+        # Below the painted heading rather than beside it: the artwork's title
+        # and rule occupy the top ~50px of the card.
+        head = 62 if art is not None else 54
         self.panel_bars = self._bars_glyph(BOARD_X0 + pad + 4, BOARD_Y0 + 22, COL_INDIGO,
                                            (5, 9, 13, 9, 5))
+        if art is not None:
+            for item in self.panel_bars:
+                self.canvas.itemconfigure(item, state="hidden")
         self.speaker_id = self.canvas.create_text(
-            BOARD_X0 + pad, BOARD_Y0 + 54, text="You said:", anchor="w",
+            BOARD_X0 + pad, BOARD_Y0 + head, text="You said:", anchor="w",
             font=self._font(8, True), fill=COL_INDIGO)
         self.transcript_id = self.canvas.create_text(
-            BOARD_X0 + pad, BOARD_Y0 + 70,
+            BOARD_X0 + pad, BOARD_Y0 + head + 16,
             text="Tap SPEAK or say “Hey Liza” to begin.",
             anchor="nw", justify="left", width=BOARD_X1 - BOARD_X0 - pad * 2,
             font=self._font(11), fill=COL_TEXT_DIM)
@@ -996,18 +1100,27 @@ class TutorUI:
                 x - 3, BOARD_Y1 - 19, x + 3, BOARD_Y1 - 13, fill=COL_TRACK, outline=""))
 
     # ---------- action buttons ----------
+    BUTTON_ART = {"SPEAK": "Speak Button.png", "STOP": "Stop Button.png",
+                  "SLEEP": "Sleep Button.png"}
+
     def _build_buttons(self):
         self.buttons = {}
         handlers = {"SPEAK": self.wake_up, "STOP": self.stop_speaking, "SLEEP": self.go_to_sleep}
         for (label, sub, c0, c1, sub_col, icon), x0 in zip(ACTIONS, BTN_XS):
             tag = f"btn{label}"
-            self._place_photo(_action_image(BTN_W, BTN_H, 20, c0, c1, icon), x0, BTN_Y0, tag)
-            # 70, not 92: the icon ring ends 57px in, so this is the same
-            # clearance beside a narrower button.
-            self.canvas.create_text(x0 + 70, BTN_Y0 + 26, text=label, anchor="w",
-                                    font=self._font(15, True), fill="#FFFFFF", tags=tag)
-            self.canvas.create_text(x0 + 70, BTN_Y0 + 45, text=sub, anchor="w",
-                                    font=self._font(7), fill=sub_col, tags=tag)
+            art = ui_asset("Home", self.BUTTON_ART[label])
+            if art is not None:
+                # Label, sub-label and icon are painted into the artwork, so
+                # nothing is written over it.
+                self._place_asset(art, x0, BTN_Y0, tag)
+            else:
+                self._place_photo(_action_image(BTN_W, BTN_H, 20, c0, c1, icon), x0, BTN_Y0, tag)
+                # 70, not 92: the icon ring ends 57px in, so this is the same
+                # clearance beside a narrower button.
+                self.canvas.create_text(x0 + 70, BTN_Y0 + 26, text=label, anchor="w",
+                                        font=self._font(15, True), fill="#FFFFFF", tags=tag)
+                self.canvas.create_text(x0 + 70, BTN_Y0 + 45, text=sub, anchor="w",
+                                        font=self._font(7), fill=sub_col, tags=tag)
             self.canvas.tag_bind(tag, "<Button-1>", handlers[label])
             self.buttons[label] = tag
 
@@ -1074,6 +1187,11 @@ class TutorUI:
         for i, card in enumerate(self.cards):
             chosen = i == self.current_mode_index
             accent = card["accent"]
+            if card.get("ring") is not None:
+                # A picture cannot be tinted, so the chosen one wears a ring.
+                self.canvas.itemconfigure(card["ring"],
+                                          state="normal" if chosen else "hidden")
+                continue
             self.canvas.itemconfig(card["body"],
                                    fill=_mix(card["tint"], "#FFFFFF", 0.35) if chosen else card["tint"],
                                    outline=accent if chosen else card["tint"],
@@ -1590,7 +1708,8 @@ class TutorUI:
             # A canvas rebuild between screens; the next redraw lifts her again.
             pass
 
-    def _overlay_screen(self, name, title, subtitle=None, tint=COL_BG):
+    def _overlay_screen(self, name, title, subtitle=None, tint=COL_BG,
+                        backdrop=None, backdrop_at=(0, 0)):
         """The opaque backing every profile and KG screen is built on.
 
         `name` is set here, AFTER the clear, and not by the callers: _clear_overlay
@@ -1637,6 +1756,13 @@ class TutorUI:
                 self.canvas.tag_lower(mascot, backing)
             except tk.TclError:
                 pass
+        # Placed here, between the backing and the wording, because a panel put
+        # down by the caller lands on TOP of the title -- which is how the
+        # greeting went missing from the KG screen the first time.
+        if backdrop is not None:
+            art = ui_asset(*backdrop)
+            if art is not None:
+                self._place_overlay_asset(art, *backdrop_at)
         self.canvas.create_text(UI_W / 2, 40, text=title, font=self._font(20, True),
                                 fill=COL_TEXT, tags=self.OVERLAY_TAG)
         if subtitle:
@@ -1673,7 +1799,12 @@ class TutorUI:
         was under half what a fingertip reliably hits on this panel.
         """
         tags = (self.OVERLAY_TAG + "_never", "profilechip")
-        self.profile_chip_bg = self._card(WHO_X0, TOP_Y0, WHO_X1, TOP_Y1, 16, tags=tags)
+        art = ui_asset("Home", "Profile_bg.png")
+        if art is not None:
+            self.profile_chip_bg = self._place_asset(art, WHO_X0, TOP_Y0, tags)
+        else:
+            self.profile_chip_bg = self._card(WHO_X0, TOP_Y0, WHO_X1, TOP_Y1, 16,
+                                              tags=tags)
 
         cx, cy = WHO_X0 + 34, TOP_Y0 + 39
         self.canvas.create_oval(cx - 21, cy - 21, cx + 21, cy + 21,
@@ -1999,7 +2130,9 @@ class TutorUI:
         profile = profiles.active_profile() or {}
         name = profile.get("name", "")
         self._overlay_screen("kg_home", f"Hello {name}!" if name else "Hello!",
-                             "What would you like to do?", tint="#FFF9F0")
+                             "What would you like to do?", tint="#FFF9F0",
+                             backdrop=("KG Activity", "Glass_BG.png"),
+                             backdrop_at=(19, 20))
         # Six activities in a 3x2 grid rather than two big cards. Each tile is
         # 236x142, which is far past what a fingertip needs, and each one leads
         # with a BIG GLYPH the child can recognise -- the words underneath are
@@ -2007,20 +2140,34 @@ class TutorUI:
         # cannot read "Hindi alphabet".
         tiles = [
             ("Spell a Word",  "Say it, then write it", "#7C3AED", "ABC",
-             self.show_kg_spelling),
+             self.show_kg_spelling, "Learn to Epell.png"),
             ("A B C",         "English letters",        "#2563EB", "Aa",
-             lambda: self.show_kg_alphabet("en")),
+             lambda: self.show_kg_alphabet("en"), "Eng Alp.png"),
             ("क ख ग",         "हिंदी अक्षर",             "#DB2777", "अ",
-             lambda: self.show_kg_alphabet("hi")),
+             lambda: self.show_kg_alphabet("hi"), "Hindi Alp.png"),
             ("1 2 3",         "Counting",               "#059669", "12",
-             self.show_kg_counting),
+             self.show_kg_counting, "Numbers.png"),
             ("A to Z",        "Put them in order",      "#D97706", "A?",
-             self.show_kg_order),
+             self.show_kg_order, "Order.png"),
             ("Story Time",    "Sit back and listen",    "#F59E0B", "book",
-             self.show_kg_story_picker),
+             self.show_kg_story_picker, "Story.png"),
         ]
-        for index, (label, sub, colour, glyph, command) in enumerate(tiles):
+        # Laid down by _overlay_screen above, before the greeting, so the
+        # wording sits on the panel rather than under it.
+        glass = ui_asset("KG Activity", "Glass_BG.png")
+        for index, (label, sub, colour, glyph, command, art_name) in enumerate(tiles):
             col, row = index % 3, index // 3
+            art = ui_asset("KG Activity", art_name)
+            if art is not None:
+                # 229x148 each, and each carries its own wording and picture, so
+                # nothing is written over them. Spaced to the artwork's size
+                # rather than the drawn tile's.
+                x0, y0 = 30 + col * 250, 92 + row * 156
+                self._overlay_seq += 1
+                tag = f"kgtile{self._overlay_seq}"
+                self._place_overlay_asset(art, x0, y0, tag)
+                self.canvas.tag_bind(tag, "<Button-1>", lambda e, c=command: c())
+                continue
             x0 = 28 + col * 252
             y0 = 96 + row * 158
             tag = self._overlay_button(x0, y0, x0 + 236, y0 + 142, label, command,
@@ -2032,11 +2179,13 @@ class TutorUI:
         # because it is a different kind of thing: the tiles teach, this one
         # asks. Mixing it into the grid would have made it look like a seventh
         # activity to wander into.
-        self._overlay_button(28, 412, 560, 464, "Test yourself",
+        # Kept inside the panel: it ends at 461, and the row used to run to 464.
+        row_y = 406 if glass is not None else 412
+        self._overlay_button(30, row_y, 560, row_y + 50, "Test yourself",
                              self.show_kg_test_picker, fill="#0EA5E9", size=15,
                              sub="See what you have learned",
                              label_frac=0.42, sub_frac=0.74)
-        self._overlay_button(580, 412, 770, 464, "Switch user",
+        self._overlay_button(580, row_y, 770, row_y + 50, "Switch user",
                              self.show_profile_picker, fill="#E6E9F5",
                              text_colour=COL_TEXT, size=11)
         if greet and name:
