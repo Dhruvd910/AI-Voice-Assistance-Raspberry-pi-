@@ -862,9 +862,6 @@ class TutorUI:
         self.state_text_id = self.canvas.create_text(
             MASCOT_CX, STATE_LABEL_Y, text="", font=self._font(9, True), fill=COL_TEXT_DIM)
         self.mascot_item = self.canvas.create_image(MASCOT_CX, MASCOT_CY)
-        # Bound once here rather than per screen: _kg_ask_tapped checks which
-        # screen is up, so the binding is harmless everywhere else.
-        self.canvas.tag_bind(self.mascot_item, "<Button-1>", self._kg_ask_tapped)
 
     # ---------- mode cards ----------
     def _mode_glyph(self, kind, cx, cy, colour, tint):
@@ -1460,6 +1457,21 @@ class TutorUI:
     # cannot be tapped at all, and not the pickers, where nothing is being said.
     KG_ASK_SCREENS = {"kg_alpha", "kg_count", "kg_story"}
 
+    # NOTHING RAISES THIS AT THE MOMENT, and that is deliberate.
+    #
+    # It was bound to the mascot, which on a lesson screen is 187 by 250 pixels
+    # of tap target sitting in the middle of an otherwise empty column. In one
+    # session logs/liza.log recorded nine "Liza tapped mid-lesson" and not one
+    # question after them: every tap was somebody brushing the screen, and each
+    # one stopped the lesson to ask what they wanted. An interruption nobody
+    # asked for is worse than no interruption at all -- the same fault the KG
+    # wake word had, for the same reason.
+    #
+    # The mechanism is fine and is left here whole. What it needs is a target a
+    # child has to MEAN to hit -- a button of its own on the lesson screens,
+    # rather than her whole body. To put it back on the mascot, bind it in
+    # _build_mascot:
+    #     self.canvas.tag_bind(self.mascot_item, "<Button-1>", self._kg_ask_tapped)
     def _kg_ask_tapped(self, event=None):
         """Tapping Liza during a lesson: stop talking, and listen to the child.
 
@@ -1497,19 +1509,6 @@ class TutorUI:
             return
         try:
             self.canvas.tag_raise(item)
-            if self.overlay in self.KG_ASK_SCREENS:
-                # A pill over her head, not a line under her feet: down there it
-                # lands in her own drop shadow and hard against the button strip
-                # at 396, where it reads as a caption rather than as something
-                # you may touch. Redrawn every time she is lifted, with the
-                # overlay tag, so it leaves with the screen.
-                y = MASCOT_CY - MASCOT_H // 2 - 4
-                self._round_rect(MASCOT_CX - 62, y - 12, MASCOT_CX + 62, y + 12,
-                                 12, fill="#FFFFFF", outline="#D9D2F5",
-                                 tags=self.OVERLAY_TAG)
-                self.canvas.create_text(
-                    MASCOT_CX, y, text="Tap me to ask", font=self._font(10, True),
-                    fill="#7C3AED", tags=self.OVERLAY_TAG)
         except tk.TclError:
             # A canvas rebuild between screens; the next redraw lifts her again.
             pass
