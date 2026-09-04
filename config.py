@@ -402,6 +402,41 @@ BARGE_IN_DEBUG = os.getenv("BARGE_IN_DEBUG", "0") == "1"
 # PipeWire instead of straight at ALSA, which needs the pipewire-alsa bridge
 # installed and the device selection above redone.
 #
+# PIPEWIRE'S module-echo-cancel WAS THEN TRIED TOO, AND IS NOT THE ANSWER
+# EITHER -- not as this device is wired. Everything needed is already on the
+# image: libpipewire-module-echo-cancel, libspa-aec-webrtc, and
+# libwebrtc-audio-processing. Loaded against the two dongles, with a signal
+# played through the virtual sink and both the raw and the cancelled capture
+# recorded SIMULTANEOUSLY so that the room noise is identical in each:
+#
+#   silent floor        raw 384      cancelled 340
+#   during playback     raw 781      cancelled 602
+#   echo above floor    raw +397     cancelled +261      -3.6 dB
+#
+# Better than Speex's -2.5 dB and nowhere near the 20-30 dB of a canceller that
+# has locked. PipeWire does resample both sides onto a common clock, which was
+# the missing piece -- but the residual drift between two independent PCM2902s
+# still destroys the sample-level phase an adaptive filter needs.
+#
+# WHAT WOULD ACTUALLY FIX IT IS A CABLE, NOT A SETTING.
+#
+# Card 3, the dongle the SPEAKER is on, has a microphone input as well, and
+# PipeWire offers it a duplex profile: "Analog Stereo Output + Analog Mono
+# Input" (profile index 1 on that card). Both sides on that one dongle is one
+# clock domain, which is the condition every attempt so far has lacked.
+#
+# It was set up and measured, and could not be finished: card 3's microphone
+# jack is EMPTY -- its input reads RMS 24, silence -- because the microphone is
+# plugged into the other dongle. Moving it across is the experiment, and it
+# costs nothing to try:
+#
+#   1. Plug the microphone into the dongle the speaker is on (card 3,
+#      "Device_1"), leaving the other one empty or unplugged.
+#   2. wpctl set-profile <card 3 device id> 1
+#   3. Load module-echo-cancel with capture.props node.target pointed at
+#      alsa_input...Sound_Device-00.2.analog-mono, and measure again the same
+#      way. If it locks, the number moves by tens of dB, not by three.
+#
 # Until then, barge-in fires reliably only in her pauses -- between sentences,
 # where each is a separate TTS request and the room is briefly quiet.
 # How much louder than her own returning voice the student has to be. 1.6 is
