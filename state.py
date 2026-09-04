@@ -134,3 +134,10 @@ def note_media_started():
     free to listen into the first second of it."""
     global media_started_at
     media_started_at = time.time()
+
+
+def note_spoken(text):
+    """Single funnel for everything sent to the voice, whoever queued it."""
+    global last_spoken_text, last_spoken_at
+    last_spoken_text = f"{last_spoken_text} {text}"[-600:]
+    last_spoken_at = time.time()

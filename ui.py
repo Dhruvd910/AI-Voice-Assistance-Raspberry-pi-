@@ -3204,7 +3204,7 @@ class TutorUI:
         # Torn down FIRST and the session opened on the quiet, so a story still
         # draining from a previous tap cannot caption this one.
         assistant.interrupt_playback()
-        self._kg_caption = assistant.caption_begin()
+        self._kg_caption = audio.caption_begin()
         self._kg_narrate_at = time.time()
         # The QUESTION goes in the same response as the story, as its last line.
         #
@@ -3238,7 +3238,7 @@ class TutorUI:
             return
         # Cue 0 is the title, 1..N are the beats, and N+1 is the question.
         last = len(self._kg_story["segments"]) + 1
-        index, _text = assistant.caption_now(self._kg_caption)
+        index, _text = audio.caption_now(self._kg_caption)
         if index != getattr(self, "_kg_story_line", -1):
             self._kg_story_line = index
             # The question is on the screen exactly when it is in the air.
@@ -3390,3 +3390,6 @@ class HeadlessUI:
 # module is asked for first. It binds the MODULE only -- nothing is read off it
 # until something is actually called -- which is what makes that legal at all.
 import assistant
+# Captions are cued by the player, so they come from audio.py; bound here for
+# the same reason as the line above it.
+import audio

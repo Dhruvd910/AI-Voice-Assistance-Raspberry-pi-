@@ -10,6 +10,8 @@ depend on import order.
 
 import os
 
+from cartesia import Cartesia
+
 def load_dotenv(path=None):
     if path is None:
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -60,3 +62,22 @@ KG_COUNT_END_SILENCE_S = float(os.getenv("KG_COUNT_END_SILENCE", "3.0"))
 AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE", "plug:'dmix:CARD=Device_1,DEV=0'")
 # Same device, but mpv prefixes ALSA names with "alsa/".
 MPV_AUDIO_DEVICE = os.getenv("MPV_AUDIO_DEVICE", "alsa/plug:'dmix:CARD=Device_1,DEV=0'")
+
+
+# 2. The Voice (Cartesia API)
+CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
+cartesia_client = Cartesia(api_key=CARTESIA_API_KEY or None)
+
+# Text-to-speech: one Cartesia voice speaks both languages, switched per sentence.
+CARTESIA_MODEL = os.getenv("CARTESIA_MODEL", "sonic-3.5")
+CARTESIA_SAMPLE_RATE = int(os.getenv("CARTESIA_SAMPLE_RATE", "22050"))
+CARTESIA_SPEED = os.getenv("CARTESIA_SPEED", "fast")  # slow | normal | fast
+BYTES_PER_SEC = CARTESIA_SAMPLE_RATE * 2  # 16-bit mono
+
+# Set CARTESIA_VOICE_ID to a multilingual voice, or give Hindi and English their
+# own voices. Run `python assist.py --list-voices` to see what your key can use.
+CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
+VOICE_IDS = {
+    "en": os.getenv("CARTESIA_VOICE_ID_EN", "") or CARTESIA_VOICE_ID,
+    "hi": os.getenv("CARTESIA_VOICE_ID_HI", "") or CARTESIA_VOICE_ID,
+}
