@@ -1457,37 +1457,70 @@ class TutorUI:
     # cannot be tapped at all, and not the pickers, where nothing is being said.
     KG_ASK_SCREENS = {"kg_alpha", "kg_count", "kg_story"}
 
-    # NOTHING RAISES THIS AT THE MOMENT, and that is deliberate.
+    # Where the Ask button sits on the lesson screens. The left column is empty
+    # on all of them -- the mascot starts at 180 and the lesson itself is in the
+    # board column from 402 -- so it costs no layout and sits far from both, and
+    # far from the row along the bottom.
     #
-    # It was bound to the mascot, which on a lesson screen is 187 by 250 pixels
-    # of tap target sitting in the middle of an otherwise empty column. In one
-    # session logs/liza.log recorded nine "Liza tapped mid-lesson" and not one
-    # question after them: every tap was somebody brushing the screen, and each
-    # one stopped the lesson to ask what they wanted. An interruption nobody
-    # asked for is worse than no interruption at all -- the same fault the KG
-    # wake word had, for the same reason.
-    #
-    # The mechanism is fine and is left here whole. What it needs is a target a
-    # child has to MEAN to hit -- a button of its own on the lesson screens,
-    # rather than her whole body. To put it back on the mascot, bind it in
-    # _build_mascot:
-    #     self.canvas.tag_bind(self.mascot_item, "<Button-1>", self._kg_ask_tapped)
-    def _kg_ask_tapped(self, event=None):
-        """Tapping Liza during a lesson: stop talking, and listen to the child.
+    # That distance is the point. This was bound to the MASCOT once, and she is
+    # 187 by 250 pixels in the middle of the screen: logs/liza.log recorded nine
+    # taps in one session and not one question after them, because every one was
+    # somebody brushing past her. A button a child has to reach for cannot be
+    # pressed by accident, which is the whole difference between an interruption
+    # they asked for and one they did not.
+    KG_ASK_BOX = (22, 196, 166, 306)
+    # The story screen has no free column -- its captions run the full width --
+    # so it takes the gap in the bottom row instead.
+    KG_ASK_BOX_STORY = (190, 414, 300, 462)
 
-        A five-year-old interrupts by talking over you, and barge-in covers that
-        -- when the room allows it. Whether it fires depends on how loud the
-        speaker is against the microphone, which is not something a child can do
-        anything about, and on this device it is marginal. A tap is not: it
-        works at any volume, in any room, and she is 187 by 250 pixels of her
-        own face, which is a larger target than any button on the screen.
+    def _kg_ask_button(self, box=None):
+        """Draw the Ask button, or the Listening state once it has been used."""
+        x0, y0, x1, y1 = box or self.KG_ASK_BOX
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        roomy = (y1 - y0) >= 80
+
+        if getattr(self, "_kg_asking", False):
+            # Painted over the button rather than beside it: a child who has
+            # just pressed it needs to see that it worked, and she is still
+            # drawing breath to ask them what they wanted.
+            self._round_rect(x0, y0, x1, y1, 14, fill="#FEF3C7",
+                             outline="#F59E0B", tags=self.OVERLAY_TAG)
+            self.canvas.create_text(cx, cy - (9 if roomy else 0),
+                                    text="Listening", font=self._font(13, True),
+                                    fill="#92400E", tags=self.OVERLAY_TAG)
+            if roomy:
+                self.canvas.create_text(cx, cy + 16, text="go on, ask me",
+                                        font=self._font(9), fill="#B45309",
+                                        tags=self.OVERLAY_TAG)
+            return
+
+        tag = self._overlay_button(
+            x0, y0, x1, y1, "Ask me", self._kg_ask, fill="#F59E0B", size=14,
+            sub="I'll stop and listen" if roomy else None,
+            label_frac=0.66 if roomy else None, sub_frac=0.85)
+        if roomy:
+            # Same tag as the button, so the mark is part of the target rather
+            # than a hole in the middle of it.
+            self.canvas.create_text(cx, y0 + 34, text="?",
+                                    font=self._font(30, True), fill="#FFFFFF",
+                                    tags=(self.OVERLAY_TAG, tag))
+
+    def _kg_ask(self):
+        """The Ask button: stop talking, and listen to the child.
+
+        ai_loop answers kg_ask_event before anything else in its KG branch, and
+        abandons whatever question a screen was waiting for -- they have stopped
+        answering that and asked something of their own.
         """
         if self.overlay not in self.KG_ASK_SCREENS:
             return None
-        print("[UI] Liza tapped mid-lesson; stopping to listen.", flush=True)
+        print("[UI] Ask tapped mid-lesson; stopping to listen.", flush=True)
+        self._kg_asking = True
         kg_ask_event.set()
         assistant.interrupt_playback()
         self.set_state("listening")
+        self._kg_ask_button(self.KG_ASK_BOX_STORY
+                            if self.overlay == "kg_story" else self.KG_ASK_BOX)
         return "break"
 
     def _kg_keep_mascot(self):
@@ -1552,6 +1585,8 @@ class TutorUI:
         # without it she stayed up from the last alphabet screen and reappeared
         # standing on top of the spelling keyboard, whose keys run the full
         # width and straight through where she stands.
+        # A press belongs to the screen it was made on.
+        self._kg_asking = False
         mascot = getattr(self, "mascot_item", None)
         if mascot is not None:
             try:
@@ -2007,6 +2042,7 @@ class TutorUI:
         # so a letter whose traditional word has no emoji still looks deliberate
         # rather than like something failed to load.
         self._kg_keep_mascot()
+        self._kg_ask_button()
         # 120 rather than 132, and +/-100 rather than +/-140: the letter and its
         # picture now share a 390px column instead of half of an 800px screen.
         has_picture = picture_image(picture, 120) is not None if picture else False
@@ -2080,6 +2116,7 @@ class TutorUI:
         self._overlay_screen("kg_count", "Counting",
                              f"{n} of {kg_content.COUNT_MAX}", tint="#ECFDF5")
         self._kg_keep_mascot()
+        self._kg_ask_button()
         self.canvas.create_text(self.KG_CX, 138, text=str(n),
                                 font=self._font(70, True), fill="#059669",
                                 tags=self.OVERLAY_TAG)
@@ -3384,6 +3421,7 @@ class TutorUI:
                                             outline="", tags=self.OVERLAY_TAG)
                     x += gap
 
+        self._kg_ask_button(self.KG_ASK_BOX_STORY)
         self._overlay_button(20, 414, 170, 462, "Read again",
                              self._kg_narrate,
                              fill="#E6E9F5", text_colour=COL_TEXT, size=11)
