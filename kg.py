@@ -21,6 +21,7 @@ import profiles
 import state
 from media import stop_media_playback
 from state import (_kg_listen_lock, _kg_listen_next, _kg_listen_valid_from,
+                   kg_ask_cancel,
                    audio_queue, kg_active, kg_listen_requests, kg_listen_results,
                    playback_active)
 from uibridge import ui_invoke
@@ -263,8 +264,26 @@ def kg_answer_doubt(question, language="en"):
     return answer
 
 
-def kg_handle_doubt(ui, question, language, recognizer, mic_device, listener):
+def kg_asking_stopped():
+    """True when the child pressed the Ask button a second time, to stop.
+
+    Polled from inside the microphone read, which is where the wait actually
+    happens -- by the time the first press is being served, ai_loop is blocked
+    in it and nothing else is looking at the screen.
+    """
+    return kg_ask_cancel.is_set()
+
+
+def kg_handle_doubt(ui, question, language, recognizer, mic_device, listener,
+                    announce=True):
     """Answer a question asked mid-lesson, without ending the lesson.
+
+    `announce` is what separates a button press from a wake word. A press is
+    deliberate, so she says "Yes?" and waits. A wake word is a GUESS -- and on
+    this device a bad one, since ambient Hindi transcribes as "हे लीज़ा" -- so
+    that path passes announce=False and stays silent unless something was
+    actually heard. A false wake then costs a listen nobody notices, instead of
+    two spoken sentences into the middle of a lesson.
 
     The screen never changes. They are looking at M is for Moon while they ask
     why the moon is white, and taking the letter away to answer would lose the
@@ -275,18 +294,31 @@ def kg_handle_doubt(ui, question, language, recognizer, mic_device, listener):
     is the deadlock the park branch exists to avoid. See the STANDBY MUST NOT BE
     A ONE-WAY DOOR comment below for what that looked like when it happened.
     """
+    stop = lambda: kg_listen_waiting() or kg_asking_stopped()
+    if kg_asking_stopped():
+        # Stopped before this even began -- a second press that landed while
+        # ai_loop was still on its way here. Not a word.
+        print("[KG] The question was stopped before it began.", flush=True)
+        return
     if not question:
         # They said her name and stopped, which is most of the time at this age.
-        kg_say("Yes? What would you like to ask me?", "curious")
-        kg_wait_until_quiet()
+        if announce:
+            kg_say("Yes? What would you like to ask me?", "curious")
+            kg_wait_until_quiet()
         question = kg_capture_utterance(
             recognizer, mic_device, listener, KG_DOUBT_WAIT_S,
             KG_DOUBT_PHRASE_S, KG_DOUBT_PAUSE_S,
-            cancel=kg_listen_waiting, label="KG-DOUBT")
+            cancel=stop, label="KG-DOUBT")
+    if kg_asking_stopped():
+        # They changed their mind mid-question. Saying anything at all here
+        # would be answering somebody who has already stopped listening.
+        print("[KG] The question was stopped before it was asked.", flush=True)
+        return
     question = (question or "").strip()
     if not question:
-        kg_say("I did not quite catch that. Ask me again whenever you like.",
-               "gentle")
+        if announce:
+            kg_say("I did not quite catch that. Ask me again whenever you like.",
+                   "gentle")
         return
     print(f"[KG] Doubt asked: {question!r}", flush=True)
     ui_invoke("set_state", "thinking")

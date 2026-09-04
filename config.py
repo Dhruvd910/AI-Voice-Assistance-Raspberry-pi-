@@ -692,26 +692,28 @@ RE_IMPOSSIBLE_SCRIPT = re.compile(
 STT_MIN_LOGPROB = float(os.getenv("STT_MIN_LOGPROB", "-0.70"))
 
 
-# Whether "Hey Liza" is listened for DURING a Kindergarten lesson. Off, because
-# in this room it does not work and the failure is loud.
+# Whether "Hey Liza" is listened for DURING a Kindergarten lesson. On, but it
+# took two goes to make that safe.
 #
-# Measured over one session, from logs/liza.log: 137 reads went to Whisper, the
-# wake word fired 25 times, and 21 of those were the phrase "हे लीज़ा" -- which
-# is what the ambient Hindi conversation near this device transcribes as. Three
-# of the 25 produced any question at all, and none of the three was a question:
-# an Urdu mis-transcription, the words "Go to sleep", and the wake word itself
-# coming back. The other 22 got "What would you like to ask me?" followed by "I
-# did not quite catch that", which is a lesson interrupted twice by nothing.
+# It was turned off after one session in logs/liza.log sent 137 reads to
+# Whisper, fired 25 times, and 21 of those were "हे लीज़ा" -- what the ambient
+# Hindi conversation near this device transcribes as. Three of the 25 produced
+# any question at all and none was a question. The other 22 got "What would you
+# like to ask me?" followed by "I did not quite catch that": a lesson stopped
+# twice by nobody, over and over.
 #
-# Thirteen of those reads were HER OWN VOICE, caught because the read is up to
-# ten seconds long and she started speaking inside it.
+# What was wrong there was not the listening, it was the TALKING. A wake word is
+# a guess, and this room makes it a bad one, so the guess must be cheap to get
+# wrong. It is now: the KG wake path passes announce=False, and she says nothing
+# unless something was actually heard. A false wake costs a listen nobody
+# notices instead of two spoken sentences.
 #
-# The strict RE_WAKE_WORD_ASLEEP pattern does not help: it also matches
-# "हे लीज़ा", which is the exact false transcription.
+# The read also stands down the moment she starts speaking, which is what
+# stopped thirteen of her own sentences being transcribed as somebody trying to
+# wake her.
 #
-# A child interrupts by TAPPING her, which cannot misfire, or by talking over
-# her, which has to clear a loudness bar and so cannot be triggered by a
-# conversation across the room. Set KG_WAKE_WORD=1 to put this back in a quiet
-# room.
-KG_WAKE_WORD_ENABLED = os.getenv("KG_WAKE_WORD", "0") != "0"
+# What it still costs is a Whisper call per utterance in the room, the same as
+# standby. Set KG_WAKE_WORD=0 if that matters more than hands-free asking; the
+# Ask button on the lesson screens does not depend on it.
+KG_WAKE_WORD_ENABLED = os.getenv("KG_WAKE_WORD", "1") != "0"
 

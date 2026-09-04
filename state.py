@@ -95,6 +95,13 @@ device_state_lock = threading.Lock()
 # already talking, and the point is to stop her.
 kg_ask_event = threading.Event()
 
+# ...and pressed it AGAIN, meaning stop listening. Separate from the event
+# above rather than a toggle on it, because the two are read from different
+# threads: the screen raises this while ai_loop is already blocked inside
+# the microphone read that the first press started, and the read is ended by
+# polling this from its cancel predicate.
+kg_ask_cancel = threading.Event()
+
 
 # Set while a KG student is on the device: ai_loop parks on this rather than
 # listening. An Event rather than a bool because ai_loop waits on it.

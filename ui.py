@@ -36,7 +36,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 # this file has four of them (set_state's own parameter among them). The one
 # value that is REASSIGNED has to go through the module; see state.py.
 import state as app_state
-from state import (audio_queue, kg_ask_event, kg_listen_results, media_active,
+from state import (audio_queue, kg_ask_cancel, kg_ask_event,
+                   kg_listen_results, media_active,
                    playback_active, sleep_event, stop_playback_event,
                    wake_event)
 import kg_content
@@ -1473,25 +1474,34 @@ class TutorUI:
     # so it takes the gap in the bottom row instead.
     KG_ASK_BOX_STORY = (190, 414, 300, 462)
 
+    # Its own tag, because this button is redrawn several times on one screen --
+    # pressed, stopped, finished -- and each redraw must REPLACE the last. Drawn
+    # over the top instead, the old label stays on the canvas underneath a live
+    # button, and every press leaves another one behind.
+    KG_ASK_TAG = "kg_ask_button"
+
     def _kg_ask_button(self, box=None):
         """Draw the Ask button, or the Listening state once it has been used."""
+        self.canvas.delete(self.KG_ASK_TAG)
         x0, y0, x1, y1 = box or self.KG_ASK_BOX
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         roomy = (y1 - y0) >= 80
 
         if getattr(self, "_kg_asking", False):
-            # Painted over the button rather than beside it: a child who has
-            # just pressed it needs to see that it worked, and she is still
-            # drawing breath to ask them what they wanted.
-            self._round_rect(x0, y0, x1, y1, 14, fill="#FEF3C7",
-                             outline="#F59E0B", tags=self.OVERLAY_TAG)
-            self.canvas.create_text(cx, cy - (9 if roomy else 0),
-                                    text="Listening", font=self._font(13, True),
-                                    fill="#92400E", tags=self.OVERLAY_TAG)
-            if roomy:
-                self.canvas.create_text(cx, cy + 16, text="go on, ask me",
-                                        font=self._font(9), fill="#B45309",
-                                        tags=self.OVERLAY_TAG)
+            # Drawn over the button rather than beside it: a child who has just
+            # pressed it needs to see that it worked, while she is still drawing
+            # breath to ask them what they wanted.
+            #
+            # And it is still a BUTTON. It was a painted pill once, with no
+            # binding on it at all, which left one press per screen and no way
+            # to change your mind -- you either asked or you waited for the
+            # lesson to move on. Pressing it again stops her.
+            tag = self._overlay_button(
+                x0, y0, x1, y1, "Listening", self._kg_ask,
+                fill="#FEF3C7", text_colour="#92400E", size=13,
+                sub="tap to stop" if roomy else None,
+                label_frac=0.58 if roomy else None, sub_frac=0.80)
+            self.canvas.addtag_withtag(self.KG_ASK_TAG, tag)
             return
 
         tag = self._overlay_button(
@@ -1504,24 +1514,58 @@ class TutorUI:
             self.canvas.create_text(cx, y0 + 34, text="?",
                                     font=self._font(30, True), fill="#FFFFFF",
                                     tags=(self.OVERLAY_TAG, tag))
+        self.canvas.addtag_withtag(self.KG_ASK_TAG, tag)
+
+    def _kg_ask_box(self):
+        return (self.KG_ASK_BOX_STORY if self.overlay == "kg_story"
+                else self.KG_ASK_BOX)
 
     def _kg_ask(self):
-        """The Ask button: stop talking, and listen to the child.
+        """The Ask button, both ways round: start listening, or stop.
 
         ai_loop answers kg_ask_event before anything else in its KG branch, and
         abandons whatever question a screen was waiting for -- they have stopped
         answering that and asked something of their own.
+
+        The second press matters as much as the first. By the time it happens
+        ai_loop is already blocked inside the microphone read, so stopping is
+        not a matter of not-starting: kg_ask_cancel is what reaches into that
+        read and ends it, and kg_handle_doubt then says nothing at all, because
+        answering somebody who has stopped listening is worse than silence.
         """
         if self.overlay not in self.KG_ASK_SCREENS:
             return None
-        print("[UI] Ask tapped mid-lesson; stopping to listen.", flush=True)
-        self._kg_asking = True
-        kg_ask_event.set()
-        assistant.interrupt_playback()
-        self.set_state("listening")
-        self._kg_ask_button(self.KG_ASK_BOX_STORY
-                            if self.overlay == "kg_story" else self.KG_ASK_BOX)
+        if getattr(self, "_kg_asking", False):
+            print("[UI] Ask pressed again; stopping listening.", flush=True)
+            self._kg_asking = False
+            kg_ask_event.clear()
+            kg_ask_cancel.set()
+            assistant.interrupt_playback()
+            self.set_state("idle")
+        else:
+            print("[UI] Ask tapped mid-lesson; stopping to listen.", flush=True)
+            self._kg_asking = True
+            kg_ask_cancel.clear()
+            kg_ask_event.set()
+            assistant.interrupt_playback()
+            self.set_state("listening")
+        self._kg_ask_button(self._kg_ask_box())
         return "break"
+
+    def kg_ask_finished(self):
+        """ai_loop has finished with a press: put the button back.
+
+        Called through ui_invoke from the KG branch, in a finally, because the
+        button is PAINTED as "Listening" and nothing else undoes that. Without
+        it the screen went on saying she was listening long after she had
+        stopped, and the next press was the one that put it right -- which is
+        the "it only works once" this was reported as.
+        """
+        if not getattr(self, "_kg_asking", False):
+            return
+        self._kg_asking = False
+        if self.overlay in self.KG_ASK_SCREENS:
+            self._kg_ask_button(self._kg_ask_box())
 
     def _kg_keep_mascot(self):
         """Lift the mascot above the overlay backing, so she is IN the lesson.

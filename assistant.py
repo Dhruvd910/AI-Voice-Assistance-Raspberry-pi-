@@ -104,8 +104,9 @@ from speech import (ClampedRecognizer, HeldMicrophone, VoiceListener,
                     wake_word_match, is_repeated_hallucination, rejoin_absorbed_consonant,
                     clamp_stt_prompt, segment_logprob)
 from kg import (KG_DOUBT_PAUSE_S, KG_DOUBT_PHRASE_S, KG_DOUBT_WAIT_S,
-                kg_cancel_listen, kg_capture_utterance, kg_handle_doubt,
-                kg_holds_microphone, kg_listen_waiting, kg_serve_listen)
+                kg_asking_stopped, kg_cancel_listen, kg_capture_utterance,
+                kg_handle_doubt, kg_holds_microphone, kg_listen_waiting,
+                kg_serve_listen)
 from audio import audio_player_worker, list_cartesia_voices
 from config import (BYTES_PER_SEC, CARTESIA_API_KEY, CARTESIA_MODEL,
                     CARTESIA_SAMPLE_RATE, CARTESIA_SPEED, CARTESIA_VOICE_ID,
@@ -114,7 +115,7 @@ from state import note_spoken
 
 
 
-from state import (kg_ask_event,
+from state import (kg_ask_cancel, kg_ask_event,
                    _kg_listen_lock, _kg_listen_next, _kg_listen_valid_from, audio_queue,
                    caption_lock, caption_state, device_state_lock, kg_active,
                    kg_listen_requests, kg_listen_results, media_active, playback_active,
@@ -1216,12 +1217,25 @@ def ai_loop(ui, headless=False):
             # mark it against the old one.
             if kg_ask_event.is_set():
                 kg_ask_event.clear()
+                kg_ask_cancel.clear()      # a fresh press, not a leftover stop
                 kg_cancel_listen()
                 interrupt_playback()
-                asked = kg_capture_utterance(
-                    recognizer, mic_device, listener, KG_DOUBT_WAIT_S,
-                    KG_DOUBT_PHRASE_S, KG_DOUBT_PAUSE_S, label="KG-ASK")
-                kg_handle_doubt(ui, asked, "", recognizer, mic_device, listener)
+                try:
+                    asked = kg_capture_utterance(
+                        recognizer, mic_device, listener, KG_DOUBT_WAIT_S,
+                        KG_DOUBT_PHRASE_S, KG_DOUBT_PAUSE_S,
+                        # A second press ends the read where it is waiting.
+                        cancel=kg_asking_stopped, label="KG-ASK")
+                    if not kg_asking_stopped():
+                        kg_handle_doubt(ui, asked, "", recognizer,
+                                        mic_device, listener)
+                finally:
+                    # In a finally because the button is PAINTED as "Listening"
+                    # and nothing else puts it back. Losing this on an exception
+                    # would leave a child looking at a screen that says she is
+                    # listening when she stopped some time ago.
+                    kg_ask_cancel.clear()
+                    ui_invoke("kg_ask_finished")
                 continue
 
             # Parked, but not deaf: the spelling screen asks the child to SAY the
@@ -1306,8 +1320,13 @@ def ai_loop(ui, headless=False):
                 finally:
                     listen_started[:] = [0.0, 0.0]
                 if woke:
+                    # announce=False: a wake word is a guess, and in this room a
+                    # bad one. If nothing was actually said she says nothing at
+                    # all and the lesson carries on, so a false wake costs a
+                    # listen nobody hears rather than two spoken sentences.
                     kg_handle_doubt(ui, doubt, doubt_language,
-                                    recognizer, mic_device, listener)
+                                    recognizer, mic_device, listener,
+                                    announce=False)
                 continue
             time.sleep(0.4)
             continue
