@@ -214,22 +214,44 @@ if not os.path.exists(UI_BG_IMAGE):
 
 _ui_assets = {}
 
-def ui_asset(*parts):
+def ui_asset(*parts, size=None):
     """A PNG from the UI folder, as RGBA, or None if it is not there.
 
-    Cached: these are placed on every redraw of a screen, and decoding a PNG
-    each time is not free on a Pi. None rather than an exception because a
-    missing file must cost a nicer button, not the screen."""
-    key = parts
+    `size` gives a square version, for the avatars, which are drawn at 110 and
+    used smaller. Cached by size as well: these are placed on every redraw of a
+    screen, and decoding and resampling a PNG each time is not free on a Pi.
+    None rather than an exception because a missing file must cost a nicer
+    button, not the screen."""
+    key = (parts, size)
     if key not in _ui_assets:
         path = os.path.join(UI_DIR, *parts)
         try:
-            _ui_assets[key] = Image.open(path).convert("RGBA")
+            image = Image.open(path).convert("RGBA")
+            if size:
+                image = image.resize((size, size), Image.LANCZOS)
+            _ui_assets[key] = image
         except Exception:
             print(f"[UI] No artwork at {os.path.join(*parts)}; drawing it instead.",
                   flush=True)
             _ui_assets[key] = None
     return _ui_assets[key]
+
+
+# How many Profile_NN.png there are to choose from.
+PROFILE_AVATARS = 12
+
+def profile_avatar(profile, size=64):
+    """The animal for a child, or None if the artwork is missing.
+
+    Derived from the user_id rather than stored, so it needs no change to the
+    profile format and no screen asking a four-year-old to pick a picture --
+    and it is STABLE: the same child gets the same animal on every screen, for
+    as long as that profile exists, which is the only property that matters
+    when the picture is how a pre-reader finds their own name.
+    """
+    ident = (profile or {}).get("user_id") or (profile or {}).get("name") or ""
+    index = (sum(ord(c) for c in str(ident)) % PROFILE_AVATARS) + 1
+    return ui_asset("Profile", f"Profile_{index:02d}.png", size=size)
 
 def _background_image(w, h):
     """The wallpaper, scaled to COVER w*h and centre-cropped.
@@ -1807,12 +1829,21 @@ class TutorUI:
                                               tags=tags)
 
         cx, cy = WHO_X0 + 34, TOP_Y0 + 39
-        self.canvas.create_oval(cx - 21, cy - 21, cx + 21, cy + 21,
-                                fill="#7C3AED", outline="", tags=tags)
-        self.canvas.create_oval(cx - 7, cy - 10, cx + 7, cy + 4,
-                                fill="#FFFFFF", outline="", tags=tags)
-        self.canvas.create_arc(cx - 13, cy - 1, cx + 13, cy + 24, start=0, extent=180,
-                               fill="#FFFFFF", outline="", tags=tags)
+        # The child's own animal, the same one their row wears in the picker, so
+        # a pre-reader can tell at a glance whose device this currently is. The
+        # image is set in refresh_profile_chip, because who is using it changes
+        # while this item does not.
+        self.profile_chip_face = None
+        if profile_avatar({}, 46) is not None:
+            self.profile_chip_face = self.canvas.create_image(
+                cx, cy, anchor="center", tags=tags)
+        else:
+            self.canvas.create_oval(cx - 21, cy - 21, cx + 21, cy + 21,
+                                    fill="#7C3AED", outline="", tags=tags)
+            self.canvas.create_oval(cx - 7, cy - 10, cx + 7, cy + 4,
+                                    fill="#FFFFFF", outline="", tags=tags)
+            self.canvas.create_arc(cx - 13, cy - 1, cx + 13, cy + 24, start=0, extent=180,
+                                   fill="#FFFFFF", outline="", tags=tags)
 
         self.canvas.create_text(WHO_X0 + 66, TOP_Y0 + 26, text="Welcome,", anchor="w",
                                 font=self._font(8), fill=COL_TEXT_DIM, tags=tags)
@@ -1841,8 +1872,40 @@ class TutorUI:
                                text=self._ellipsize(label, self._font(13, True),
                                                     WHO_X1 - WHO_X0 - 90),
                                fill=colour)
+        if getattr(self, "profile_chip_face", None) is not None:
+            face = profile_avatar(profile, 46) if profile else None
+            if face is None:
+                self.canvas.itemconfigure(self.profile_chip_face, state="hidden")
+            else:
+                # Tk keeps no reference of its own, and this one is replaced
+                # every time Switch User is used, so it is held here rather than
+                # in _photos -- which is never emptied.
+                self._chip_face_photo = ImageTk.PhotoImage(face)
+                self.canvas.itemconfigure(self.profile_chip_face,
+                                          image=self._chip_face_photo,
+                                          state="normal")
 
     # ---------- who is using the device ----------
+    def _art_button(self, at, asset, label, command, text_colour, size):
+        """A button whose face is artwork, with the wording drawn on it.
+
+        These cards come blank -- unlike the action buttons, whose labels are
+        painted in -- so the text goes on top. False when the file is missing,
+        which is the caller's cue to draw the old one instead.
+        """
+        art = ui_asset(*asset)
+        if art is None:
+            return False
+        x, y = at
+        self._overlay_seq += 1
+        tag = f"artbtn{self._overlay_seq}"
+        self._place_overlay_asset(art, x, y, tag)
+        self.canvas.create_text(x + art.width / 2, y + art.height / 2, text=label,
+                                font=self._font(size, True), fill=text_colour,
+                                tags=(self.OVERLAY_TAG, tag))
+        self.canvas.tag_bind(tag, "<Button-1>", lambda e: command())
+        return True
+
     def show_profile_picker(self):
         """Existing profiles plus a way to add one. The Switch User screen.
 
@@ -1852,37 +1915,78 @@ class TutorUI:
         people = profiles.list_profiles()
         self._overlay_screen("picker", "Who's learning today?",
                              "Tap your name, or add a new student.")
+        active_id = (profiles.active_profile() or {}).get("user_id")
+        card = ui_asset("Profile", "Profile_bg.png")
+        chosen_card = ui_asset("Profile", "Select_bg.png")
         for index, profile in enumerate(people[:6]):
             col, row = index % 3, index // 3
-            x0 = 40 + col * 246
-            y0 = 110 + row * 96
             klass = profile.get("class")
             tint = "#FFF4E6" if klass == profiles.KG_CLASS else "#F3EEFF"
             accent = "#F59E0B" if klass == profiles.KG_CLASS else "#7C3AED"
-            self._overlay_button(x0, y0, x0 + 226, y0 + 78,
-                                 self._ellipsize(profile.get("name", "Student"),
-                                                 self._font(13, True), 200),
-                                 lambda p=profile: self.choose_profile(p),
-                                 fill=tint, text_colour=accent, size=13,
-                                 sub=f"Class {klass}")
+            name = profile.get("name", "Student")
+            if card is None:
+                x0 = 40 + col * 246
+                y0 = 110 + row * 96
+                self._overlay_button(x0, y0, x0 + 226, y0 + 78,
+                                     self._ellipsize(name, self._font(13, True), 200),
+                                     lambda p=profile: self.choose_profile(p),
+                                     fill=tint, text_colour=accent, size=13,
+                                     sub=f"Class {klass}")
+                continue
+            # 219x76 to the artwork's own size, three across. Select_bg is the
+            # same card in the "this is the one in use" colour.
+            x0 = 53 + col * 237
+            y0 = 120 + row * 96
+            self._overlay_seq += 1
+            tag = f"pick{self._overlay_seq}"
+            art = chosen_card if (chosen_card is not None
+                                  and profile.get("user_id") == active_id) else card
+            self._place_overlay_asset(art, x0, y0, tag)
+            face = profile_avatar(profile, 62)
+            if face is not None:
+                # The picture is how a child who cannot read finds their own
+                # row, so it leads and the name follows it.
+                self._place_overlay_asset(face, x0 + 7, y0 + 7, tag)
+            text_x = x0 + (78 if face is not None else 16)
+            self.canvas.create_text(
+                text_x, y0 + 30,
+                text=self._ellipsize(name, self._font(13, True),
+                                     x0 + 210 - text_x),
+                anchor="w", font=self._font(13, True), fill=accent,
+                tags=(self.OVERLAY_TAG, tag))
+            self.canvas.create_text(text_x, y0 + 51, text=f"Class {klass}",
+                                    anchor="w", font=self._font(9),
+                                    fill=COL_TEXT_DIM, tags=(self.OVERLAY_TAG, tag))
+            self.canvas.tag_bind(tag, "<Button-1>",
+                                 lambda e, p=profile: self.choose_profile(p))
         active = profiles.active_profile()
         if active:
             # Two buttons once somebody is set up: add a NEW child, or correct
             # the one already in use. Side by side rather than one centred, and
             # both still 56px tall, which is well past what a fingertip needs.
-            self._overlay_button(130, 396, 410, 452, "+  Add a student",
-                                 self.show_profile_setup, fill=COL_INDIGO, size=13)
-            self._overlay_button(426, 396, 670, 452, "Edit this student",
-                                 lambda: self.show_profile_setup(profiles.active_profile()),
-                                 fill="#E6E9F5", text_colour=COL_TEXT, size=12,
-                                 sub=self._ellipsize(
-                                     f"{active.get('name', 'Student')} · "
-                                     f"Class {active.get('class')}",
-                                     self._font(9), 214))
+            if not self._art_button((219, 396), ("Profile", "Add new.png"),
+                                    "+  Add a student", self.show_profile_setup,
+                                    "#FFFFFF", 13):
+                self._overlay_button(130, 396, 410, 452, "+  Add a student",
+                                     self.show_profile_setup, fill=COL_INDIGO, size=13)
+            if not self._art_button(
+                    (443, 396), ("Profile", "Edit.png"), "Edit",
+                    lambda: self.show_profile_setup(profiles.active_profile()),
+                    COL_TEXT, 12):
+                self._overlay_button(426, 396, 670, 452, "Edit this student",
+                                     lambda: self.show_profile_setup(profiles.active_profile()),
+                                     fill="#E6E9F5", text_colour=COL_TEXT, size=12,
+                                     sub=self._ellipsize(
+                                         f"{active.get('name', 'Student')} · "
+                                         f"Class {active.get('class')}",
+                                         self._font(9), 214))
         else:
-            self._overlay_button(UI_W / 2 - 150, 396, UI_W / 2 + 150, 452,
-                                 "+  Add a student", self.show_profile_setup,
-                                 fill=COL_INDIGO, size=13)
+            if not self._art_button((UI_W // 2 - 102, 396),
+                                    ("Profile", "Add new.png"), "+  Add a student",
+                                    self.show_profile_setup, "#FFFFFF", 13):
+                self._overlay_button(UI_W / 2 - 150, 396, UI_W / 2 + 150, 452,
+                                     "+  Add a student", self.show_profile_setup,
+                                     fill=COL_INDIGO, size=13)
         if people:
             self._overlay_button(628, 20, 780, 56, "Close",
                                  self.dismiss_overlay, fill="#E6E9F5",
