@@ -28,6 +28,23 @@ def load_dotenv(path=None):
             key, value = line.split("=", 1)
             key = key.strip()
             value = value.strip()
+            # AN INLINE COMMENT IS NOT PART OF THE VALUE.
+            #
+            #   CARTESIA_API_KEY=sk_car_xxxxxxxx #mine
+            #
+            # was read as a key with " #mine" stuck on the end of it, and
+            # Cartesia answered 401 Invalid API key -- which reads like a bad
+            # key rather than a bad line, and sent somebody back to the
+            # dashboard to generate another one. The key was fine both times.
+            #
+            # Only WHITESPACE-then-hash ends a value, so a '#' that is genuinely
+            # part of one survives as long as nothing separates it. A quoted
+            # value is left alone entirely; the quotes already say where it ends.
+            if value[:1] not in "\"'":
+                for at in range(1, len(value)):
+                    if value[at] == "#" and value[at - 1] in " \t":
+                        value = value[:at].rstrip()
+                        break
             # Only strip a MATCHED surrounding pair. Stripping quote characters
             # unconditionally corrupts any value that legitimately ends in one,
             # such as the ALSA device name plug:'dmix:CARD=Device_1,DEV=0'.

@@ -1,0 +1,21 @@
+#!/bin/bash
+# Is a Cartesia key valid, and does it have credits?
+#   ./check-cartesia-key sk_car_xxxxx      test a key before pasting it in
+#   ./check-cartesia-key                   test the one in .env
+KEY="${1:-$(grep '^CARTESIA_API_KEY=' "$(dirname "$0")/.env" | cut -d= -f2-)}"
+[ -z "$KEY" ] && { echo "no key given and none in .env"; exit 1; }
+echo "key: ${#KEY} chars, starts ${KEY:0:8}…"
+CODE=$(curl -s -o /tmp/cartesia_check.$$ -w '%{http_code}' \
+  -H "X-API-Key: $KEY" -H "Cartesia-Version: 2024-06-10" \
+  https://api.cartesia.ai/voices)
+case "$CODE" in
+  200) echo "VALID  — the key works and the account has access." ;;
+  401) echo "INVALID — Cartesia does not recognise this key at all."
+       echo "         Not a credits problem. Check it was copied whole from"
+       echo "         play.cartesia.ai, and that it is the API key rather than"
+       echo "         a voice or project id." ;;
+  402) echo "VALID, BUT OUT OF CREDITS — the key authenticates; the account has"
+       echo "         nothing left to spend. Top up or enable overages." ;;
+  *)   echo "HTTP $CODE"; head -c 200 /tmp/cartesia_check.$$ ;;
+esac
+rm -f /tmp/cartesia_check.$$
