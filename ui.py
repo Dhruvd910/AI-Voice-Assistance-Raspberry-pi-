@@ -1125,25 +1125,37 @@ class TutorUI:
 
     def _build_mode_cards(self):
         panel = ui_asset("Home", "Mode BG.png")
+        # THE HEADING IS WHERE THE CURRENT MODE IS NAMED.
+        #
+        # It used to read a fixed "MODE", and which of the three was in use was
+        # marked on the cards themselves -- first with a ring around the chosen
+        # one, then by washing the other two toward white. Neither survived
+        # contact with the device: at 145x62 a card has no room to give away to
+        # a border, and the wash read as blur rather than as "not this one".
+        # Saying it here instead costs the cards nothing and is the one place on
+        # this panel that was already just a label.
+        #
+        # 13pt, not the 15 the fixed word was set at: "CO-TELL MODE" measures
+        # 129px against the 153px the panel is actually opaque for at this row,
+        # and 15pt puts it at 146px, which touches both edges.
         if panel is not None:
             self._place_asset(panel, MODES_X0, MODES_Y0)
             # The panel art carries no wording, so the heading is still drawn --
             # over the rainbow, which is why it is dark rather than tinted.
-            self.canvas.create_text((MODES_X0 + MODES_X1) / 2, MODES_Y0 + 19,
-                                    text="MODE", font=self._font(15, True),
-                                    fill="#3A2E6E")
+            self.mode_heading = self.canvas.create_text(
+                (MODES_X0 + MODES_X1) / 2, MODES_Y0 + 19,
+                text=f"{self.current_mode} MODE", font=self._font(13, True),
+                fill="#3A2E6E")
         else:
             self._card(MODES_X0, MODES_Y0, MODES_X1, MODES_Y1, 16)
-            self.canvas.create_text((MODES_X0 + MODES_X1) / 2, MODES_Y0 + 18,
-                                    text="CHOOSE MODE", font=self._font(9, True),
-                                    fill=COL_TEXT)
-        for dx, dy, s in ((-10, -5, 4), (-2, 3, 3)):
-            x, y = MODES_X1 - 18 + dx, MODES_Y0 + 18 + dy
-            self.canvas.create_polygon(x, y - s, x + s * 0.35, y - s * 0.35, x + s, y,
-                                       x + s * 0.35, y + s * 0.35, x, y + s,
-                                       x - s * 0.35, y + s * 0.35, x - s, y,
-                                       x - s * 0.35, y - s * 0.35,
-                                       fill="#A78BFA", outline="")
+            self.mode_heading = self.canvas.create_text(
+                (MODES_X0 + MODES_X1) / 2, MODES_Y0 + 18,
+                text=f"{self.current_mode} MODE", font=self._font(9, True),
+                fill=COL_TEXT)
+        # The two little diamonds that used to sit up here are gone with the
+        # short heading. They lived at x=141..156 on the heading's own row,
+        # which is inside the width the mode name now needs; decoration that
+        # only fitted while the label said nothing is not worth the collision.
 
         self.cards = []
         for i, mode in enumerate(self.modes):
@@ -1415,6 +1427,10 @@ class TutorUI:
         self.root.after(FRAME_MS, self._animate)
 
     def _refresh_cards(self):
+        # Which mode is in use is said in the panel heading; see _build_mode_cards.
+        heading = getattr(self, "mode_heading", None)
+        if heading is not None:
+            self.canvas.itemconfigure(heading, text=f"{self.current_mode} MODE")
         for i, card in enumerate(self.cards):
             chosen = i == self.current_mode_index
             accent = card["accent"]
