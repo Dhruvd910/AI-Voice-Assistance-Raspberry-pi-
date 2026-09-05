@@ -64,6 +64,9 @@ COL_INDIGO    = "#6366F1"
 COL_STOP      = "#F43F5E"
 
 MODE_ACCENTS = {"TUTOR": "#7C3AED", "CO-TELL": "#14B8A6", "RE-TELL": "#F59E0B"}
+# The stroke that marks the chosen mode. Named because the ring has to be inset
+# by half of it to sit ON the card rather than around it; see _build_mode_cards.
+RING_WIDTH = 3
 MODE_TINTS   = {"TUTOR": "#F3EEFF", "CO-TELL": "#E6FAF6", "RE-TELL": "#FFF4E6"}
 # Kept short on purpose: the mode rows are a narrow column now, and a blurb
 # that wraps to four lines in a 78px row is not read, it is just texture.
@@ -266,6 +269,45 @@ def _background_image(w, h):
                           max(h, round(image.height * scale))), Image.LANCZOS)
     left, top = (image.width - w) // 2, (image.height - h) // 2
     return image.crop((left, top, left + w, top + h))
+
+# How much of a screen's own colour is washed over the wallpaper behind it.
+# The profile and Kindergarten screens are meant to read as COLOURED GLASS over
+# the same garden the home screen shows, so this one number is what decides
+# whether they look like tinted glass or like a flat panel with a picture stuck
+# behind it. Measured against the artwork: below about 0.5 the foliage around
+# the edge of the wallpaper fights the wording, above about 0.7 the wallpaper
+# stops being visible at all and we are back to the flat fill this replaces.
+OVERLAY_TINT_ALPHA = 0.58
+
+# One composited backing per screen colour, built on first use and kept for the
+# life of the process. There are a dozen tints, each is a full 800x480 bitmap,
+# and a lesson screen redraws on every letter -- recompositing the wallpaper
+# each time is a visible stutter on this Pi.
+_overlay_backings = {}
+
+def _overlay_backing(tint):
+    """The wallpaper with `tint` washed over it at UI size, or None.
+
+    A Tk canvas rectangle has no alpha, so every modal screen used to be backed
+    by a FLAT OPAQUE fill -- which is the plain white strip showing around the
+    Kindergarten artwork, because the glass panel is 762x441 on an 800x480
+    screen and the fill is what fills the margin. Compositing the wash into a
+    bitmap here gets the translucency these screens were drawn for without
+    reaching for a second toolkit, and it costs one PhotoImage per colour.
+
+    None when the wallpaper cannot be read, which is the caller's cue to draw
+    the flat fill it always drew."""
+    if tint not in _overlay_backings:
+        try:
+            wall = _background_image(UI_W, UI_H)
+            wash = Image.new("RGB", wall.size, tint)
+            _overlay_backings[tint] = ImageTk.PhotoImage(
+                Image.blend(wall, wash, OVERLAY_TINT_ALPHA))
+        except Exception as exc:
+            print(f"[UI] Overlay wallpaper unavailable ({exc}); "
+                  f"falling back to the flat tint.", flush=True)
+            _overlay_backings[tint] = None
+    return _overlay_backings[tint]
 
 def _build_mascot_cache(state, fname):
     out_dir = os.path.join(MASCOT_CACHE_DIR, state)
@@ -482,6 +524,20 @@ def _action_image(w, h, radius, c0, c1, icon):
     else:
         _draw_action_icon(draw, icon, cx, cy)
     return img
+
+def _pressed_image(image):
+    """The same button face, dimmed, for the moment a finger is on it.
+
+    RGB only, with the original alpha put back afterwards: blending an RGBA
+    image toward black moves the ALPHA band too, which turns every transparent
+    pixel around a rounded button into opaque black -- a dark square where the
+    button used to be."""
+    rgb = image.convert("RGB")
+    dark = Image.blend(rgb, Image.new("RGB", rgb.size, (0, 0, 0)), 0.16)
+    out = dark.convert("RGBA")
+    if "A" in image.getbands():
+        out.putalpha(image.getchannel("A"))
+    return out
 
 def _album_art_image(size, radius=10):
     """Placeholder cover art: nothing upstream gives us a real thumbnail."""
@@ -1061,9 +1117,18 @@ class TutorUI:
                 # Which mode is chosen cannot be shown by recolouring a picture,
                 # so it is a ring around the chosen one. Created for every row
                 # and hidden until _refresh_cards picks one.
-                ring = self._round_rect(MODE_CARD_X0 - 2, y0 - 2,
-                                        MODE_CARD_X1 + 2, y1 + 2, 14,
-                                        fill="", outline=accent, width=3, tags=tag)
+                #
+                # INSIDE the artwork, not around it. Drawn 2px outside the card
+                # with a 3px stroke, this ring floated three or four pixels off
+                # every edge of the picture it was meant to be selecting -- it
+                # read as a stray rectangle sitting behind the button rather
+                # than as the button being chosen. Half the stroke width in from
+                # each edge puts the whole of it on the card.
+                inset = RING_WIDTH / 2
+                ring = self._round_rect(MODE_CARD_X0 + inset, y0 + inset,
+                                        MODE_CARD_X1 - inset, y1 - inset, 12,
+                                        fill="", outline=accent, width=RING_WIDTH,
+                                        tags=tag)
                 self.canvas.itemconfigure(ring, state="hidden")
                 self.canvas.tag_bind(tag, "<Button-1>",
                                      lambda e, idx=i: self.set_mode(idx))
@@ -1172,6 +1237,54 @@ class TutorUI:
     BUTTON_ART = {"SPEAK": "Speak Button.png", "STOP": "Stop Button.png",
                   "SLEEP": "Sleep Button.png"}
 
+    # How far a button sinks under a finger. Small on purpose: the artwork has
+    # its own drop shadow painted in, so a big movement reads as the button
+    # coming apart rather than as it going down.
+    PRESS_DIP = 2
+    # A press that never gets its release puts the button back anyway. Touch
+    # drivers do lose one now and then, and a button left dimmed and 2px low
+    # looks broken for as long as the screen is up.
+    PRESS_RESET_MS = 600
+
+    def _press_feedback(self, tag, item, face, command):
+        """Make one button look pressed while a finger is on it, then act.
+
+        A canvas image does not change under a touch by itself, and with no
+        cursor and no hover on this panel that left the three big buttons
+        feeling dead -- the only sign a tap had landed was whatever Liza did
+        several seconds later. The face is swapped for a dimmed copy and the
+        whole button dropped PRESS_DIP pixels, and put back on release.
+
+        The action is called from HERE rather than bound separately, because
+        <Button-1> and <ButtonPress-1> are the same Tk event: a second
+        tag_bind for it REPLACES this one instead of running beside it.
+        """
+        # The name Tk already holds for the normal face, so the button does not
+        # need a second copy of its own picture kept alive to go back to.
+        normal = self.canvas.itemcget(item, "image")
+        pressed = ImageTk.PhotoImage(_pressed_image(face))
+        self._photos.append(pressed)
+        sunk = []
+
+        def up(event=None):
+            if sunk:
+                sunk.clear()
+                self.canvas.itemconfigure(item, image=normal)
+                # By tag, not by item: on the drawn fallback the label and
+                # sub-label are separate items on the same button.
+                self.canvas.move(tag, 0, -self.PRESS_DIP)
+
+        def down(event=None):
+            if not sunk:
+                sunk.append(True)
+                self.canvas.itemconfigure(item, image=pressed)
+                self.canvas.move(tag, 0, self.PRESS_DIP)
+                self.root.after(self.PRESS_RESET_MS, up)
+            return command(event)
+
+        self.canvas.tag_bind(tag, "<ButtonPress-1>", down)
+        self.canvas.tag_bind(tag, "<ButtonRelease-1>", up)
+
     def _build_buttons(self):
         self.buttons = {}
         handlers = {"SPEAK": self.wake_up, "STOP": self.stop_speaking, "SLEEP": self.go_to_sleep}
@@ -1181,16 +1294,18 @@ class TutorUI:
             if art is not None:
                 # Label, sub-label and icon are painted into the artwork, so
                 # nothing is written over it.
-                self._place_asset(art, x0, BTN_Y0, tag)
+                face = art
+                item = self._place_asset(art, x0, BTN_Y0, tag)
             else:
-                self._place_photo(_action_image(BTN_W, BTN_H, 20, c0, c1, icon), x0, BTN_Y0, tag)
+                face = _action_image(BTN_W, BTN_H, 20, c0, c1, icon)
+                item = self._place_photo(face, x0, BTN_Y0, tag)
                 # 70, not 92: the icon ring ends 57px in, so this is the same
                 # clearance beside a narrower button.
                 self.canvas.create_text(x0 + 70, BTN_Y0 + 26, text=label, anchor="w",
                                         font=self._font(15, True), fill="#FFFFFF", tags=tag)
                 self.canvas.create_text(x0 + 70, BTN_Y0 + 45, text=sub, anchor="w",
                                         font=self._font(7), fill=sub_col, tags=tag)
-            self.canvas.tag_bind(tag, "<Button-1>", handlers[label])
+            self._press_feedback(tag, item, face, handlers[label])
             self.buttons[label] = tag
 
     # ---------- runtime ----------
@@ -1555,6 +1670,17 @@ class TutorUI:
         self.asleep = False
         sleep_event.clear()
         wake_event.set()
+        # Said on THIS thread, now, rather than left to ai_loop.
+        #
+        # ai_loop only repaints the caption when it reaches the top of its
+        # standby loop, and the wake-word read it is sitting in runs for up to
+        # WAKE_LISTEN_TIMEOUT_S + WAKE_PHRASE_LIMIT_S. So the panel went on
+        # saying "Sleeping" for as much as sixteen seconds after the button was
+        # pressed, which is far longer than anyone waits before deciding the
+        # button is broken and pressing it again. The read is cancelled on
+        # wake_event now (see ai_loop's standby branch), but the caption still
+        # has to change on the tap itself for the button to feel connected.
+        self.set_state("listening")
         return "break"
 
     def tap_to_wake(self, event=None):
@@ -1622,7 +1748,20 @@ class TutorUI:
         # so ai_loop reaches the top of its loop -- and this pending intro --
         # right away. ai_loop's own pending_mode_intro handler still does the
         # real interrupt_playback() sweep and clears this event again.
-        stop_playback_event.set()
+        # ONLY WHILE SOMETHING IS ACTUALLY PLAYING.
+        #
+        # Nothing clears this flag but interrupt_playback(), and the only place
+        # that runs for a mode tap is ai_loop's pending_mode_intro handler at
+        # the top of its loop -- which standby does not reach. So a mode tapped
+        # while she was in standby (which is most of the time) left the flag
+        # set, and audio_player_worker drops every item it is handed while it is
+        # set: she woke, listened, thought, and then played nothing at all. The
+        # mode had in fact changed; she had simply been struck dumb on the way
+        # to saying so, which is exactly what "I cannot switch modes" looks like
+        # from the outside. Set only when there is a reply to cut short, which
+        # is the case the flag was added for.
+        if playback_active.is_set() or not audio_queue.empty():
+            stop_playback_event.set()
         app_state.pending_mode_intro = MODE_INTROS[self.current_mode]
 
     def cycle_mode(self, event=None):
@@ -1811,8 +1950,17 @@ class TutorUI:
             kg.kg_cancel_listen()
         self._clear_overlay()
         self.overlay = name
-        backing = self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill=tint,
-                                               outline="", tags=self.OVERLAY_TAG)
+        # The wallpaper first, with this screen's colour washed over it. Held in
+        # the module-level cache rather than self._overlay_photos, which
+        # _clear_overlay empties -- these are shared between screens and must
+        # outlive any one of them.
+        wallpaper = _overlay_backing(tint)
+        if wallpaper is not None:
+            backing = self.canvas.create_image(0, 0, anchor="nw", image=wallpaper,
+                                               tags=self.OVERLAY_TAG)
+        else:
+            backing = self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill=tint,
+                                                   outline="", tags=self.OVERLAY_TAG)
         # The backing must SWALLOW taps, not merely cover the screen.
         #
         # A canvas dispatches a click to the topmost item that has a binding for
@@ -1888,7 +2036,11 @@ class TutorUI:
             self.profile_chip_bg = self._card(WHO_X0, TOP_Y0, WHO_X1, TOP_Y1, 16,
                                               tags=tags)
 
-        cx, cy = WHO_X0 + 34, TOP_Y0 + 39
+        # Centred in the card, not 8px below it. TOP_Y0 + 39 put the middle of a
+        # 46px picture at y=56 on a card running 17..79, so its bottom edge
+        # landed on the card's bottom edge and the animal read as having slipped
+        # off the row rather than as sitting beside the name.
+        cx, cy = WHO_X0 + 34, (TOP_Y0 + TOP_Y1) // 2
         # The child's own animal, the same one their row wears in the picker, so
         # a pre-reader can tell at a glance whose device this currently is. The
         # image is set in refresh_profile_chip, because who is using it changes

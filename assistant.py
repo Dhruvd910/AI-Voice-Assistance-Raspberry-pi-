@@ -1205,6 +1205,11 @@ def ai_loop(ui, headless=False):
             retell_buffer, retell_silence_from, retell_nudged = [], 0.0, False
             wake_event.clear()
             sleep_event.clear()
+            # Anything the PREVIOUS student said in the same breath as the wake
+            # word. Held across passes of the loop, so without this it survived
+            # the handover and was answered as the child's first question the
+            # moment they left the KG screens.
+            pending_question = pending_language = ""
             # THE CHILD TAPPED LIZA. Answered before anything else here,
             # because it is the one interruption that cannot fail: no wake word
             # to mishear, no bar to clear, no room acoustics involved. On this
@@ -1402,12 +1407,37 @@ def ai_loop(ui, headless=False):
                 # transcripts of Liza's own story narration, taken off the
                 # microphone while a KG story screen was on the display.
                 kg_took_the_microphone = False
+                # A MODE CARD WAS TAPPED WHILE SHE WAS IN STANDBY.
+                #
+                # Standby is where the device spends most of its life, so it is
+                # where most mode taps land -- and this loop had no exit for one.
+                # The intro is only spoken by the handler at the TOP of ai_loop,
+                # and nothing here went back there, so tapping a mode did
+                # nothing audible until somebody separately woke her, said
+                # something, and waited out the whole answer. Which is what
+                # "I cannot switch modes" was: the mode HAD changed, silently,
+                # with no way to tell from the outside.
+                mode_tapped = False
+
+                # The three things that end a standby read early, in one place
+                # so the two loops below cannot drift apart. wake_event is the
+                # Speak button: without it here the tap was not noticed until
+                # the current wake read timed out, up to sixteen seconds later,
+                # which is well past the point where anyone decides the button
+                # is broken -- the Sleep-then-Speak complaint exactly.
+                def standby_interrupted():
+                    return bool(wake_event.is_set() or kg_holds_microphone(ui)
+                                or state.pending_mode_intro)
+
                 if WAKE_WORD_ENABLED:
                     print(f"[STATE] In {'Sleep' if ui.asleep else 'Standby'} Mode. "
                           f"Say 'Hey Liza' or tap Speak...", flush=True)
                     while not wake_event.is_set():
                         if kg_holds_microphone(ui):
                             kg_took_the_microphone = True
+                            break
+                        if state.pending_mode_intro:
+                            mode_tapped = True
                             break
                         # Timed like every other read. Standby is where the
                         # device spends most of its life, so a wedge here is the
@@ -1419,10 +1449,11 @@ def ai_loop(ui, headless=False):
                         try:
                             woke, pending_question, pending_language = listen_for_wake_word(
                                 recognizer, mic_device, asleep=ui.asleep, listener=listener,
-                                # A screen that opens mid-read gets the device
-                                # back within a frame or two, instead of after
-                                # the ten-second window this read is allowed.
-                                cancel=lambda: kg_holds_microphone(ui))
+                                # A screen that opens mid-read, a Speak tap or a
+                                # mode tap all get the device back within a frame
+                                # or two, instead of after the ten-second window
+                                # this read is allowed.
+                                cancel=standby_interrupted)
                         finally:
                             listen_started[:] = [0.0, 0.0]
                         if woke:
@@ -1433,6 +1464,9 @@ def ai_loop(ui, headless=False):
                         if kg_holds_microphone(ui):
                             kg_took_the_microphone = True
                             break
+                        if state.pending_mode_intro:
+                            mode_tapped = True
+                            break
                         time.sleep(0.1)
 
                 if kg_took_the_microphone:
@@ -1441,6 +1475,15 @@ def ai_loop(ui, headless=False):
                     # and would have her answering a child who only tapped a tile.
                     print("[STATE] A Kindergarten screen needs the microphone; "
                           "leaving standby.", flush=True)
+                    continue
+
+                if mode_tapped:
+                    # Back to the top as well, where the intro is spoken. It
+                    # leaves session_active False on purpose: the handler up
+                    # there sets it, and it is the one that knows a deliberate
+                    # tap counts as being awake.
+                    print("[STATE] A mode was chosen from standby; "
+                          "announcing it.", flush=True)
                     continue
 
                 wake_event.clear()
@@ -1831,7 +1874,22 @@ def ai_loop(ui, headless=False):
                             audio = listener.wait_for_utterance(
                                 listen_timeout, phrase_limit,
                                 recognizer.pause_threshold,
-                                preroll_ms=preroll_ms)
+                                preroll_ms=preroll_ms,
+                                # SWITCHING TO A KINDERGARTEN CHILD ENDS THIS READ.
+                                #
+                                # This is the one read in the loop that had no
+                                # cancel, and it is allowed up to
+                                # IDLE_LISTEN_TIMEOUT_S + 25s. So handing the
+                                # device over mid-read left ai_loop finishing a
+                                # listen begun for the previous student, then
+                                # transcribing it, asking the model about it and
+                                # speaking the answer -- over the top of a
+                                # five-year-old's home screen, which is the whole
+                                # thing the KG routing exists to prevent. The
+                                # park branch at the top of the loop cannot help
+                                # while this call is blocked; it has to be told
+                                # to come back.
+                                cancel=lambda: kg_holds_microphone(ui))
                             if audio is None:
                                 # Raised rather than returned so that everything
                                 # below -- the RE-TELL nudge clock, the standby
@@ -1857,7 +1915,8 @@ def ai_loop(ui, headless=False):
                         # a second mode tap looked like it did nothing until
                         # Stop was pressed: Stop ended the reply early, which
                         # let the loop reach the pending intro.
-                        if sleep_event.is_set() or state.pending_mode_intro:
+                        if (sleep_event.is_set() or state.pending_mode_intro
+                                or kg_holds_microphone(ui)):
                             continue
 
                         heard_seconds = audio_seconds(audio)
@@ -2021,6 +2080,12 @@ def ai_loop(ui, headless=False):
                         listen_started[:] = [0.0, 0.0]
                         clamp_energy(recognizer)
                         if playback_active.is_set() or not audio_queue.empty():
+                            continue
+                        # A cancelled read, not a silent room. Straight back to
+                        # the top before the RE-TELL clock below reads it as the
+                        # student having stopped talking and speaks a reminder
+                        # at a child who has just been handed the device.
+                        if kg_holds_microphone(ui):
                             continue
 
                         # --- RE-TELL: the examiner is holding the floor open ---
