@@ -180,13 +180,15 @@ CLOCK_X0, CLOCK_X1 = 99, 303
 # (32px line box), the two below it 7pt and 6pt (13 and 12), which is 57 of the
 # card's 62 -- so these three numbers are the whole vertical budget and there is
 # no slack in them.
-CARD_ROW1 = TOP_Y0 + 17          # dial + time   | glyph + temperature
+CARD_ROW1 = TOP_Y0 + 17          # time          | glyph + temperature
 CARD_ROW2 = TOP_Y0 + 40          # date          | condition
 CARD_ROW3 = TOP_Y0 + 54          # place         | high and low
-# The split. 126 rather than the old 136: the left column needs 120px for a dial
-# and "12:34 PM" and no more, and every pixel past that was being taken from the
-# weather side, which is the half with four things in it.
-CLOCK_SPLIT = CLOCK_X0 + 126
+# The split. With the dial gone the left column holds three left-aligned lines
+# and nothing else, and the widest of them is the place line at 84px, so 100
+# from the card's edge covers it with room to spare. That hands 30px straight to
+# the weather side, which is the half with four things in it -- and it is what
+# lets the temperature match the time at 17pt instead of trailing it at 15.
+CLOCK_SPLIT = CLOCK_X0 + 100
 # The condition glyphs are drawn at a size that suited the old layout -- the
 # clear-sky sun is 38px across its rays and 47 tall counting a storm bolt, which
 # is wider than the column and taller than the row. Drawn full size and scaled
@@ -907,42 +909,23 @@ class TutorUI:
         else:
             self._card(CLOCK_X0, TOP_Y0, CLOCK_X1, TOP_Y1, 16)
 
-        # ---- left: the dial, on the headline row beside the time ----
-        # r=14, not 19. It was vertically centred in the whole card, which put
-        # it across all three rows and left the date and the place line nowhere
-        # to start from but x+56 -- and the place line was drawn through it
-        # anyway. On the headline row it is an icon beside the time, and the two
-        # rows under it get the full width of the column.
-        r = 14
-        cx, cy = CLOCK_X0 + 23, CARD_ROW1
-        self._clock_radius = r
-        self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
-                                fill="#EEF3FF", outline=COL_INDIGO, width=2)
-        for i in range(12):
-            a = math.pi * i / 6
-            self.canvas.create_line(cx + (r - 4) * math.sin(a), cy - (r - 4) * math.cos(a),
-                                    cx + (r - 2) * math.sin(a), cy - (r - 2) * math.cos(a),
-                                    fill="#C3CBEA", width=1)
-        self.hour_hand = self.canvas.create_line(cx, cy, cx, cy - 6,
-                                                 fill=COL_TEXT, width=2, capstyle="round")
-        self.minute_hand = self.canvas.create_line(cx, cy, cx, cy - 9,
-                                                   fill=COL_INDIGO, width=2, capstyle="round")
-        self.canvas.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill=COL_TEXT, outline="")
-        self._clock_centre = (cx, cy)
-
         # ---- left: time, date, place ----
+        # THERE IS NO ANALOGUE DIAL. It read the same time as the digits beside
+        # it and cost 38px of a 204px card to do it -- the only thing on here
+        # carrying no reading of its own. Without it all three lines start from
+        # the card's own margin, which is why they line up now.
+        #
         # 17pt rather than 19: three rows of 19pt, 7pt and 6pt come to 61 of the
         # card's 62px, which is the whole height with nothing left for a margin.
+        # Losing the dial bought width, not height, so this is still the cap.
         self.clock_id = self.canvas.create_text(
-            CLOCK_X0 + 45, CARD_ROW1, text="--:--", anchor="w",
+            CLOCK_X0 + 8, CARD_ROW1, text="--:--", anchor="w",
             font=self._font(17, True), fill=COL_CARD_TEXT)
         # Dropped a little, so it sits on the time's baseline rather than its
         # middle. Placed by measurement in _tick_clock; see there.
         self.meridiem_id = self.canvas.create_text(
-            CLOCK_X0 + 45, CARD_ROW1 + 5, text="", anchor="w",
+            CLOCK_X0 + 8, CARD_ROW1 + 5, text="", anchor="w",
             font=self._font(8, True), fill=COL_CARD_DIM)
-        # From x+8, the column's own margin, rather than from x+56 where the
-        # dial used to force it to start.
         self.date_id = self.canvas.create_text(
             CLOCK_X0 + 8, CARD_ROW2, text="", anchor="w",
             font=self._font(7), fill=COL_CARD_DIM)
@@ -967,12 +950,17 @@ class TutorUI:
         # the top edge of the card.
         self.weather_glyph_at = (CLOCK_SPLIT + 17, CARD_ROW1 - 1)
 
+
         # ---- right: temperature, condition, high and low ----
-        # 15pt again. It was cut to 12 to survive the old layout, where the
-        # clear-sky sun reached to within 3px of where this starts.
+        # 17pt, the same as the time. It was cut to 12 to survive the old layout,
+        # where the clear-sky sun reached to within 3px of where this starts, and
+        # the width the dial gave up is what pays for the rest. Matching the time
+        # is deliberate: this card has two readings on it, not a heading and a
+        # footnote, and "12:34" is five characters against three so the time
+        # still carries the eye.
         self.temp_id = self.canvas.create_text(
-            CLOCK_SPLIT + 35, CARD_ROW1, text="--", anchor="w",
-            font=self._font(15, True), fill=COL_CARD_TEXT)
+            CLOCK_SPLIT + 37, CARD_ROW1, text="--", anchor="w",
+            font=self._font(17, True), fill=COL_CARD_TEXT)
         # The full width of the column, not the strip to the right of the glyph:
         # "Thunderstorm" is 58px at this size and had 39 to live in.
         self.desc_id = self.canvas.create_text(
@@ -980,13 +968,13 @@ class TutorUI:
             font=self._font(7), fill=COL_CARD_DIM)
 
         # High and low share the bottom row, mirroring the place line opposite.
-        self._arrow(CLOCK_SPLIT + 12, CARD_ROW3, up=True)
+        self._arrow(CLOCK_SPLIT + 14, CARD_ROW3, up=True)
         self.high_id = self.canvas.create_text(
-            CLOCK_SPLIT + 20, CARD_ROW3, text="--", anchor="w",
+            CLOCK_SPLIT + 22, CARD_ROW3, text="--", anchor="w",
             font=self._font(7, True), fill=COL_CARD_DIM)
-        self._arrow(CLOCK_SPLIT + 44, CARD_ROW3, up=False)
+        self._arrow(CLOCK_SPLIT + 54, CARD_ROW3, up=False)
         self.low_id = self.canvas.create_text(
-            CLOCK_SPLIT + 52, CARD_ROW3, text="--", anchor="w",
+            CLOCK_SPLIT + 62, CARD_ROW3, text="--", anchor="w",
             font=self._font(7, True), fill=COL_CARD_DIM)
         self._draw_weather_glyph("01d")
 
@@ -1785,21 +1773,11 @@ class TutorUI:
         # Placed by measurement rather than a fixed offset: "9:05" and "12:45"
         # are very different widths and the meridiem has to sit against both.
         self.canvas.coords(self.meridiem_id,
-                           CLOCK_X0 + 49 + self._font(17, True).measure(text),
+                           CLOCK_X0 + 12 + self._font(17, True).measure(text),
                            CARD_ROW1 + 5)
         self.canvas.itemconfig(self.meridiem_id, text=now.strftime("%p"))
         self.canvas.itemconfig(self.date_id, text=now.strftime("%a, %d %b %Y"))
 
-        cx, cy = self._clock_centre
-        # As fractions of the dial, not as pixels: these were 14 and 9 against a
-        # radius of 19, and the dial is 14 now.
-        r = getattr(self, "_clock_radius", 19)
-        minute = math.pi * now.minute / 30
-        hour = math.pi * ((now.hour % 12) + now.minute / 60) / 6
-        self.canvas.coords(self.minute_hand, cx, cy,
-                           cx + 0.74 * r * math.sin(minute), cy - 0.74 * r * math.cos(minute))
-        self.canvas.coords(self.hour_hand, cx, cy,
-                           cx + 0.47 * r * math.sin(hour), cy - 0.47 * r * math.cos(hour))
         self.root.after(1000, self._tick_clock)
 
     def set_state(self, state, caption=None):
