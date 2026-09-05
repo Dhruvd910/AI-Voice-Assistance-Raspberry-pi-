@@ -65,12 +65,17 @@ COL_STOP      = "#F43F5E"
 
 MODE_ACCENTS = {"TUTOR": "#7C3AED", "CO-TELL": "#14B8A6", "RE-TELL": "#F59E0B"}
 MODE_TINTS   = {"TUTOR": "#F3EEFF", "CO-TELL": "#E6FAF6", "RE-TELL": "#FFF4E6"}
-# Kept short on purpose: the mode rows are a narrow column now, and a blurb
-# that wraps to four lines in a 78px row is not read, it is just texture.
+# ONE LINE EACH, AND SHORT ENOUGH TO SET AT A SIZE THAT CAN BE READ.
+#
+# These were "Concepts and solutions" and friends, painted into the card art at
+# 7px and wrapped to two lines. Nobody could read them. The card gives its
+# wording an 88x20 box beside the icon, and measured in the real font that is
+# one line of 9pt -- so the copy is cut to fit the box rather than the box being
+# asked to hold the copy. Widths at 9pt: 71px, 80px, 76px, against 88 available.
 MODE_BLURBS = {
-    "TUTOR": "Concepts and solutions",
-    "CO-TELL": "Talk it through together",
-    "RE-TELL": "You explain, I correct"
+    "TUTOR": "Ask anything",
+    "CO-TELL": "Talk it through",
+    "RE-TELL": "You teach me"
 }
 MODE_INTROS = {
     "TUTOR": "You are in tutor mode. Ask me anything from your studies.",
@@ -524,51 +529,42 @@ def _action_image(w, h, radius, c0, c1, icon):
 
 # Where the wording sits on a mode card. Measured off the three PNGs rather than
 # guessed, and identical on all of them: the name's ink runs rows 15..24, the
-# two-line blurb 30..43, the chevron starts at x=128, and the card body is pure
-# white right through the block between them.
-MODE_ART_TEXT  = (50, 6, 128, 54)    # the whole wording block, cleared
-MODE_ART_TITLE = (50, 13, 128, 27)   # the name alone, kept
-MODE_ART_INK   = (15, 24)            # rows the name's ink actually occupies
-MODE_ART_MID_Y = 31                  # the icon's centre, where the name belongs
+# two-line blurb 30..43, the chevron 40..50 at x=128, and the card body is pure
+# white right through the block between them. The erase box stops at x=138 and
+# row 52, which is inside the body on every row it touches -- the rounded
+# corners pull the card in to x=139 at row 52 and further above and below.
+MODE_ART_BLURB = (50, 27, 138, 53)   # the old two-line blurb and the chevron
+# The box left for the replacement line, and where it is centred. Wide because
+# it takes the chevron's room as well: 88px is what makes 9pt possible.
+MODE_BLURB_BOX = 88
+MODE_BLURB_CX  = 94
+MODE_BLURB_CY  = 38
 
 _mode_faces = {}
 
-def mode_card_face(fname, faded=False):
-    """A mode card with the blurb removed and the name centred, or None.
+def mode_card_face(fname):
+    """A mode card with the baked-in blurb and chevron erased, or None.
 
     The wording is PAINTED INTO these PNGs, so "stop drawing the blurb" was
     never available -- it has to come out of the picture. Two lines of 7px
     explanation in a 62px row is texture rather than text at arm's length on
-    this panel: nobody read it, and it pushed the name it was explaining up into
-    the top corner.
+    this panel, and it is replaced by one line set in Tk at 9pt, which can
+    actually be read. The chevron goes with it: it sat exactly where that line
+    now runs, and its 12px were the difference between fitting the wording at
+    9pt and having to drop back to 8.
 
-    The name is lifted out of the artwork and put back on the card's middle
-    rather than re-set in Tk, which keeps the lettering it was drawn with --
-    three different colours and a serif face that self._font() cannot match.
-
-    `faded` is the same card washed toward white, for the two modes that are not
-    the current one. It replaces the ring that used to be drawn around the
-    chosen card: the information is worth keeping, the extra shape was not."""
-    key = (fname, faded)
-    if key not in _mode_faces:
+    The NAME is left exactly where the artwork puts it. It is lettered in three
+    different colours and a serif face that self._font() has no way to match, so
+    re-setting it in Tk would cost more than it gained."""
+    if fname not in _mode_faces:
         art = ui_asset("Home", fname)
         if art is None:
-            _mode_faces[key] = None
+            _mode_faces[fname] = None
             return None
         card = art.copy()
-        title = card.crop(MODE_ART_TITLE)
-        card.paste((255, 255, 255, 255), MODE_ART_TEXT)
-        # Aligned on the INK, not on the crop: the box has uneven padding, and
-        # centring the box would sit the letters a couple of pixels high.
-        centre = sum(MODE_ART_INK) / 2 - MODE_ART_TITLE[1]
-        card.paste(title, (MODE_ART_TITLE[0], round(MODE_ART_MID_Y - centre)), title)
-        if faded:
-            rgb = card.convert("RGB")
-            washed = Image.blend(rgb, Image.new("RGB", rgb.size, (255, 255, 255)), 0.45)
-            card, alpha = washed.convert("RGBA"), card.getchannel("A")
-            card.putalpha(alpha)
-        _mode_faces[key] = card
-    return _mode_faces[key]
+        card.paste((255, 255, 255, 255), MODE_ART_BLURB)
+        _mode_faces[fname] = card
+    return _mode_faces[fname]
 
 def _pressed_image(image):
     """The same button face, dimmed, for the moment a finger is on it.
@@ -1158,25 +1154,28 @@ class TutorUI:
 
             art = mode_card_face(self.MODE_ART[mode])
             if art is not None:
-                # NO RING. Which mode is chosen is shown by washing the other
-                # two toward white instead -- a ring around a picture reads as a
-                # stray rectangle sitting behind the button however it is inset,
-                # and the card is 145x62 with no room to give any of it away to
-                # a border. Both faces are built here and swapped by
-                # _refresh_cards, because a picture cannot be recoloured in Tk.
+                # EVERY CARD AT FULL STRENGTH. The chosen one used to be marked
+                # by washing the other two toward white, and before that by a
+                # ring around it. Both were rejected for the same reason from
+                # opposite directions -- the ring read as a stray rectangle
+                # behind the button, and the wash made two of the three look
+                # blurred, as though something translucent had been laid over
+                # them. There is no marking on the cards now; see MODE_BLURBS
+                # for the wording that replaced the unreadable painted-in one.
                 item = self._place_asset(art, MODE_CARD_X0, y0, tag)
-                photos = {"on": ImageTk.PhotoImage(art),
-                          "off": ImageTk.PhotoImage(
-                              mode_card_face(self.MODE_ART[mode], faded=True))}
-                self._photos.extend(photos.values())
-                # restore=_refresh_cards, not the face captured on the way down:
-                # this press CHANGES which card should be lit, and putting the
-                # old face back would undo it a frame later.
+                # Set in Tk rather than painted into the picture: this is the
+                # line that has to be READ, and Tk is the only half of this
+                # screen that can lay type out at a size chosen against the
+                # measured width of the box it has to sit in.
+                self.canvas.create_text(
+                    MODE_CARD_X0 + MODE_BLURB_CX, y0 + MODE_BLURB_CY,
+                    text=MODE_BLURBS[mode], anchor="center",
+                    width=MODE_BLURB_BOX, justify="center",
+                    font=self._font(9), fill=COL_TEXT, tags=tag)
                 self._press_feedback(tag, item, art,
-                                     lambda e, idx=i: self.set_mode(idx),
-                                     restore=self._refresh_cards)
+                                     lambda e, idx=i: self.set_mode(idx))
                 self.cards.append({"body": None, "title": None, "blurb": None,
-                                   "chevron": None, "item": item, "photos": photos,
+                                   "chevron": None, "item": item,
                                    "accent": accent, "tint": MODE_TINTS[mode]})
                 continue
             body = self._round_rect(MODE_CARD_X0, y0, MODE_CARD_X1, y1, 12,
@@ -1207,7 +1206,7 @@ class TutorUI:
                 self.canvas.itemconfig(item, tags=tag)
             self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.set_mode(idx))
             self.cards.append({"body": body, "title": title, "blurb": blurb,
-                               "chevron": chevron, "item": None, "photos": None,
+                               "chevron": chevron, "item": None,
                                "accent": accent, "tint": MODE_TINTS[mode]})
 
     # ---------- transcript ----------
@@ -1419,11 +1418,11 @@ class TutorUI:
         for i, card in enumerate(self.cards):
             chosen = i == self.current_mode_index
             accent = card["accent"]
-            if card.get("photos") is not None:
-                # A picture cannot be tinted, so the two that are not in use are
-                # swapped for a washed-out copy of themselves.
-                self.canvas.itemconfigure(card["item"],
-                                          image=card["photos"]["on" if chosen else "off"])
+            if card.get("body") is None:
+                # An artwork card. Nothing to restyle: all three are shown at
+                # full strength, and neither of the two ways of marking the
+                # chosen one survived review. Only the drawn fallback below,
+                # which builds its card out of Tk items, can still be recoloured.
                 continue
             self.canvas.itemconfig(card["body"],
                                    fill=_mix(card["tint"], "#FFFFFF", 0.35) if chosen else card["tint"],
