@@ -84,7 +84,10 @@ COL_STOP      = "#F43F5E"
 # below are both near-black and the hierarchy on these cards comes from SIZE,
 # the way it does on the mode buttons.
 COL_CARD_TEXT = COL_TEXT      # 4.3:1 on the darkest blue, 16:1 on the glow
-COL_CARD_DIM  = "#16293D"     # 4.0:1 on the darkest blue, 15:1 on the glow
+COL_CARD_DIM  = "#101F31"     # 4.4:1 on the darkest blue, 17:1 on the glow
+# 4.5:1 -- the usual bar for text this small -- needs a luminance under 0.012
+# against that blue, which is black and not a colour. 4:1 is the honest bar on
+# this artwork, and it is what the card is tested to.
 # The size of a header card, and the shape any replacement artwork is fitted to.
 CARD_BOX = (204, 62)
 
@@ -164,6 +167,32 @@ PAD = 8
 # evenly spaced, which is why they no longer reach the edges.
 TOP_Y0, TOP_Y1 = 17, 79
 CLOCK_X0, CLOCK_X1 = 99, 303
+
+# The clock-and-weather card's grid. Three rows and two columns, and BOTH
+# COLUMNS ARE THE SAME SHAPE -- an icon and a headline on the top row, then two
+# plain rows under it. That is what makes 204x62 hold this much. The two halves
+# used to be laid out independently against nothing in particular, and neither
+# of them fitted: the temperature ran 19px off the card, the meridiem crossed
+# the divider, the condition sat on top of the low, and the place line was drawn
+# straight through the middle of the dial.
+#
+# Row centres, not tops. Measured against the real font: the headline is 17pt
+# (32px line box), the two below it 7pt and 6pt (13 and 12), which is 57 of the
+# card's 62 -- so these three numbers are the whole vertical budget and there is
+# no slack in them.
+CARD_ROW1 = TOP_Y0 + 17          # dial + time   | glyph + temperature
+CARD_ROW2 = TOP_Y0 + 40          # date          | condition
+CARD_ROW3 = TOP_Y0 + 54          # place         | high and low
+# The split. 126 rather than the old 136: the left column needs 120px for a dial
+# and "12:34 PM" and no more, and every pixel past that was being taken from the
+# weather side, which is the half with four things in it.
+CLOCK_SPLIT = CLOCK_X0 + 126
+# The condition glyphs are drawn at a size that suited the old layout -- the
+# clear-sky sun is 38px across its rays and 47 tall counting a storm bolt, which
+# is wider than the column and taller than the row. Drawn full size and scaled
+# about their own centre afterwards, so the shapes keep their proportions and
+# only one number has to change if the row ever moves.
+WEATHER_GLYPH_SCALE = 0.62
 WHO_X0, WHO_X1 = 322, 526
 MUSIC_X0, MUSIC_X1 = 541, 745
 
@@ -866,78 +895,99 @@ class TutorUI:
 
         One card rather than two stacked halves: at header height there is no
         room for two, and the two readings are glanced at together anyway.
+
+        Laid out on CARD_ROW1..3 and CLOCK_SPLIT, which is where the reasoning
+        for the numbers lives. Both halves take the same shape -- icon and
+        headline, then two plain rows -- so the card reads as one thing with two
+        readings in it rather than as two crowded panels sharing an edge.
         """
         art = ui_asset("Home", "Weather_bg.png", box=CARD_BOX)
         if art is not None:
             self._place_asset(art, CLOCK_X0, TOP_Y0)
         else:
             self._card(CLOCK_X0, TOP_Y0, CLOCK_X1, TOP_Y1, 16)
-        cx, cy, r = CLOCK_X0 + 30, TOP_Y0 + 30, 19
 
+        # ---- left: the dial, on the headline row beside the time ----
+        # r=14, not 19. It was vertically centred in the whole card, which put
+        # it across all three rows and left the date and the place line nowhere
+        # to start from but x+56 -- and the place line was drawn through it
+        # anyway. On the headline row it is an icon beside the time, and the two
+        # rows under it get the full width of the column.
+        r = 14
+        cx, cy = CLOCK_X0 + 23, CARD_ROW1
+        self._clock_radius = r
         self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
                                 fill="#EEF3FF", outline=COL_INDIGO, width=2)
         for i in range(12):
             a = math.pi * i / 6
-            self.canvas.create_line(cx + (r - 5) * math.sin(a), cy - (r - 5) * math.cos(a),
-                                    cx + (r - 3) * math.sin(a), cy - (r - 3) * math.cos(a),
+            self.canvas.create_line(cx + (r - 4) * math.sin(a), cy - (r - 4) * math.cos(a),
+                                    cx + (r - 2) * math.sin(a), cy - (r - 2) * math.cos(a),
                                     fill="#C3CBEA", width=1)
-        self.hour_hand = self.canvas.create_line(cx, cy, cx, cy - 8,
+        self.hour_hand = self.canvas.create_line(cx, cy, cx, cy - 6,
                                                  fill=COL_TEXT, width=2, capstyle="round")
-        self.minute_hand = self.canvas.create_line(cx, cy, cx, cy - 12,
+        self.minute_hand = self.canvas.create_line(cx, cy, cx, cy - 9,
                                                    fill=COL_INDIGO, width=2, capstyle="round")
         self.canvas.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill=COL_TEXT, outline="")
         self._clock_centre = (cx, cy)
 
+        # ---- left: time, date, place ----
+        # 17pt rather than 19: three rows of 19pt, 7pt and 6pt come to 61 of the
+        # card's 62px, which is the whole height with nothing left for a margin.
         self.clock_id = self.canvas.create_text(
-            CLOCK_X0 + 56, TOP_Y0 + 24, text="--:--", anchor="w",
-            font=self._font(19, True), fill=COL_TEXT)
+            CLOCK_X0 + 45, CARD_ROW1, text="--:--", anchor="w",
+            font=self._font(17, True), fill=COL_CARD_TEXT)
+        # Dropped a little, so it sits on the time's baseline rather than its
+        # middle. Placed by measurement in _tick_clock; see there.
         self.meridiem_id = self.canvas.create_text(
-            CLOCK_X0 + 56, TOP_Y0 + 29, text="", anchor="w",
+            CLOCK_X0 + 45, CARD_ROW1 + 5, text="", anchor="w",
             font=self._font(8, True), fill=COL_CARD_DIM)
+        # From x+8, the column's own margin, rather than from x+56 where the
+        # dial used to force it to start.
         self.date_id = self.canvas.create_text(
-            CLOCK_X0 + 56, TOP_Y0 + 44, text="", anchor="w",
+            CLOCK_X0 + 8, CARD_ROW2, text="", anchor="w",
             font=self._font(7), fill=COL_CARD_DIM)
-
-        # The weather half, divided off rather than boxed: a second outline
-        # inside a card this small reads as clutter.
-        self.canvas.create_line(CLOCK_X0 + 136, TOP_Y0 + 12, CLOCK_X0 + 136, TOP_Y0 + 48,
-                                fill=COL_CARD_EDGE)
-        self.weather_glyph = []
-        self.weather_glyph_at = (CLOCK_X0 + 158, TOP_Y0 + 26)
-        # 12pt, not 15. The weather half is 68px wide and the glyph beside this
-        # takes up to 44 of them (the clear-sky sun, rays included), which
-        # leaves 27px from x+177 to the card's edge. "26" and a degree sign at
-        # 15pt is 31px, so the reading ran off the card the moment real weather
-        # replaced the "--" placeholder that every screenshot was taken with.
-        self.temp_id = self.canvas.create_text(
-            CLOCK_X0 + 178, TOP_Y0 + 22, text="--", anchor="w",
-            font=self._font(12, True), fill=COL_TEXT)
-        self.desc_id = self.canvas.create_text(
-            CLOCK_X0 + 178, TOP_Y0 + 40, text="", anchor="w",
-            font=self._font(7), fill=COL_CARD_DIM)
-
-        # High and low go on the bottom row rather than beside the temperature:
-        # at this width "34°C" and "35°" ran into each other.
-        self._arrow(CLOCK_X1 - 60, TOP_Y1 - 14, up=True)
-        self.high_id = self.canvas.create_text(
-            CLOCK_X1 - 52, TOP_Y1 - 14, text="--", anchor="w",
-            font=self._font(7, True), fill=COL_CARD_DIM)
-        self._arrow(CLOCK_X1 - 28, TOP_Y1 - 14, up=False)
-        self.low_id = self.canvas.create_text(
-            CLOCK_X1 - 20, TOP_Y1 - 14, text="--", anchor="w",
-            font=self._font(7, True), fill=COL_CARD_DIM)
-        # BELOW the dial, not across it. This has always been drawn at x+14,
-        # y-14, which is inside the face -- centred at x+30 with r=19, it runs
-        # x+11..x+49 and down to within a pixel of that line. It never showed as
-        # a collision because the label was COL_TEXT_FAINT on a near-white card
-        # and could barely be seen at all; on the blue card it can be, so it has
-        # to go somewhere it actually fits. The strip under the dial is the only
-        # free row on this half: at 6pt the live string ("Delhi  •  Humidity
-        # 78%", 84px) clears the divider at x+136 with room to spare.
         self.city_id = self.canvas.create_text(
-            CLOCK_X0 + 8, TOP_Y1 - 7, anchor="w",
+            CLOCK_X0 + 8, CARD_ROW3, anchor="w",
             text=assistant.WEATHER_CITY if assistant.WEATHER_API_KEY else "No weather",
             font=self._font(6), fill=COL_CARD_DIM)
+
+        # ---- the divider ----
+        # A rule rather than a second box: an outline inside a card this small
+        # reads as clutter. Full height now, because both columns have something
+        # on all three rows.
+        self.canvas.create_line(CLOCK_SPLIT, TOP_Y0 + 7, CLOCK_SPLIT, TOP_Y1 - 7,
+                                fill=COL_CARD_EDGE)
+
+        # ---- right: the condition glyph, on the headline row ----
+        self.weather_glyph = []
+        # Drawn a pixel above the row's centre: the shapes hang BELOW their
+        # anchor (rain to +19, a storm bolt to +29) and reach only -18 above it,
+        # so centring on the anchor would sit the whole glyph low in the row.
+        # Not further up than that -- at -3 the clear-sky sun's top ray crossed
+        # the top edge of the card.
+        self.weather_glyph_at = (CLOCK_SPLIT + 17, CARD_ROW1 - 1)
+
+        # ---- right: temperature, condition, high and low ----
+        # 15pt again. It was cut to 12 to survive the old layout, where the
+        # clear-sky sun reached to within 3px of where this starts.
+        self.temp_id = self.canvas.create_text(
+            CLOCK_SPLIT + 35, CARD_ROW1, text="--", anchor="w",
+            font=self._font(15, True), fill=COL_CARD_TEXT)
+        # The full width of the column, not the strip to the right of the glyph:
+        # "Thunderstorm" is 58px at this size and had 39 to live in.
+        self.desc_id = self.canvas.create_text(
+            CLOCK_SPLIT + 4, CARD_ROW2, text="", anchor="w",
+            font=self._font(7), fill=COL_CARD_DIM)
+
+        # High and low share the bottom row, mirroring the place line opposite.
+        self._arrow(CLOCK_SPLIT + 12, CARD_ROW3, up=True)
+        self.high_id = self.canvas.create_text(
+            CLOCK_SPLIT + 20, CARD_ROW3, text="--", anchor="w",
+            font=self._font(7, True), fill=COL_CARD_DIM)
+        self._arrow(CLOCK_SPLIT + 44, CARD_ROW3, up=False)
+        self.low_id = self.canvas.create_text(
+            CLOCK_SPLIT + 52, CARD_ROW3, text="--", anchor="w",
+            font=self._font(7, True), fill=COL_CARD_DIM)
         self._draw_weather_glyph("01d")
 
     def _arrow(self, x, y, up):
@@ -951,6 +1001,15 @@ class TutorUI:
                                    x, tip, fill=colour, outline="")
 
     def _draw_weather_glyph(self, code):
+        """The condition mark. Drawn full size, then scaled to its row.
+
+        Every shape below is in the coordinates it was designed at -- the sun is
+        11 across with rays to 19, a storm bolt hangs to +29 -- which is 38x47
+        and does not fit a 32px row in a 78px column. Scaling afterwards, about
+        the glyph's own centre, keeps all of that arithmetic readable and puts
+        the whole adjustment in one constant. Tk scales coordinates and not line
+        widths, which is what we want: the 2px strokes stay legible at 62%.
+        """
         for item in self.weather_glyph:
             self.canvas.delete(item)
         self.weather_glyph = []
@@ -969,6 +1028,7 @@ class TutorUI:
                 add(c.create_line(cx + 14 * math.cos(a), cy + 14 * math.sin(a),
                                   cx + 19 * math.cos(a), cy + 19 * math.sin(a),
                                   fill=sun, width=2))
+            self._scale_weather_glyph()
             return
         if kind == "02":                                   # sun behind cloud
             add(c.create_oval(cx - 2, cy - 18, cx + 16, cy, fill=sun, outline=""))
@@ -989,11 +1049,24 @@ class TutorUI:
             for i in range(3):
                 add(c.create_line(cx - 14, cy + 3 + i * 6, cx + 14, cy + 3 + i * 6,
                                   fill=cloud, width=2))
+            self._scale_weather_glyph()
             return
 
         add(c.create_oval(cx - 16, cy - 5, cx + 1, cy + 9, fill=cloud, outline=""))
         add(c.create_oval(cx - 6, cy - 12, cx + 12, cy + 7, fill=cloud, outline=""))
         add(c.create_rectangle(cx - 14, cy + 1, cx + 11, cy + 9, fill=cloud, outline=""))
+        self._scale_weather_glyph()
+
+    def _scale_weather_glyph(self):
+        """Shrink whatever was just drawn to WEATHER_GLYPH_SCALE, in place.
+
+        Called from each of the three exits of _draw_weather_glyph rather than
+        wrapped around it, because two of the branches return early and a glyph
+        that skipped this would be drawn at full size -- 38px across a 78px
+        column, straight through the temperature beside it."""
+        cx, cy = self.weather_glyph_at
+        for item in self.weather_glyph:
+            self.canvas.scale(item, cx, cy, WEATHER_GLYPH_SCALE, WEATHER_GLYPH_SCALE)
 
     # ---------- music player ----------
     def _build_music_card(self):
@@ -1694,7 +1767,11 @@ class TutorUI:
         # the C fits it inside and matches the high and low below, which have
         # always been bare degrees.
         self.canvas.itemconfig(self.temp_id, text=f"{reading['temp']}°")
-        self.canvas.itemconfig(self.desc_id, text=reading["desc"])
+        # Clipped to the column. OpenWeather says "Thunderstorm" as readily as
+        # "Rain", and that is 58px at 7pt against the 70 this column has -- fine
+        # here, but the next word longer would have run onto the profile card.
+        self.canvas.itemconfig(self.desc_id, text=self._ellipsize(
+            reading["desc"], self._font(7), CLOCK_X1 - 6 - (CLOCK_SPLIT + 4)))
         self.canvas.itemconfig(self.high_id, text=f"{reading['high']}°")
         self.canvas.itemconfig(self.low_id, text=f"{reading['low']}°")
         self.canvas.itemconfig(self.city_id,
@@ -1708,17 +1785,21 @@ class TutorUI:
         # Placed by measurement rather than a fixed offset: "9:05" and "12:45"
         # are very different widths and the meridiem has to sit against both.
         self.canvas.coords(self.meridiem_id,
-                           CLOCK_X0 + 60 + self._font(19, True).measure(text), TOP_Y0 + 29)
+                           CLOCK_X0 + 49 + self._font(17, True).measure(text),
+                           CARD_ROW1 + 5)
         self.canvas.itemconfig(self.meridiem_id, text=now.strftime("%p"))
         self.canvas.itemconfig(self.date_id, text=now.strftime("%a, %d %b %Y"))
 
         cx, cy = self._clock_centre
+        # As fractions of the dial, not as pixels: these were 14 and 9 against a
+        # radius of 19, and the dial is 14 now.
+        r = getattr(self, "_clock_radius", 19)
         minute = math.pi * now.minute / 30
         hour = math.pi * ((now.hour % 12) + now.minute / 60) / 6
         self.canvas.coords(self.minute_hand, cx, cy,
-                           cx + 14 * math.sin(minute), cy - 14 * math.cos(minute))
+                           cx + 0.74 * r * math.sin(minute), cy - 0.74 * r * math.cos(minute))
         self.canvas.coords(self.hour_hand, cx, cy,
-                           cx + 9 * math.sin(hour), cy - 9 * math.cos(hour))
+                           cx + 0.47 * r * math.sin(hour), cy - 0.47 * r * math.cos(hour))
         self.root.after(1000, self._tick_clock)
 
     def set_state(self, state, caption=None):
