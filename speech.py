@@ -1360,6 +1360,35 @@ RE_ABSORBED_CONSONANT = re.compile(r"^['\u2019]?([sd])\s+(\w)", re.IGNORECASE)
 # nothing is heard in its place, and it RESUMES, so "Liza, stop" does nothing at
 # all. Devanagari and the romanised Hindi are here for the same reason they are
 # in RE_STOP_MEDIA_PHRASE -- Whisper romanises Hindi constantly.
+# "STOP" SAID OVER HER IS AN INSTRUCTION, NOT THE NEXT QUESTION.
+#
+# There was no such thing before: barge-in cut the reply, the interrupting words
+# were captured, and then they were answered like anything else -- so "Liza,
+# stop" stopped her for as long as it took to think of a reply to the word
+# "stop", and then she started talking again. From the room that is not a device
+# that stops. logs/liza.log has a student saying "तुम बीच में रुकती क्यों नहीं
+# हो?" -- why don't you stop when I speak -- and being answered rather than
+# obeyed.
+#
+# Deliberately NARROWER than RE_STOP_MEDIA_PHRASE, which also takes "close",
+# "shut" and "turn it off": those mean a FILE while something is open, and this
+# pattern is consulted on ordinary conversation where they mean nothing of the
+# sort. The Hinglish tails are here for the reason they are there -- Whisper
+# romanises Hindi far more often than it writes Devanagari.
+RE_STOP_TALKING = re.compile(
+    r'^\s*(?:(?:hey|ok|okay|arre|are)\s+)?(?:liza|leeza|lisa|लिज़ा|लीज़ा)?[\s,.!]*'
+    r'(?:please\s+)?'
+    r'(?:stop|wait|pause|quiet|silence|shh+|hush|enough|'
+    r'ruk\w*|roko|rok|thehro|theharo|thamo|band|bandh|chup|bas|bass|'
+    r'रुक[ऀ-ॿ]*|रोक[ऀ-ॿ]*|ठहर[ऀ-ॿ]*|'
+    r'बंद|बंध|चुप|बस)'
+    r'(?:\s+(?:it|now|talking|speaking|a\s+bit|for\s+a\s+(?:sec|second|moment)|'
+    r'please|liza|'
+    r'kar\w*|kr\w*|ja\w*|jaa\w*|do|de|dijiye|karo|karie|'
+    r'[ऀ-ॿ]+))*'
+    r'[\s,.!?]*$',
+    re.IGNORECASE)
+
 RE_ONE_WORD_COMMAND = re.compile(
     r'^(?:stop|pause|resume|play|continue|next|skip|mute|unmute|quiet|silence|'
     r'louder|softer|quieter|volume|sleep|repeat|again|'

@@ -102,7 +102,7 @@ from speech import (ClampedRecognizer, HeldMicrophone, VoiceListener,
                     listen_for_media_command, listen_for_wake_word, looks_hallucinated,
                     looks_unfinished, stt_prompt_size, transcribe,
                     wake_word_match, is_repeated_hallucination, rejoin_absorbed_consonant,
-                    clamp_stt_prompt, segment_logprob)
+                    clamp_stt_prompt, segment_logprob, RE_STOP_TALKING)
 from kg import (KG_DOUBT_PAUSE_S, KG_DOUBT_PHRASE_S, KG_DOUBT_WAIT_S,
                 kg_asking_stopped, kg_cancel_listen, kg_capture_utterance,
                 kg_handle_doubt, kg_holds_microphone, kg_listen_waiting,
@@ -425,6 +425,57 @@ def sounds_like_her_own_prompt(text):
     if not hers:
         return False
     return sum(1 for word in heard if word in hers) / len(heard) >= KG_ECHO_RATIO
+
+# How long a verbatim stretch of Liza's own words has to be before what the
+# microphone heard is her voice rather than the student's. Four, chosen by
+# scoring both rules over every utterance in logs/liza.log: 758 of her own
+# sentences (including four real STT-mangled bleeds the KG guard caught) and 165
+# accepted student utterances. Run>=4 catches 100% of hers and wrongly eats 3.6%
+# of the student's; the ratio test it replaces caught 99.9% and ate 9.7%.
+ECHO_RUN_WORDS = 4
+
+
+def echo_run_length(heard, spoken):
+    """The longest run of consecutive words from `heard` that appears verbatim
+    in `spoken`.
+
+    THIS IS THE TEST THAT SEPARATES ECHO FROM A FOLLOW-UP QUESTION, and a shared
+    vocabulary is not. Speaker bleed is Liza's own sentence coming back, so it
+    repeats her PHRASING; a student asking about what she just said reuses her
+    TOPIC WORDS and nothing else. The ratio test could not tell those apart, and
+    the second one is the more common event -- a child who has just been told
+    about rainbows asks about रंग and सात, which is most of the content words in
+    a short question. logs/liza.log has that exact sentence being thrown away as
+    her own voice at a ratio of 0.44, twice, while she talked over the top.
+    """
+    h, sp = RE_ECHO_TOKEN.findall((heard or "").lower()), \
+            RE_ECHO_TOKEN.findall((spoken or "").lower())
+    if not h or not sp:
+        return 0
+    best = 0
+    for i in range(len(h)):
+        # Only ever asks about runs LONGER than the best so far, and stops the
+        # moment one fails: a run that is not present cannot have a longer one
+        # starting at the same word.
+        for j in range(i + best + 1, len(h) + 1):
+            run = h[i:j]
+            if any(sp[k:k + len(run)] == run for k in range(len(sp) - len(run) + 1)):
+                best = len(run)
+            else:
+                break
+    return best
+
+
+def sounds_like_echo(heard, spoken):
+    """True when what the microphone heard is Liza's own voice coming back."""
+    run = echo_run_length(heard, spoken)
+    if run >= ECHO_RUN_WORDS:
+        return True
+    # A SHORT utterance that is entirely hers is echo however short the run --
+    # "नमस्ते!" bleeding back is two words and cannot reach four.
+    words = RE_ECHO_TOKEN.findall((heard or "").lower())
+    return bool(words) and run == len(words) >= 2
+
 
 def echo_overlap_ratio(heard_words, spoken_words):
     """How much of `heard_words` looks like Liza's own voice coming back.
@@ -2033,6 +2084,10 @@ def ai_loop(ui, headless=False):
                             text = ""
 
                         # --- ACOUSTIC ECHO CANCELLATION & INTERRUPTION ---
+                        # Matched on a VERBATIM RUN of her words rather than on
+                        # how much vocabulary the two share; see
+                        # echo_run_length() for what the shared-vocabulary test
+                        # was doing to follow-up questions.
                         # Compared against last_spoken_text (everything Liza
                         # actually said, including mode intros) rather than
                         # current_ai_response, which only ever held LLM answers,
@@ -2044,14 +2099,38 @@ def ai_loop(ui, headless=False):
                         speaking_recently = (playback_active.is_set()
                                              or (speech_started_at - state.last_spoken_at) < ECHO_GUARD_SEC)
                         if speaking_recently and text:
-                            ai_words = echo_words(state.last_spoken_text)
                             user_words = echo_words(lower_text)
 
                             if user_words:
-                                overlap_ratio = echo_overlap_ratio(user_words, ai_words)
-
-                                if overlap_ratio > 0.4:
+                                if sounds_like_echo(lower_text, state.last_spoken_text):
                                     print(f"[ECHO DETECTED] Ignoring speaker bleed: {text}", flush=True)
+                                    continue
+
+                                # "STOP" IS AN INSTRUCTION, NOT THE NEXT QUESTION.
+                                #
+                                # Nothing read it as one before: barge-in cut the
+                                # reply, the interrupting words were captured, and
+                                # then they were ANSWERED -- so being told to stop
+                                # bought silence only for as long as it took to
+                                # think of something to say about the word "stop",
+                                # and then she started talking again. Which is not
+                                # a device that stops, from the one seat that
+                                # matters.
+                                #
+                                # Only in here, where she is known to be speaking
+                                # or to have just stopped: with nothing playing,
+                                # "stop" is a word in a sentence like any other.
+                                if RE_STOP_TALKING.match(lower_text):
+                                    print(f"[STOP] Told to stop: {text!r}", flush=True)
+                                    interrupt_playback()
+                                    ui_call(lambda: state.ui_instance.set_state("idle"))
+                                    # Awake and listening, not answering. Saying
+                                    # anything here -- even "okay" -- is her
+                                    # talking again, which is the thing being
+                                    # asked to end.
+                                    session_active = True
+                                    silence_counter = 0
+                                    retell_buffer, retell_silence_from, retell_nudged = [], 0.0, False
                                     continue
 
                                 # Only a genuine barge-in needs interrupting. If
