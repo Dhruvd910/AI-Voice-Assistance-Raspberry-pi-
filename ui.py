@@ -63,6 +63,31 @@ COL_TRACK     = "#E6E9F5"
 COL_INDIGO    = "#6366F1"
 COL_STOP      = "#F43F5E"
 
+# TEXT ON THE THREE HEADER CARDS, WHICH DO NOT HAVE A WHITE GROUND ANY MORE.
+#
+# Their artwork is a saturated blue with a white glow burnt through it, and the
+# greys the rest of the screen uses for secondary text do not survive it:
+# COL_TEXT_DIM measures 1.4:1 against that blue and COL_INDIGO 1.9:1, which is
+# not "a bit low", it is gone. White is no better -- it is 2.3:1 on the blue and
+# invisible on the glow. Dark is the only value that holds up over BOTH grounds,
+# which is what any one label on these cards has to do, since the glow moves
+# through the card and the labels do not.
+#
+# Measured against the DARKEST pixel in that artwork, #1E8CC5, and not against
+# the blue it looks like -- the card deepens toward its bottom edge, which is
+# exactly where the smallest labels sit. Calibrating against the mid blue put
+# the city line at 2.6:1 with 8% of its box under 3:1, and it was the last row
+# of the card doing it every time.
+#
+# There is no room for a third tone here. Anything light enough to read as
+# "secondary" against the glow fails against that dark blue, so the two values
+# below are both near-black and the hierarchy on these cards comes from SIZE,
+# the way it does on the mode buttons.
+COL_CARD_TEXT = COL_TEXT      # 4.3:1 on the darkest blue, 16:1 on the glow
+COL_CARD_DIM  = "#16293D"     # 4.0:1 on the darkest blue, 15:1 on the glow
+# The size of a header card, and the shape any replacement artwork is fitted to.
+CARD_BOX = (204, 62)
+
 MODE_ACCENTS = {"TUTOR": "#7C3AED", "CO-TELL": "#14B8A6", "RE-TELL": "#F59E0B"}
 MODE_TINTS   = {"TUTOR": "#F3EEFF", "CO-TELL": "#E6FAF6", "RE-TELL": "#FFF4E6"}
 # ONE LINE EACH, AND SHORT ENOUGH TO SET AT A SIZE THAT CAN BE READ.
@@ -219,21 +244,34 @@ if not os.path.exists(UI_BG_IMAGE):
 
 _ui_assets = {}
 
-def ui_asset(*parts, size=None):
+def ui_asset(*parts, size=None, box=None):
     """A PNG from the UI folder, as RGBA, or None if it is not there.
 
     `size` gives a square version, for the avatars, which are drawn at 110 and
     used smaller. Cached by size as well: these are placed on every redraw of a
     screen, and decoding and resampling a PNG each time is not free on a Pi.
     None rather than an exception because a missing file must cost a nicer
-    button, not the screen."""
-    key = (parts, size)
+    button, not the screen.
+
+    `box` is (w, h) and makes the artwork exactly that size. It is for the three
+    header cards, whose position and width are fixed by the layout and by every
+    coordinate drawn on top of them: a replacement exported at 242x62 instead of
+    204x62 would otherwise be placed at its own size and run 38px into the card
+    beside it. Squashed rather than cropped or letterboxed, because what these
+    hold is a rounded rectangle and a soft glow -- 15% of horizontal scale costs
+    a slightly oval corner and nothing else. Do not reach for it on artwork with
+    a figure or lettering in it."""
+    key = (parts, size, box)
     if key not in _ui_assets:
         path = os.path.join(UI_DIR, *parts)
         try:
             image = Image.open(path).convert("RGBA")
             if size:
                 image = image.resize((size, size), Image.LANCZOS)
+            elif box and image.size != tuple(box):
+                print(f"[UI] {os.path.join(*parts)} is {image.width}x{image.height}; "
+                      f"fitting it to the {box[0]}x{box[1]} card.", flush=True)
+                image = image.resize(tuple(box), Image.LANCZOS)
             _ui_assets[key] = image
         except Exception:
             print(f"[UI] No artwork at {os.path.join(*parts)}; drawing it instead.",
@@ -829,7 +867,7 @@ class TutorUI:
         One card rather than two stacked halves: at header height there is no
         room for two, and the two readings are glanced at together anyway.
         """
-        art = ui_asset("Home", "Weather_bg.png")
+        art = ui_asset("Home", "Weather_bg.png", box=CARD_BOX)
         if art is not None:
             self._place_asset(art, CLOCK_X0, TOP_Y0)
         else:
@@ -855,10 +893,10 @@ class TutorUI:
             font=self._font(19, True), fill=COL_TEXT)
         self.meridiem_id = self.canvas.create_text(
             CLOCK_X0 + 56, TOP_Y0 + 29, text="", anchor="w",
-            font=self._font(8, True), fill=COL_TEXT_DIM)
+            font=self._font(8, True), fill=COL_CARD_DIM)
         self.date_id = self.canvas.create_text(
             CLOCK_X0 + 56, TOP_Y0 + 44, text="", anchor="w",
-            font=self._font(7), fill=COL_TEXT_DIM)
+            font=self._font(7), fill=COL_CARD_DIM)
 
         # The weather half, divided off rather than boxed: a second outline
         # inside a card this small reads as clutter.
@@ -866,32 +904,48 @@ class TutorUI:
                                 fill=COL_CARD_EDGE)
         self.weather_glyph = []
         self.weather_glyph_at = (CLOCK_X0 + 158, TOP_Y0 + 26)
+        # 12pt, not 15. The weather half is 68px wide and the glyph beside this
+        # takes up to 44 of them (the clear-sky sun, rays included), which
+        # leaves 27px from x+177 to the card's edge. "26" and a degree sign at
+        # 15pt is 31px, so the reading ran off the card the moment real weather
+        # replaced the "--" placeholder that every screenshot was taken with.
         self.temp_id = self.canvas.create_text(
             CLOCK_X0 + 178, TOP_Y0 + 22, text="--", anchor="w",
-            font=self._font(15, True), fill=COL_TEXT)
+            font=self._font(12, True), fill=COL_TEXT)
         self.desc_id = self.canvas.create_text(
             CLOCK_X0 + 178, TOP_Y0 + 40, text="", anchor="w",
-            font=self._font(7), fill=COL_INDIGO)
+            font=self._font(7), fill=COL_CARD_DIM)
 
         # High and low go on the bottom row rather than beside the temperature:
         # at this width "34°C" and "35°" ran into each other.
         self._arrow(CLOCK_X1 - 60, TOP_Y1 - 14, up=True)
         self.high_id = self.canvas.create_text(
             CLOCK_X1 - 52, TOP_Y1 - 14, text="--", anchor="w",
-            font=self._font(7, True), fill=COL_TEXT_DIM)
+            font=self._font(7, True), fill=COL_CARD_DIM)
         self._arrow(CLOCK_X1 - 28, TOP_Y1 - 14, up=False)
         self.low_id = self.canvas.create_text(
             CLOCK_X1 - 20, TOP_Y1 - 14, text="--", anchor="w",
-            font=self._font(7, True), fill=COL_TEXT_DIM)
+            font=self._font(7, True), fill=COL_CARD_DIM)
+        # BELOW the dial, not across it. This has always been drawn at x+14,
+        # y-14, which is inside the face -- centred at x+30 with r=19, it runs
+        # x+11..x+49 and down to within a pixel of that line. It never showed as
+        # a collision because the label was COL_TEXT_FAINT on a near-white card
+        # and could barely be seen at all; on the blue card it can be, so it has
+        # to go somewhere it actually fits. The strip under the dial is the only
+        # free row on this half: at 6pt the live string ("Delhi  •  Humidity
+        # 78%", 84px) clears the divider at x+136 with room to spare.
         self.city_id = self.canvas.create_text(
-            CLOCK_X0 + 14, TOP_Y1 - 14,
-            text=assistant.WEATHER_CITY if assistant.WEATHER_API_KEY else "Weather unavailable",
-            anchor="w", font=self._font(7), fill=COL_TEXT_FAINT)
+            CLOCK_X0 + 8, TOP_Y1 - 7, anchor="w",
+            text=assistant.WEATHER_CITY if assistant.WEATHER_API_KEY else "No weather",
+            font=self._font(6), fill=COL_CARD_DIM)
         self._draw_weather_glyph("01d")
 
     def _arrow(self, x, y, up):
         tip = y - 6 if up else y + 6
-        colour = "#EF4444" if up else "#3B82F6"
+        # The "low" arrow was #3B82F6, which is a mid blue on what is now a mid
+        # blue card -- the shape simply stopped being there. Darkened until it
+        # reads against both the artwork and the white glow that crosses it.
+        colour = "#D42A2A" if up else "#12459E"
         self.canvas.create_line(x, y + (6 if up else -6), x, tip, fill=colour, width=2)
         self.canvas.create_polygon(x - 4, tip + (4 if up else -4), x + 4, tip + (4 if up else -4),
                                    x, tip, fill=colour, outline="")
@@ -949,7 +1003,7 @@ class TutorUI:
         title instead of under it, and the progress bar runs the full width
         along the bottom where there is nothing to compete with it.
         """
-        card_art = ui_asset("Home", "Music_bg.png")
+        card_art = ui_asset("Home", "Music_bg.png", box=CARD_BOX)
         if card_art is not None:
             self._place_asset(card_art, MUSIC_X0, TOP_Y0)
         else:
@@ -975,19 +1029,19 @@ class TutorUI:
             # write to them; simply never shown on this layout.
             self.artist_id = self.canvas.create_text(
                 MUSIC_X0 + 10, TOP_Y1 - 15, text="", anchor="w",
-                font=self._font(7), fill=COL_TEXT_DIM, state="hidden")
+                font=self._font(7), fill=COL_CARD_DIM, state="hidden")
         else:
             album = ImageTk.PhotoImage(_album_art_image(38, 10))
             self._photos.append(album)
             self.canvas.create_image(MUSIC_X0 + 12, TOP_Y0 + 11, image=album, anchor="nw")
             self.canvas.create_text(MUSIC_X0 + 60, TOP_Y0 + 15, text="MUSIC PLAYER",
-                                    anchor="w", font=self._font(7, True), fill=COL_INDIGO)
+                                    anchor="w", font=self._font(7, True), fill=COL_CARD_DIM)
             self.track_id = self.canvas.create_text(
                 MUSIC_X0 + 60, TOP_Y0 + 30, text="", anchor="w",
                 font=self._font(9, True), fill=COL_TEXT)
             self.artist_id = self.canvas.create_text(
                 MUSIC_X0 + 60, TOP_Y0 + 45, text="", anchor="w",
-                font=self._font(7), fill=COL_TEXT_DIM)
+                font=self._font(7), fill=COL_CARD_DIM)
 
         # Transport on the right, with the play/pause ring biggest: it is the
         # one of the three that is pressed, and the only one that changes shape.
@@ -1030,7 +1084,7 @@ class TutorUI:
         self.canvas.tag_bind("playpause", "<Button-1>", self.toggle_media_pause)
 
         if not self._music_compact:
-            self._bars_glyph(MUSIC_X1 - 16, TOP_Y0 + 16, COL_INDIGO, (4, 7, 10, 7, 4))
+            self._bars_glyph(MUSIC_X1 - 16, TOP_Y0 + 16, COL_CARD_DIM, (4, 7, 10, 7, 4))
 
         if self._music_compact:
             # Right of the title, along the bottom, as the mockup has it.
@@ -1045,10 +1099,10 @@ class TutorUI:
                                                      fill=COL_INDIGO, outline=COL_CARD, width=2)
         hide = "hidden" if self._music_compact else "normal"
         self.elapsed_id = self.canvas.create_text(bx0 - 6, by, text="00:00", anchor="e",
-                                                  font=self._font(6), fill=COL_TEXT_DIM,
+                                                  font=self._font(6), fill=COL_CARD_DIM,
                                                   state=hide)
         self.duration_id = self.canvas.create_text(bx1 + 6, by, text="00:00", anchor="w",
-                                                   font=self._font(6), fill=COL_TEXT_DIM,
+                                                   font=self._font(6), fill=COL_CARD_DIM,
                                                    state=hide)
 
     def _shuffle_glyph(self, cx, cy):
@@ -1474,7 +1528,7 @@ class TutorUI:
             room, face = MUSIC_X1 - MUSIC_X0 - 170, self._font(9, True)
         self.canvas.itemconfig(
             self.track_id, text=self._ellipsize(track.strip(), face, room),
-            fill=COL_TEXT if title else COL_TEXT_DIM)
+            fill=COL_CARD_TEXT if title else COL_CARD_DIM)
         self.canvas.itemconfig(
             self.artist_id,
             text=self._ellipsize("Loading…" if loading else
@@ -1633,7 +1687,13 @@ class TutorUI:
         print(f"[MASCOT] 3D frames ready for '{bucket}' ({len(done)}).", flush=True)
 
     def set_weather(self, reading):
-        self.canvas.itemconfig(self.temp_id, text=f"{reading['temp']}°C")
+        # "26°" and not "26°C": at 15pt bold the unit made this 46px wide from
+        # x+177, which is 322 on a card that ends at 303 -- the reading ran off
+        # the edge onto the wallpaper the moment real weather arrived, and the
+        # placeholder "--" is why that never showed up in a screenshot. Dropping
+        # the C fits it inside and matches the high and low below, which have
+        # always been bare degrees.
+        self.canvas.itemconfig(self.temp_id, text=f"{reading['temp']}°")
         self.canvas.itemconfig(self.desc_id, text=reading["desc"])
         self.canvas.itemconfig(self.high_id, text=f"{reading['high']}°")
         self.canvas.itemconfig(self.low_id, text=f"{reading['low']}°")
@@ -2093,7 +2153,7 @@ class TutorUI:
         was under half what a fingertip reliably hits on this panel.
         """
         tags = (self.OVERLAY_TAG + "_never", "profilechip")
-        art = ui_asset("Home", "Profile_bg.png")
+        art = ui_asset("Home", "Profile_bg.png", box=CARD_BOX)
         if art is not None:
             self.profile_chip_bg = self._place_asset(art, WHO_X0, TOP_Y0, tags)
         else:
@@ -2131,10 +2191,10 @@ class TutorUI:
         text_x = WHO_X0 + 62
         self.profile_chip_text = self.canvas.create_text(
             text_x, TOP_Y0 + 25, text="Tap to set up",
-            anchor="w", font=self._font(12, True), fill=COL_TEXT_DIM, tags=tags)
+            anchor="w", font=self._font(12, True), fill=COL_CARD_DIM, tags=tags)
         self.profile_chip_class = self.canvas.create_text(
             text_x, TOP_Y0 + 45, text="", anchor="w",
-            font=self._font(9), fill=COL_TEXT_DIM, tags=tags)
+            font=self._font(9), fill=COL_CARD_DIM, tags=tags)
 
         # The artwork has its own decoration; these would land on top of it.
         if art is None:
@@ -2154,9 +2214,9 @@ class TutorUI:
         if profile:
             label = profile.get("name", "Student")
             klass = f"Class {profile.get('class')}"
-            colour = COL_TEXT
+            colour = COL_CARD_TEXT
         else:
-            label, klass, colour = "Tap to set up", "", COL_TEXT_DIM
+            label, klass, colour = "Tap to set up", "", COL_CARD_DIM
         self.canvas.itemconfig(self.profile_chip_text,
                                text=self._ellipsize(label, self._font(12, True), room),
                                fill=colour)
