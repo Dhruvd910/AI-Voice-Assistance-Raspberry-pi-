@@ -176,24 +176,38 @@ CLOCK_X0, CLOCK_X1 = 99, 303
 # the divider, the condition sat on top of the low, and the place line was drawn
 # straight through the middle of the dial.
 #
-# Row centres, not tops. Measured against the real font: the headline is 17pt
-# (32px line box), the two below it 7pt and 6pt (13 and 12), which is 57 of the
-# card's 62 -- so these three numbers are the whole vertical budget and there is
-# no slack in them.
-CARD_ROW1 = TOP_Y0 + 17          # time          | glyph + temperature
-CARD_ROW2 = TOP_Y0 + 40          # date          | condition
-CARD_ROW3 = TOP_Y0 + 54          # place         | high and low
+# THE CARD IS 62px TALL AND ONLY 55 OF THEM ARE CARD.
+#
+# Measured off the artwork rather than assumed from the box: the fill is fully
+# opaque only from y+1 to y+56, and the five rows under that are its soft bottom
+# edge and shadow. Sitting a line of text on them puts it half on the card and
+# half on the wallpaper, which is what the arrows on the bottom row were doing.
+CARD_INK_TOP = TOP_Y0 + 1        # 18
+CARD_INK_BOTTOM = TOP_Y0 + 56    # 73
+# Row centres, not tops, and they have to hold three line boxes inside those 55
+# pixels: 16pt is 30, 7pt is 13, 6pt is 12. That comes to 55 exactly, which is
+# why the headline is 16 and not the 17 it was when this was being fitted to the
+# nominal 62.
+CARD_ROW1 = TOP_Y0 + 16          # time          | glyph + temperature
+CARD_ROW2 = TOP_Y0 + 38          # date          | condition
+CARD_ROW3 = TOP_Y0 + 50          # place         | high and low
 # The split. With the dial gone the left column holds three left-aligned lines
 # and nothing else, and the widest of them is the place line at 84px, so 100
 # from the card's edge covers it with room to spare. That hands 30px straight to
 # the weather side, which is the half with four things in it -- and it is what
 # lets the temperature match the time at 17pt instead of trailing it at 15.
-CLOCK_SPLIT = CLOCK_X0 + 100
-# The condition glyphs are drawn at a size that suited the old layout -- the
-# clear-sky sun is 38px across its rays and 47 tall counting a storm bolt, which
-# is wider than the column and taller than the row. Drawn full size and scaled
-# about their own centre afterwards, so the shapes keep their proportions and
-# only one number has to change if the row ever moves.
+CLOCK_SPLIT = CLOCK_X0 + 101
+# The condition glyphs are drawn at the size they were designed at -- the
+# clear-sky sun is 38px across its rays and a storm hangs 47px top to bottom --
+# and scaled about their own centre afterwards, so the shapes keep their
+# proportions and only one number changes when the layout does.
+#
+# 0.62 is set by the sun, which is the widest of the nine by a long way: it has
+# 28px between the column's edge and the temperature, and 38 * 0.62 plus the 2px
+# its rays are stroked at comes to 25.6. The other eight would take 0.85 quite
+# happily -- but the width goes to the CONDITION instead, which has to hold
+# "Thunderstorm" at a size somebody can read, and a smaller mark costs less than
+# a smaller word.
 WEATHER_GLYPH_SCALE = 0.62
 WHO_X0, WHO_X1 = 322, 526
 MUSIC_X0, MUSIC_X1 = 541, 745
@@ -915,12 +929,11 @@ class TutorUI:
         # carrying no reading of its own. Without it all three lines start from
         # the card's own margin, which is why they line up now.
         #
-        # 17pt rather than 19: three rows of 19pt, 7pt and 6pt come to 61 of the
-        # card's 62px, which is the whole height with nothing left for a margin.
-        # Losing the dial bought width, not height, so this is still the cap.
+        # 16pt: three line boxes have to fit the 55px the card is actually
+        # opaque for, and 16/7/6 is 30+13+12 = 55. See CARD_INK_TOP.
         self.clock_id = self.canvas.create_text(
             CLOCK_X0 + 8, CARD_ROW1, text="--:--", anchor="w",
-            font=self._font(17, True), fill=COL_CARD_TEXT)
+            font=self._font(16, True), fill=COL_CARD_TEXT)
         # Dropped a little, so it sits on the time's baseline rather than its
         # middle. Placed by measurement in _tick_clock; see there.
         self.meridiem_id = self.canvas.create_text(
@@ -943,39 +956,50 @@ class TutorUI:
 
         # ---- right: the condition glyph, on the headline row ----
         self.weather_glyph = []
-        # Drawn a pixel above the row's centre: the shapes hang BELOW their
-        # anchor (rain to +19, a storm bolt to +29) and reach only -18 above it,
-        # so centring on the anchor would sit the whole glyph low in the row.
-        # Not further up than that -- at -3 the clear-sky sun's top ray crossed
-        # the top edge of the card.
-        self.weather_glyph_at = (CLOCK_SPLIT + 17, CARD_ROW1 - 1)
+        # THE GLYPH IS TWO ROWS TALL, and that is what fills the space the
+        # condition used to leave. The condition was left-aligned under the
+        # glyph while the temperature sat off to the right, so the card had a
+        # visible hole under its biggest number. Moving the condition beneath
+        # the temperature closes it and leaves this column free, so the glyph
+        # takes the height instead of a 30px mark floating in a 44px space.
+        #
+        # Anchored on ROW1 rather than centred between the rows: the shapes hang
+        # BELOW their anchor (rain to +19, a storm bolt to +29) and reach only
+        # -18 above it, so an anchor at the visual centre would push the bottom
+        # of a storm past the card's ink.
+        self.weather_glyph_at = (CLOCK_SPLIT + 15, CARD_ROW1 + 3)
 
 
         # ---- right: temperature, condition, high and low ----
-        # 17pt, the same as the time. It was cut to 12 to survive the old layout,
+        # 16pt, the same as the time. It was cut to 12 to survive the old layout,
         # where the clear-sky sun reached to within 3px of where this starts, and
         # the width the dial gave up is what pays for the rest. Matching the time
         # is deliberate: this card has two readings on it, not a heading and a
         # footnote, and "12:34" is five characters against three so the time
         # still carries the eye.
         self.temp_id = self.canvas.create_text(
-            CLOCK_SPLIT + 37, CARD_ROW1, text="--", anchor="w",
-            font=self._font(17, True), fill=COL_CARD_TEXT)
-        # The full width of the column, not the strip to the right of the glyph:
-        # "Thunderstorm" is 58px at this size and had 39 to live in.
+            CLOCK_SPLIT + 32, CARD_ROW1, text="--", anchor="w",
+            font=self._font(16, True), fill=COL_CARD_TEXT)
+        # DIRECTLY UNDER THE TEMPERATURE, sharing its left edge. Left-aligned to
+        # the column it sat beneath the glyph instead, which left the space
+        # below the largest number on the card empty and made the two halves of
+        # the weather reading look unrelated.
         self.desc_id = self.canvas.create_text(
-            CLOCK_SPLIT + 4, CARD_ROW2, text="", anchor="w",
+            CLOCK_SPLIT + 32, CARD_ROW2, text="", anchor="w",
             font=self._font(7), fill=COL_CARD_DIM)
 
         # High and low share the bottom row, mirroring the place line opposite.
-        self._arrow(CLOCK_SPLIT + 14, CARD_ROW3, up=True)
+        # 6pt, matching the place line opposite: the bottom row has 12px of ink
+        # to sit in and 7pt needs 13. The arrows are drawn +/-6 about the row, so
+        # this is also what lifted them off the card's bottom edge.
+        self._arrow(CLOCK_SPLIT + 12, CARD_ROW3, up=True)
         self.high_id = self.canvas.create_text(
-            CLOCK_SPLIT + 22, CARD_ROW3, text="--", anchor="w",
-            font=self._font(7, True), fill=COL_CARD_DIM)
-        self._arrow(CLOCK_SPLIT + 54, CARD_ROW3, up=False)
+            CLOCK_SPLIT + 19, CARD_ROW3, text="--", anchor="w",
+            font=self._font(6, True), fill=COL_CARD_DIM)
+        self._arrow(CLOCK_SPLIT + 48, CARD_ROW3, up=False)
         self.low_id = self.canvas.create_text(
-            CLOCK_SPLIT + 62, CARD_ROW3, text="--", anchor="w",
-            font=self._font(7, True), fill=COL_CARD_DIM)
+            CLOCK_SPLIT + 55, CARD_ROW3, text="--", anchor="w",
+            font=self._font(6, True), fill=COL_CARD_DIM)
         self._draw_weather_glyph("01d")
 
     def _arrow(self, x, y, up):
@@ -1759,11 +1783,16 @@ class TutorUI:
         # "Rain", and that is 58px at 7pt against the 70 this column has -- fine
         # here, but the next word longer would have run onto the profile card.
         self.canvas.itemconfig(self.desc_id, text=self._ellipsize(
-            reading["desc"], self._font(7), CLOCK_X1 - 6 - (CLOCK_SPLIT + 4)))
+            reading["desc"], self._font(7), CLOCK_X1 - 6 - (CLOCK_SPLIT + 32)))
         self.canvas.itemconfig(self.high_id, text=f"{reading['high']}°")
         self.canvas.itemconfig(self.low_id, text=f"{reading['low']}°")
-        self.canvas.itemconfig(self.city_id,
-                               text=f"{reading['city']}  •  Humidity {reading['humidity']}%")
+        # Single spaces around the bullet, and clipped to the column: the
+        # double-spaced form is 89px at 6pt and the column holds 87, so Delhi in
+        # monsoon -- 100% humidity, the widest this line ever gets -- was the one
+        # reading that would have run into the divider.
+        self.canvas.itemconfig(self.city_id, text=self._ellipsize(
+            f"{reading['city']} • Humidity {reading['humidity']}%",
+            self._font(6), CLOCK_SPLIT - 6 - (CLOCK_X0 + 8)))
         self._draw_weather_glyph(reading["icon"])
 
     def _tick_clock(self):
@@ -1773,7 +1802,7 @@ class TutorUI:
         # Placed by measurement rather than a fixed offset: "9:05" and "12:45"
         # are very different widths and the meridiem has to sit against both.
         self.canvas.coords(self.meridiem_id,
-                           CLOCK_X0 + 12 + self._font(17, True).measure(text),
+                           CLOCK_X0 + 12 + self._font(16, True).measure(text),
                            CARD_ROW1 + 5)
         self.canvas.itemconfig(self.meridiem_id, text=now.strftime("%p"))
         self.canvas.itemconfig(self.date_id, text=now.strftime("%a, %d %b %Y"))
