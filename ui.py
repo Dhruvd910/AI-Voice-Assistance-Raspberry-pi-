@@ -64,9 +64,6 @@ COL_INDIGO    = "#6366F1"
 COL_STOP      = "#F43F5E"
 
 MODE_ACCENTS = {"TUTOR": "#7C3AED", "CO-TELL": "#14B8A6", "RE-TELL": "#F59E0B"}
-# The stroke that marks the chosen mode. Named because the ring has to be inset
-# by half of it to sit ON the card rather than around it; see _build_mode_cards.
-RING_WIDTH = 3
 MODE_TINTS   = {"TUTOR": "#F3EEFF", "CO-TELL": "#E6FAF6", "RE-TELL": "#FFF4E6"}
 # Kept short on purpose: the mode rows are a narrow column now, and a blurb
 # that wraps to four lines in a 78px row is not read, it is just texture.
@@ -524,6 +521,54 @@ def _action_image(w, h, radius, c0, c1, icon):
     else:
         _draw_action_icon(draw, icon, cx, cy)
     return img
+
+# Where the wording sits on a mode card. Measured off the three PNGs rather than
+# guessed, and identical on all of them: the name's ink runs rows 15..24, the
+# two-line blurb 30..43, the chevron starts at x=128, and the card body is pure
+# white right through the block between them.
+MODE_ART_TEXT  = (50, 6, 128, 54)    # the whole wording block, cleared
+MODE_ART_TITLE = (50, 13, 128, 27)   # the name alone, kept
+MODE_ART_INK   = (15, 24)            # rows the name's ink actually occupies
+MODE_ART_MID_Y = 31                  # the icon's centre, where the name belongs
+
+_mode_faces = {}
+
+def mode_card_face(fname, faded=False):
+    """A mode card with the blurb removed and the name centred, or None.
+
+    The wording is PAINTED INTO these PNGs, so "stop drawing the blurb" was
+    never available -- it has to come out of the picture. Two lines of 7px
+    explanation in a 62px row is texture rather than text at arm's length on
+    this panel: nobody read it, and it pushed the name it was explaining up into
+    the top corner.
+
+    The name is lifted out of the artwork and put back on the card's middle
+    rather than re-set in Tk, which keeps the lettering it was drawn with --
+    three different colours and a serif face that self._font() cannot match.
+
+    `faded` is the same card washed toward white, for the two modes that are not
+    the current one. It replaces the ring that used to be drawn around the
+    chosen card: the information is worth keeping, the extra shape was not."""
+    key = (fname, faded)
+    if key not in _mode_faces:
+        art = ui_asset("Home", fname)
+        if art is None:
+            _mode_faces[key] = None
+            return None
+        card = art.copy()
+        title = card.crop(MODE_ART_TITLE)
+        card.paste((255, 255, 255, 255), MODE_ART_TEXT)
+        # Aligned on the INK, not on the crop: the box has uneven padding, and
+        # centring the box would sit the letters a couple of pixels high.
+        centre = sum(MODE_ART_INK) / 2 - MODE_ART_TITLE[1]
+        card.paste(title, (MODE_ART_TITLE[0], round(MODE_ART_MID_Y - centre)), title)
+        if faded:
+            rgb = card.convert("RGB")
+            washed = Image.blend(rgb, Image.new("RGB", rgb.size, (255, 255, 255)), 0.45)
+            card, alpha = washed.convert("RGBA"), card.getchannel("A")
+            card.putalpha(alpha)
+        _mode_faces[key] = card
+    return _mode_faces[key]
 
 def _pressed_image(image):
     """The same button face, dimmed, for the moment a finger is on it.
@@ -1111,29 +1156,27 @@ class TutorUI:
             accent = MODE_ACCENTS[mode]
             tag = f"mode{i}"
 
-            art = ui_asset("Home", self.MODE_ART[mode])
+            art = mode_card_face(self.MODE_ART[mode])
             if art is not None:
-                self._place_asset(art, MODE_CARD_X0, y0, tag)
-                # Which mode is chosen cannot be shown by recolouring a picture,
-                # so it is a ring around the chosen one. Created for every row
-                # and hidden until _refresh_cards picks one.
-                #
-                # INSIDE the artwork, not around it. Drawn 2px outside the card
-                # with a 3px stroke, this ring floated three or four pixels off
-                # every edge of the picture it was meant to be selecting -- it
-                # read as a stray rectangle sitting behind the button rather
-                # than as the button being chosen. Half the stroke width in from
-                # each edge puts the whole of it on the card.
-                inset = RING_WIDTH / 2
-                ring = self._round_rect(MODE_CARD_X0 + inset, y0 + inset,
-                                        MODE_CARD_X1 - inset, y1 - inset, 12,
-                                        fill="", outline=accent, width=RING_WIDTH,
-                                        tags=tag)
-                self.canvas.itemconfigure(ring, state="hidden")
-                self.canvas.tag_bind(tag, "<Button-1>",
-                                     lambda e, idx=i: self.set_mode(idx))
+                # NO RING. Which mode is chosen is shown by washing the other
+                # two toward white instead -- a ring around a picture reads as a
+                # stray rectangle sitting behind the button however it is inset,
+                # and the card is 145x62 with no room to give any of it away to
+                # a border. Both faces are built here and swapped by
+                # _refresh_cards, because a picture cannot be recoloured in Tk.
+                item = self._place_asset(art, MODE_CARD_X0, y0, tag)
+                photos = {"on": ImageTk.PhotoImage(art),
+                          "off": ImageTk.PhotoImage(
+                              mode_card_face(self.MODE_ART[mode], faded=True))}
+                self._photos.extend(photos.values())
+                # restore=_refresh_cards, not the face captured on the way down:
+                # this press CHANGES which card should be lit, and putting the
+                # old face back would undo it a frame later.
+                self._press_feedback(tag, item, art,
+                                     lambda e, idx=i: self.set_mode(idx),
+                                     restore=self._refresh_cards)
                 self.cards.append({"body": None, "title": None, "blurb": None,
-                                   "chevron": None, "ring": ring,
+                                   "chevron": None, "item": item, "photos": photos,
                                    "accent": accent, "tint": MODE_TINTS[mode]})
                 continue
             body = self._round_rect(MODE_CARD_X0, y0, MODE_CARD_X1, y1, 12,
@@ -1164,7 +1207,7 @@ class TutorUI:
                 self.canvas.itemconfig(item, tags=tag)
             self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.set_mode(idx))
             self.cards.append({"body": body, "title": title, "blurb": blurb,
-                               "chevron": chevron, "ring": None,
+                               "chevron": chevron, "item": None, "photos": None,
                                "accent": accent, "tint": MODE_TINTS[mode]})
 
     # ---------- transcript ----------
@@ -1246,7 +1289,7 @@ class TutorUI:
     # looks broken for as long as the screen is up.
     PRESS_RESET_MS = 600
 
-    def _press_feedback(self, tag, item, face, command):
+    def _press_feedback(self, tag, item, face, command, restore=None):
         """Make one button look pressed while a finger is on it, then act.
 
         A canvas image does not change under a touch by itself, and with no
@@ -1258,18 +1301,23 @@ class TutorUI:
         The action is called from HERE rather than bound separately, because
         <Button-1> and <ButtonPress-1> are the same Tk event: a second
         tag_bind for it REPLACES this one instead of running beside it.
+
+        `restore` puts the face back on release. It is a callable rather than
+        the remembered image because a mode card's action CHANGES which face it
+        should be showing -- restoring the one captured on the way down would
+        undo the selection the press just made.
         """
-        # The name Tk already holds for the normal face, so the button does not
-        # need a second copy of its own picture kept alive to go back to.
-        normal = self.canvas.itemcget(item, "image")
         pressed = ImageTk.PhotoImage(_pressed_image(face))
         self._photos.append(pressed)
+        if restore is None:
+            was = self.canvas.itemcget(item, "image")
+            restore = lambda: self.canvas.itemconfigure(item, image=was)
         sunk = []
 
         def up(event=None):
             if sunk:
                 sunk.clear()
-                self.canvas.itemconfigure(item, image=normal)
+                restore()
                 # By tag, not by item: on the drawn fallback the label and
                 # sub-label are separate items on the same button.
                 self.canvas.move(tag, 0, -self.PRESS_DIP)
@@ -1371,10 +1419,11 @@ class TutorUI:
         for i, card in enumerate(self.cards):
             chosen = i == self.current_mode_index
             accent = card["accent"]
-            if card.get("ring") is not None:
-                # A picture cannot be tinted, so the chosen one wears a ring.
-                self.canvas.itemconfigure(card["ring"],
-                                          state="normal" if chosen else "hidden")
+            if card.get("photos") is not None:
+                # A picture cannot be tinted, so the two that are not in use are
+                # swapped for a washed-out copy of themselves.
+                self.canvas.itemconfigure(card["item"],
+                                          image=card["photos"]["on" if chosen else "off"])
                 continue
             self.canvas.itemconfig(card["body"],
                                    fill=_mix(card["tint"], "#FFFFFF", 0.35) if chosen else card["tint"],

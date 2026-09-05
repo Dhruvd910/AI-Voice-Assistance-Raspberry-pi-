@@ -1477,11 +1477,18 @@ def ai_loop(ui, headless=False):
                           "leaving standby.", flush=True)
                     continue
 
-                if mode_tapped:
-                    # Back to the top as well, where the intro is spoken. It
-                    # leaves session_active False on purpose: the handler up
-                    # there sets it, and it is the one that knows a deliberate
-                    # tap counts as being awake.
+                # `mode_tapped` covers leaving by the checks above; the
+                # pending intro is tested again because the OTHER way out is
+                # wake_event, and a mode tap sets that too -- the root
+                # tap-to-wake binding fires on the same press. Taking that door
+                # dropped straight into a fresh listen with the intro still
+                # pending, so it was not spoken until that listen had run its
+                # course: "it took time until Liza exits the listen stage".
+                if mode_tapped or state.pending_mode_intro:
+                    # Back to the top, where the intro is spoken. It leaves
+                    # session_active False on purpose: the handler up there sets
+                    # it, and it is the one that knows a deliberate tap counts
+                    # as being awake.
                     print("[STATE] A mode was chosen from standby; "
                           "announcing it.", flush=True)
                     continue
@@ -1889,7 +1896,19 @@ def ai_loop(ui, headless=False):
                                 # park branch at the top of the loop cannot help
                                 # while this call is blocked; it has to be told
                                 # to come back.
-                                cancel=lambda: kg_holds_microphone(ui))
+                                #
+                                # A MODE TAP AND A SLEEP TAP END IT TOO. Both
+                                # were already thrown away once this read
+                                # returned -- see the check below -- but the
+                                # read is allowed IDLE_LISTEN_TIMEOUT_S + 25s,
+                                # so "switch to the mode you are in now" meant
+                                # standing in front of the device waiting for
+                                # her to stop listening first. They are
+                                # deliberate instructions; they should not queue
+                                # behind a silence.
+                                cancel=lambda: (kg_holds_microphone(ui)
+                                                or sleep_event.is_set()
+                                                or bool(state.pending_mode_intro)))
                             if audio is None:
                                 # Raised rather than returned so that everything
                                 # below -- the RE-TELL nudge clock, the standby
@@ -2082,10 +2101,11 @@ def ai_loop(ui, headless=False):
                         if playback_active.is_set() or not audio_queue.empty():
                             continue
                         # A cancelled read, not a silent room. Straight back to
-                        # the top before the RE-TELL clock below reads it as the
-                        # student having stopped talking and speaks a reminder
-                        # at a child who has just been handed the device.
-                        if kg_holds_microphone(ui):
+                        # the top, where the tap that cancelled it is acted on,
+                        # and before the RE-TELL clock below reads the same
+                        # return as the student having stopped talking.
+                        if (kg_holds_microphone(ui) or sleep_event.is_set()
+                                or state.pending_mode_intro):
                             continue
 
                         # --- RE-TELL: the examiner is holding the floor open ---
