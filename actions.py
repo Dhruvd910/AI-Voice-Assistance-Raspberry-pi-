@@ -26,6 +26,7 @@ import time
 import profiles
 import state
 import store
+import visuals
 from config import MPV_AUDIO_DEVICE
 from media import _die_with_parent, stop_media_playback
 from state import (device_state_lock, get_device_state, media_active,
@@ -952,6 +953,12 @@ def run_command_action(command):
     return "command_output", output
 
 ACTION_FAILURES = {
+    # The reason comes up from visuals.render_visual already worded as
+    # something a person would say -- "I could not find a picture of that" --
+    # so it is spoken as it arrives rather than looked up. {d} IS the sentence.
+    "no_visual":     {"en": "{d}.",
+                      "hi": "{d}।",
+                      "hinglish": "{d}."},
     "not_found":     {"en": "I couldn't find a file called {d}.",
                       "hi": "{d} नाम की कोई फ़ाइल नहीं मिली।",
                       "hinglish": "{d} नाम की कोई file नहीं मिली।"},
@@ -1076,6 +1083,10 @@ def execute_action(name, param, language="en"):
         reason, detail = list_directory_action(param)
     elif name == "run_command":
         reason, detail = run_command_action(param)
+    elif name == "show_visual":
+        reason, detail = show_visual_action(param)
+    elif name == "hide_visual":
+        reason, detail = hide_visual_action()
     else:
         print(f"[ACTION] Unknown action {name!r}.", flush=True)
 
@@ -1093,18 +1104,111 @@ def execute_action(name, param, language="en"):
 
 # Actions that END something, and so must not wait for her to finish speaking.
 # See the ACT block in ai_loop() for why the rest still do.
-IMMEDIATE_ACTIONS = {"stop_media", "close_file"}
+#
+# show_visual is here for the opposite reason and the same effect. It ends
+# nothing, but it is what the student ASKED FOR -- "show me the diagram" -- and
+# holding the picture back until the sentence describing it has finished is the
+# whole of the delay. Drawing it costs about a twentieth of a second, so it
+# lands while she is still on her first word.
+IMMEDIATE_ACTIONS = {"stop_media", "close_file", "show_visual", "hide_visual"}
+
+
+def show_visual_action(param):
+    """Draw something on the transcribe board. "<kind> | <payload>"."""
+    kind, _, payload = (param or "").partition("|")
+    if not payload.strip():
+        # A tag with no separator: take the first word as the kind, which is
+        # the shape a model reaches for when it forgets the bar.
+        kind, _, payload = (param or "").strip().partition(" ")
+    kind, payload = kind.strip(), payload.strip()
+    # A FORMULA is not a picture. "y = x^2" comes back as a spec the screen
+    # plots itself, with a slider for every number in it, because the answer to
+    # that question is a thing to play with rather than a thing to look at --
+    # see the live-graph section of visuals.py. Anything else, including a
+    # graph given as points or bars, falls through to the rendered PNG.
+    try:
+        spec = visuals.plot_spec(kind, payload)
+    except Exception as exc:
+        print(f"[ACTION] Could not read the formula: {exc}", flush=True)
+        spec = None
+    if spec is not None:
+        state.current_visual = {"kind": "graph", "title": spec["source"],
+                                "steps": []}
+        ui_invoke("show_graph", spec)
+        return "ok", ""
+    path, why = visuals.render_visual(kind, payload)
+    if path is None:
+        return "no_visual", why
+    # THE STRUCTURE IS KEPT, not just the picture. A Seedream diagram arrives as
+    # flat pixels with nothing addressable in it, so the only way to show which
+    # stage she is explaining is to keep the list of stages beside the image and
+    # light one of them up underneath it. See state.current_visual.
+    state.current_visual = {"kind": kind, "title": None,
+                            "steps": visual_steps(kind, payload)}
+    ui_invoke("show_visual", path, state.current_visual["steps"])
+    return "ok", ""
+
+
+# Kinds made of stages. A photograph has none and an equation is one thing, so
+# neither gets a step strip and neither is highlighted.
+STEPPED_KINDS = {"cycle", "steps", "flow", "diagram"}
+
+
+def visual_steps(kind, payload):
+    """The stage labels drawn on the board, in order. [] when there are none.
+
+    The same split visuals.py does, so the strip under the picture says exactly
+    what the picture was asked to show -- and in the same order, which is what
+    makes lighting one of them up mean anything.
+    """
+    if kind.lower() not in STEPPED_KINDS:
+        return []
+    parts = visuals._split_labels(payload)
+    # The first part is the title when there are enough of them to spare one,
+    # which is the rule both _cycle and _steps use.
+    return parts[1:] if len(parts) > 2 else parts
+
+
+def hide_visual_action():
+    """Take the board down because the conversation has moved off it."""
+    if state.current_visual is None:
+        return "already", ""
+    state.current_visual = None
+    state.current_graph = None
+    ui_invoke("clear_visual")
+    return "ok", ""
 
 def device_state_block():
-    """The three CURRENT_* lines rule 7 reasons over, for the prompt's tail."""
+    """The device lines rule 7 reasons over, for the prompt's tail.
+
+    LAST_GRAPH is the odd one out: the other three say what the device is doing
+    now, and that one says what she last plotted, so that "make it x cubed" has
+    a formula to be a change to. See state.current_graph for why it is the last
+    one rather than the current one.
+    """
     playing, open_file, ui_mode = get_device_state()
     if playing:
         now = f'{{"title": "{playing["title"]}", "kind": "{playing["kind"]}"}}'
     else:
         now = "None (nothing is playing)"
+    graph = getattr(state, "current_graph", None)
     return (f"CURRENTLY_PLAYING: {now}\n"
             f"CURRENTLY_OPEN_FILE: {open_file or 'None (no file is open)'}\n"
-            f"CURRENT_UI_MODE: {ui_mode}")
+            f"CURRENT_UI_MODE: {ui_mode}\n"
+            f"LAST_GRAPH: {graph or 'None (you have not plotted one)'}\n"
+            f"ON_BOARD: {on_board_line()}")
+
+
+def on_board_line():
+    """What the student is looking at, for the model to explain or move off."""
+    visual = getattr(state, "current_visual", None)
+    if not visual:
+        return "None (the board is empty)"
+    kind = visual["kind"]
+    if visual["steps"]:
+        return (f"a {kind} diagram, its stages in this order: "
+                + "; ".join(visual["steps"]))
+    return f"a {kind}" + (f" of {visual['title']}" if visual.get("title") else "")
 
 def student_profile_block():
     """Who she is teaching and how deep to pitch it. "" when nobody is set up.

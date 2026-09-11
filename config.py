@@ -146,7 +146,12 @@ MIN_SPEECH_SEC = 0.35
 
 # See MIN_SPEECH_RMS, defined with the energy band it is derived from: a clip
 # also has to be LOUD enough to be speech, not just long enough.
-WAKE_SEED_PROMPT = "Hey Liza. हे लीज़ा।"
+# English only, now that listen_for_wake_word forces the wake transcription to
+# English. A Devanagari half pulled Whisper towards writing the name in
+# Devanagari, which is the whole reason the wake word was being missed -- and
+# with the language forced it can no longer help. It is also what taught Whisper
+# to hand "हे लीज़ा।" back out of an empty room, 91 times in this log.
+WAKE_SEED_PROMPT = "Hey Liza."
 
 # Whisper's initial_prompt is a bias, not a hint: handed ambiguous audio it will
 # return the prompt itself. Seeding every wake check with the wake phrase is
@@ -165,15 +170,40 @@ WAKE_SEED_PROMPT = "Hey Liza. हे लीज़ा।"
 # Set WAKE_SEED_ASLEEP to a prompt to put the old behaviour back.
 WAKE_SEED_PROMPT_ASLEEP = os.getenv("WAKE_SEED_ASLEEP", "")
 
+# The one thing that makes a BARE name unambiguous, wherever it is heard: a
+# command to stop, immediately behind it. "Liza, stop the video" is four words
+# and the bare-name guard in wake_word_match allows three, so without this the
+# pattern matched and the guard threw it away -- which is the "I have to say it
+# three or four times" this exists to fix.
+#
+# A LOOKAHEAD, so the command is not eaten by the match. What follows the wake
+# word is read as the request, and swallowing "stop" would leave an empty one
+# and send her off asking what they wanted.
+RE_STOP_TAIL = (
+    r'(?=\s*[,.!।]?\s*(?P<stopword>stop|pause|mute|quiet|silence|close|shut|'
+    r'turn|off|enough|band|bandh|chup|ruk|बंद|रोक|चुप|बस)\b)')
+
+# Every spelling of the name Whisper has been seen to produce, in both scripts.
+# Written once because three patterns need it and they must not drift apart.
+NAME_LATIN = (r'(?:liza|lisa|leeza|leesa|lizza|lyza|eliza|elisa|lija|leza'
+              r'|laiza|liesa|lizah|luiza)')
+NAME_DEVANAGARI = r'(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)'
+
 RE_WAKE_WORD = re.compile(
+    # FIRST, so that it wins. Alternatives are tried left to right at the same
+    # starting position, and the plain-name branch below matches "Liza" on its
+    # own -- so with this last, "Liza stop the video" matched WITHOUT the
+    # stopword group, the guard in wake_word_match saw a bare name in a
+    # four-word sentence, and threw the command away. Order is the whole fix.
+    r'(?:\b' + NAME_LATIN + r'\b|' + NAME_DEVANAGARI + NAME_END + r')' + RE_STOP_TAIL +
     # English spellings Whisper produces for the name.
     # "a" was in this list and never belonged: it is an ordinary English article,
     # and the whole group is optional anyway, so it added no reachable match
     # beyond the bare name while turning "a Lisa" in any sentence into a wake.
-    r'\b(?:hey|hi|hello|ok|okay|hay)?\s*'
+    r'|\b(?:hey|hi|hello|ok|okay|hay)?\s*'
     # Spellings observed from Whisper for the same spoken name. None of these is
     # an ordinary English word, so a bare match is safe without a greeting.
-    r'(?:liza|lisa|leeza|leesa|lizza|lyza|eliza|elisa|lija|leza|laiza|liesa|lizah|luiza)\b'
+    + NAME_LATIN + r'\b'
     # Devanagari. The seed prompt is bilingual, so Whisper often writes the name
     # in Devanagari, and its spelling varies far more than a fixed list can cover
     # -- "हे लागा", "हे लगा" and "हे लाजा" were all observed for "Hey Liza". The
@@ -190,9 +220,35 @@ RE_WAKE_WORD = re.compile(
     # name this branch was written to catch.
     r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)\s*ल[ािीुू]?[जगसझशद]़?[ािी]' + NAME_END +
     # Unambiguous spellings still wake her with no greeting at all.
-    r'|(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)' + NAME_END,
+    r'|' + NAME_DEVANAGARI + NAME_END,
     re.IGNORECASE
 )
+
+# "Liza, go to sleep." -- the spoken half of the Sleep button.
+#
+# There was no voice command for this at all: sleeping was a tap and nothing
+# else, in every mode. That is most obvious in RE-TELL, where the student is
+# reciting from across the room and the whole point of the mode is that they are
+# not touching the device -- so ending a session meant walking over to it.
+#
+# ANCHORED, both ends. This has to match the WHOLE utterance and nothing less,
+# because "sleep" is an ordinary word a student will ask about: "what is sleep",
+# "why do we sleep", "I need to sleep" all contain it and none of them means
+# this. Only somebody saying the phrase and nothing else is asking her to go.
+RE_SLEEP_PHRASE = re.compile(
+    r'^\s*(?:ok(?:ay)?|now|please|thanks?|thank\s+you|hey|bye)?[\s,]*'
+    r'(?:liza|lisa|leeza|leesa)?[\s,]*'
+    r'(?:you\s+can\s+|now\s+|please\s+)?'
+    r'(?:go\s+(?:to\s+|and\s+)?sleep|goto\s+sleep|sleep\s+now|sleep|'
+    r'take\s+a\s+nap|go\s+(?:to\s+)?bed|'
+    r'good\s*night|goodnight|nighty\s*night|bye(?:\s*bye)?|'
+    r'so\s+ja\w*|sone\s+ja\w*|sona\s+hai)'
+    r'[\s,]*(?:now|please|liza|lisa)?[\s.!।]*$'
+    # Devanagari. "सो जाओ" is the ordinary imperative; the rest are ways of
+    # saying goodnight that arrive far more often than the literal one.
+    r'|^\s*(?:अब\s*)?(?:सो\s*जा\w*|सो\s*जाओ|शुभ\s*रात्रि|गुड\s*नाइट|'
+    r'अलविदा|बाय\s*बाय|बाय)[\s.!।]*$',
+    re.IGNORECASE)
 
 # Used only after the Sleep button, where the bar to wake her has to be higher.
 # Sleep is an explicit "leave me alone", so an accidental wake is a much worse
@@ -456,17 +512,39 @@ BARGE_IN_DEBUG = os.getenv("BARGE_IN_DEBUG", "0") == "1"
 #
 # Until then, barge-in fires reliably only in her pauses -- between sentences,
 # where each is a separate TTS request and the room is briefly quiet.
-# How much louder than her own returning voice the student has to be. 1.6 is
-# ~4dB: comfortably reached by speaking normally towards the device, and not
-# reached by the speaker itself unless the volume is near maximum.
+# How much louder than her own returning voice the student has to be.
 #
-# Was 1.8. Lowered together with BARGE_IN_MS below, because the two multiply:
+# Lowered together with BARGE_IN_MS below, because the two multiply:
 # the student had to be half again as loud as the speaker AND hold it for most
 # of a second before anything happened, and the reply carried on through all of
 # it. Interrupting a person does not work that way -- they stop while you are
 # still on your first word -- and the gap is the whole difference between
 # "talking to it" and "waiting for it".
-BARGE_IN_MARGIN = float(os.getenv("BARGE_IN_MARGIN", "1.8"))
+#
+# 1.5, DOWN FROM 1.8, and the reason is written three paragraphs below this one
+# about the media bar: on this hardware the student's voice arrives at the
+# microphone BELOW the speaker's own output, so a voice on top of playback only
+# lifts the combined level by a little over 1.1x. That measurement was made
+# about a track and it is just as true of her own voice, which is what 1.8 was
+# being asked to clear. logs/liza.log settles it -- barge-in has fired three
+# times in the life of this device.
+#
+# Not straight down to the 1.25 the media path uses, because the two mistakes
+# are not the same size. A false arm over a track dips the volume for a second;
+# a false arm over HER cuts the answer off and it is gone. The measurement below
+# put roughly one false arm per 45 seconds at 1.35, so 1.5 keeps a real margin
+# over that while giving up 1.6dB of the reach that was making it unusable.
+#
+# The honest way to set this is to measure it in the room it runs in. Two ways:
+# `assist.py --calibrate-barge-in`, or just talk over her and read the
+# [BARGE-IN] near-miss line ai_loop now prints, which names the value that
+# would have worked.
+BARGE_IN_MARGIN = float(os.getenv("BARGE_IN_MARGIN", "1.5"))
+
+# How close somebody has to get before a failed interruption is worth a log
+# line. Below this the loudest thing in the room was not a person trying to
+# talk over her, and printing it every reply would bury the times it was.
+BARGE_IN_NEAR_MISS = float(os.getenv("BARGE_IN_NEAR_MISS", "0.45"))
 
 # Sustained speech required to cut her off, in ms. Longer than VAD_START_MS on
 # purpose: stopping her mid-sentence is disruptive, so it should take an actual
@@ -479,6 +557,25 @@ BARGE_IN_MARGIN = float(os.getenv("BARGE_IN_MARGIN", "1.8"))
 # not the duration, so shortening this trades very little accuracy for the thing
 # that actually makes an interruption feel like one.
 BARGE_IN_MS = int(os.getenv("BARGE_IN_MS", "260"))
+
+# How long a gap inside that run is forgiven before the run is abandoned.
+#
+# The run used to be reset by the FIRST frame that did not qualify, which meant
+# BARGE_IN_MS was not measuring "how long did they talk" but "how long did they
+# talk without webrtcvad blinking". Speech at 30ms resolution blinks constantly:
+# there is a gap at every stop consonant, and more of them when the signal is
+# competing with her own voice coming back down the same microphone.
+#
+# The evidence is one line of logs/liza.log, from a session where somebody tried
+# to interrupt her once:
+#
+#   the loudest voice reached 1.44x the bar for 210ms
+#
+# Half again as loud as the bar and over it for 210 of the 260ms asked for --
+# and the count had been to zero and back in between. 120ms is four frames: long
+# enough to bridge a consonant, short enough that a cough and a door a quarter
+# of a second apart are still two noises rather than one interruption.
+BARGE_IN_GAP_MS = int(os.getenv("BARGE_IN_GAP_MS", "120"))
 
 # The same test, but against a song or video rather than against her own voice.
 #
@@ -713,7 +810,39 @@ STT_MIN_LOGPROB = float(os.getenv("STT_MIN_LOGPROB", "-0.70"))
 # wake her.
 #
 # What it still costs is a Whisper call per utterance in the room, the same as
-# standby. Set KG_WAKE_WORD=0 if that matters more than hands-free asking; the
-# Ask button on the lesson screens does not depend on it.
-KG_WAKE_WORD_ENABLED = os.getenv("KG_WAKE_WORD", "1") != "0"
+# standby.
+#
+# OFF BY DEFAULT NOW. The room this device lives in has adults talking Hindi
+# near it more or less constantly, and the paragraphs above are the record of
+# trying to make a wake word survive that. It does not. The Ask button is one
+# tap, it is on every lesson screen, and it cannot be misheard -- so in the KG
+# section the button is the only way in, and a child's lesson is never stopped
+# by the room. Set KG_WAKE_WORD=1 to put hands-free asking back.
+KG_WAKE_WORD_ENABLED = os.getenv("KG_WAKE_WORD", "0") != "0"
+
+# Barge-in during a lesson, for the same reason and with the same default. It
+# is measured against her own voice coming back through the microphone, so a
+# room that is loud enough clears the bar without anybody addressing her -- and
+# what that looks like from the child's side is the story stopping by itself.
+KG_BARGE_IN_ENABLED = os.getenv("KG_BARGE_IN", "0") != "0"
+
+# How long she waits for a child to START, after they have tapped Ask me.
+#
+# Eight seconds was the old value and it is a long time to hold a lesson still
+# for a button somebody pressed by accident -- which at this age is most
+# presses. Three is what a child who has something to say actually needs: they
+# tap because they already have the question. If nothing comes, she asks once
+# ("Yes? What would you like to ask me?") and gives them the same window again,
+# so a slow starter still gets two goes and roughly ten seconds in total.
+# Raise KG_ASK_START_S if the children using it need longer.
+KG_ASK_START_S = float(os.getenv("KG_ASK_START_S", "3.0"))
+
+# How many of the child's own questions she keeps, so a follow-up works.
+#
+# Every doubt used to be a standalone call with no history at all, which meant
+# "why?" reached the model as the entire question. Six messages is three
+# exchanges -- enough for "what is the moon made of", "why", "but why is it
+# white" -- and short enough that it cannot crowd out the instruction above it
+# or turn a one-breath answer into a slow one.
+KG_DOUBT_MEMORY = int(os.getenv("KG_DOUBT_MEMORY", "6"))
 

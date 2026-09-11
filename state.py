@@ -86,6 +86,36 @@ media_started_at = 0.0
 currently_playing = None      # {"title": str, "kind": "music"|"video"} or None
 currently_open_file = None    # absolute path inside $HOME, or None
 current_ui_mode = "normal"    # "normal" | "3d"
+# The graph most recently put on the board, as the student would write it:
+# "y = x^2", or "y = m*x + c, m=2.4" once a slider has been dragged. Told to
+# the model so that "now make it x cubed" has something to be a change TO --
+# without it she is asked to alter a graph she cannot see.
+#
+# THE LAST ONE, not the one currently drawn, and the difference is the whole
+# reason this survives clear_visual(). A new question wipes the board before
+# the answer to it is composed, and that wipe happens on the Tk thread while
+# the prompt is being built on ai_loop's -- so clearing this there made the
+# follow-up work or not work depending on which thread won. It is cleared when
+# something genuinely replaces it: another picture, or Switch User.
+#
+# Written by the Tk thread on every drag and read by ai_loop, which is why it
+# is a plain string and not a dict: a torn read of one gets you the previous
+# formula, never half of two.
+current_graph = None
+
+# What is on the board right now, and what it is made of:
+#   {"kind": "cycle", "title": "Frog life cycle",
+#    "steps": ["Eggs", "Tadpole", "Froglet", "Adult frog"]}
+#
+# Two things read it. The model is told about it, so that "explain it" is
+# answered about the picture the student is looking at rather than from
+# scratch. And the screen keeps the steps beside the rendered image so it can
+# light up the one she is talking about -- which is the only way to highlight
+# inside a picture that was drawn in a datacentre and arrived as flat pixels.
+#
+# `steps` is empty for the kinds that have none, a photograph or an equation.
+# None means the board is clear.
+current_visual = None
 device_state_lock = threading.Lock()
 
 # ---------------------------------------------------------------- kindergarten

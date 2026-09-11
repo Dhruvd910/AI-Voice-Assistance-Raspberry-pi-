@@ -334,14 +334,17 @@ RE_STOP_MEDIA_PHRASE = re.compile(
     # video on screen "close the current file" means the video, and this pattern
     # is only ever consulted while something is actually playing.
     r'(?:stop|pause|mute|quiet|silence|shh+|halt|end|cancel|close|shut|'
-    r'turn\s+(?:it|the\s+\w+)?\s*off|'
+    r'turn\s+(?:it|that|this|the\s+\w+)?\s*off|'
     r'shut\s+(?:it|up)|no\s+more|enough|band|chup|ruk\w*)'
     # The Hinglish verb tails are not decoration: Whisper romanises Hindi
     # constantly (see detect_user_language), so "band karo" and "chup karo"
     # arrive far more often than the Devanagari branch below ever fires. Without
     # them the stem matched and the tail did not, and the commonest way in the
     # room to say "stop" did nothing at all.
-    r'(?:\s+(?:it|that|this|the|a|an|song|music|video|track|playing|now|please|'
+    # "off" as a tail as well as inside the turn-off stem, so "shut it off"
+    # and "turn that off" are both recognised as the stop they are and do not
+    # cost a model turn to be told nothing is playing.
+    r'(?:\s+(?:it|that|this|the|a|an|off|song|music|video|track|playing|now|please|'
     # "the CURRENT file", "the open document" -- the words people actually put
     # between the verb and the thing. Without them the stem matched and the
     # sentence did not.

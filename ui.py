@@ -44,6 +44,7 @@ import kg_content
 import media
 import profiles
 import store
+import visuals
 from config import (KG_COUNT_END_SILENCE_S, KG_COUNT_PHRASE_LIMIT_S,
                     KG_COUNT_START_TIMEOUT_S, KG_SPELL_END_SILENCE_S,
                     KG_SPELL_PHRASE_LIMIT_S, KG_SPELL_START_TIMEOUT_S)
@@ -394,6 +395,107 @@ def _overlay_backing(tint):
             _overlay_backings[tint] = None
     return _overlay_backings[tint]
 
+
+# ---------------------------------------------------------------------------
+# The classroom
+# ---------------------------------------------------------------------------
+# The alphabet, spelling and A-to-Z screens are drawn as a classroom rather than
+# as a tinted worksheet. This is not decoration. A four-year-old recognises a
+# blackboard long before they can read a heading, so putting the lesson ON one
+# tells them what kind of thing they are looking at without a word of it being
+# read to them -- and it puts the mascot in the room with them rather than on a
+# blank page beside it.
+#
+# The artwork is 800x480 and fully opaque, so it replaces the tinted wallpaper
+# outright; the tint passed to _overlay_screen still matters only as the colour
+# of the screens that have no classroom.
+KG_CLASS_BG = ("KG Activity", "A_Z", "Class_bg.png")
+
+# The green writing surface inside the wooden frame, measured off the artwork
+# with a coordinate grid rather than chosen by eye: x 212..606, y 70..258, with
+# the frame's bottom lip carrying on to 274. Everything the lesson SAYS is
+# written inside that box; anything that will not fit -- the spelling keyboard
+# -- goes on the wall below it, where there is nothing to fight with.
+#
+# Note BOARD_MID is 409 and not 400: the board is not centred in the room, and
+# wording centred on the screen sits visibly left of centre on the board.
+BOARD_L, BOARD_R = 212, 606
+BOARD_MID = (BOARD_L + BOARD_R) / 2
+
+# Chalk, and chalk that has been rubbed once. Both are measured against the
+# LIGHTEST pixel inside the writing surface (#54705A, where the overhead light
+# falls on it), which is the worst case and the only one worth checking:
+# 5.0:1 and 4.8:1, so both clear AA for body text at the sizes used here.
+CHALK      = "#F3F7F0"
+CHALK_DIM  = "#E8F2E5"
+# What she is doing right now, as opposed to what the board says -- the
+# listening line, the feedback, the "Perfect!". Warm so that it reads as live
+# rather than as more of the lesson. 4.4:1 against that same worst case, so it
+# is only ever used at 14pt bold or larger, where AA asks for 3:1.
+CHALK_WARM = "#FDE68A"
+
+# The pills on the floor. Navy on white for anything that leaves or repeats,
+# white on navy for the one button that carries the lesson forward, so a child
+# who cannot read the words can still find the one that means "go on".
+CLASS_BLUE = "#17408B"
+CLASS_INK  = "#1D4ED8"
+CLASS_PILL = "#FFFFFF"
+# Counting keeps the green it has worn everywhere else in the app, darkened to
+# 7.7:1 against the frosted card it is now written on.
+COUNT_GREEN = "#065F46"
+
+# Coloured chalk, for the story captions. They carried an ink colour per tone
+# on the white card they used to be printed on, and dropping all ten to one
+# white would have flattened a storyteller's voice into a worksheet's. These are
+# the colours a box of chalk actually comes in, and each is checked against the
+# LIGHTEST pixel of the board: 5.0, 4.6 and 4.5 to one.
+CHALK_YELLOW = "#FDEBA8"
+CHALK_BLUE   = "#DCEBFB"
+
+
+_glass_cards = {}
+
+def glass_card(box, radius=22, wash=0.46):
+    """A frosted panel cut out of the classroom, as RGBA. None if the art is missing.
+
+    A Tk canvas item has no alpha, so a translucent panel cannot be DRAWN -- it
+    has to be composited into a bitmap first, the same trick _overlay_backing
+    uses for the tinted wallpaper. What sits behind this panel is known here,
+    because the classroom never moves, so the blur is done once per box and
+    cached for the life of the process.
+
+    `wash` is how much white is mixed into the blur. It is the only dial worth
+    turning: too little and white lettering on the pale right-hand end of the
+    card stops being readable, too much and the panel stops looking like glass
+    and starts looking like a hole.
+    """
+    key = (box, radius, wash)
+    if key not in _glass_cards:
+        room = ui_asset(*KG_CLASS_BG)
+        if room is None:
+            _glass_cards[key] = None
+            return None
+        x0, y0, x1, y1 = box
+        crop = room.crop((int(x0), int(y0), int(x1), int(y1))).convert("RGB")
+        crop = crop.filter(ImageFilter.GaussianBlur(10))
+        crop = Image.blend(crop, Image.new("RGB", crop.size, "#FFFFFF"), wash)
+        card = crop.convert("RGBA")
+        # Rounded by an alpha mask rather than by drawing corners on: the panel
+        # has to let the room show at its edges, and a painted corner would be
+        # a wrong-coloured triangle over whatever it happened to land on.
+        mask = Image.new("L", crop.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (0, 0, crop.width - 1, crop.height - 1), radius, fill=255)
+        card.putalpha(mask)
+        # A lit rim, so the panel has an edge against the wall rather than
+        # fading into it. Two pixels; one disappears on this screen.
+        ImageDraw.Draw(card).rounded_rectangle(
+            (0, 0, crop.width - 1, crop.height - 1), radius,
+            outline=(255, 255, 255, 205), width=2)
+        _glass_cards[key] = card
+    return _glass_cards[key]
+
+
 def _build_mascot_cache(state, fname):
     out_dir = os.path.join(MASCOT_CACHE_DIR, state)
     os.makedirs(out_dir, exist_ok=True)
@@ -470,6 +572,11 @@ _emoji_cache = {}
 # learning from is worse than no picture. Dropping a PNG in here fills the gap:
 # name the entry "yak.png" instead of an emoji character and it is used instead.
 PICTURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pictures")
+# The English alphabet is now drawn artwork rather than emoji, and that artwork
+# ships with the rest of the KG screens rather than in pictures/. Both folders
+# are searched, in this order, so pictures/ stays the place to override one
+# drawing without touching the set it came in.
+PICTURE_DIRS = (PICTURE_DIR, os.path.join(UI_DIR, "KG Activity", "A_Z"))
 _PICTURE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 
@@ -491,10 +598,12 @@ def _file_picture(name, px):
     key = ("file:" + name, px)
     if key in _emoji_cache:
         return _emoji_cache[key]
-    path = os.path.join(PICTURE_DIR, os.path.basename(name))
     image = None
-    try:
-        if os.path.exists(path):
+    for folder in PICTURE_DIRS:
+        path = os.path.join(folder, os.path.basename(name))
+        if not os.path.exists(path):
+            continue
+        try:
             source = Image.open(path).convert("RGBA")
             # Fitted into a square and centred rather than stretched, so a
             # non-square drawing keeps its proportions next to the letter.
@@ -502,9 +611,10 @@ def _file_picture(name, px):
             image = Image.new("RGBA", (px, px), (0, 0, 0, 0))
             image.paste(source, ((px - source.width) // 2,
                                  (px - source.height) // 2), source)
-    except Exception as exc:
-        print(f"[PICTURE] Could not load {path} ({exc}).", flush=True)
-        image = None
+        except Exception as exc:
+            print(f"[PICTURE] Could not load {path} ({exc}).", flush=True)
+            image = None
+        break
     _emoji_cache[key] = image
     return image
 
@@ -697,6 +807,15 @@ class TutorUI:
         self.transcript = ""
         self.speaker = "user"
         self.asleep = False
+        # The picture currently on the board, at full render size, so the
+        # enlarged view is the real thing rather than a blown-up thumbnail.
+        self._visual_source = None
+        self._visual_steps = []       # the stages of the diagram on the board
+        self._step_current = -1       # which of them she is talking about
+        self._step_views = {}         # the pips, per view, so both can light up
+        self._graph = None            # the live graph, when one is up
+        self._visual_photos = []
+        self._big_visual_photos = []
 
         self.phase = 0.0
         self.frame = 0
@@ -762,6 +881,7 @@ class TutorUI:
 
         self._animate()
         self._tick_clock()
+        self._follow_spoken_captions()
 
     # ---------- drawing helpers ----------
     def _pick_font(self):
@@ -1862,10 +1982,604 @@ class TutorUI:
             head = head[:head.rindex(" ")].rstrip()
         return (head + "…") if head else text[:cut].rstrip() + "…"
 
+    # How many of the caption poller's ticks have gone by; only used to keep the
+    # (session, index) pair it last showed.
+    _caption_shown = (0, -1)
+
+    def _follow_spoken_captions(self):
+        """Put the line she is SAYING on the board, not the line she is about to.
+
+        The panel used to be written from the audio worker, at the moment a
+        sentence was handed to Cartesia. That is one whole sentence of
+        generation AHEAD of the speaker, so the board ran in front of the voice
+        -- and on a long answer it was showing the last sentence while the first
+        was still playing, which is what makes it read as a wall of text rather
+        than as a caption.
+
+        The player already timestamps every sentence onto the playback timeline
+        for the story screen (see audio.caption_cue). This reads the same clock,
+        so the board and the voice are the same thing.
+        """
+        try:
+            session = audio.caption_session()
+            index, text = audio.caption_now(session)
+            if index >= 0 and text and (session, index) != self._caption_shown:
+                self._caption_shown = (session, index)
+                self.set_transcript(text, "liza")
+                # The same line that reaches the board decides which stage is
+                # lit, so the pip moves exactly when she says the word.
+                self._match_step(text)
+        except Exception:
+            # A caption is never worth taking the screen down for.
+            pass
+        self.root.after(120, self._follow_spoken_captions)
+
+    # Where a diagram lands on the board: the whole of the writing area, from
+    # under the painted heading to just above the status dots. 309x184, which is
+    # why visuals.py draws at 760x420 and this scales down -- a diagram composed
+    # for this box would be unreadable enlarged, and one composed large reads at
+    # both sizes.
+    VISUAL_BOX = (BOARD_X0 + 10, BOARD_Y0 + 56, BOARD_X1 - 10, BOARD_Y1 - 26)
+    VISUAL_TAG = "boardvisual"
+    BIG_VISUAL_TAG = "bigvisual"
+
+    def show_visual(self, path, steps=None):
+        """Put a rendered diagram, equation, graph or picture on the board.
+
+        `steps` are the stages the diagram was asked to show, in order. They are
+        drawn as a strip of pips under the picture and one of them lights up as
+        she talks about it -- see _match_step. A Seedream diagram is flat pixels
+        with nothing addressable inside it, so the strip is the only place a
+        highlight can live.
+
+        Drawn as ordinary canvas items with their own tag rather than through
+        the overlay machinery, and that is not a style choice: _overlay_screen
+        sets self.overlay, kg_holds_microphone reads it, and ai_loop parks the
+        microphone for as long as it is set. A picture on the board that stopped
+        her listening would be a strange kind of answer.
+        """
+        try:
+            image = Image.open(path).convert("RGB")
+        except Exception as exc:
+            print(f"[UI] Could not open the visual ({exc}).", flush=True)
+            return
+        self.canvas.delete(self.VISUAL_TAG)
+        self.canvas.delete(self.GRAPH_TAG)
+        self.canvas.delete(self.BIG_GRAPH_TAG)
+        self._graph = None
+        app_state.current_graph = None
+        self._visual_source = image
+        self._visual_steps = list(steps or [])
+        self._step_current = -1
+        self._step_views = {}
+        x0, y0, x1, y1 = self.VISUAL_BOX
+        strip = self.STEP_STRIP_H if self._visual_steps else 0
+        fitted = image.copy()
+        fitted.thumbnail((x1 - x0, y1 - y0 - strip), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(fitted)
+        self._visual_photos = [photo]        # Tk keeps no reference of its own
+        cx, cy = (x0 + x1) / 2, (y0 + y1 - strip) / 2
+        self._round_rect(cx - fitted.width / 2 - 4, cy - fitted.height / 2 - 4,
+                         cx + fitted.width / 2 + 4, cy + fitted.height / 2 + 4,
+                         10, fill="#FFFFFF", outline="#D8E0F0",
+                         tags=self.VISUAL_TAG)
+        self.canvas.create_image(cx, cy, image=photo, anchor="center",
+                                 tags=self.VISUAL_TAG)
+        self.canvas.create_text(x1 - 2, y1 + 2, text="tap to enlarge", anchor="se",
+                                font=self._font(7), fill=COL_TEXT_FAINT,
+                                tags=self.VISUAL_TAG)
+        if self._visual_steps:
+            self._draw_step_strip((x0, y1 - strip, x1, y1), self.VISUAL_TAG,
+                                  small=True)
+        self.canvas.tag_bind(self.VISUAL_TAG, "<Button-1>", self._enlarge_visual)
+        print(f"[UI] Visual on the board: {os.path.basename(path)}"
+              + (f", {len(self._visual_steps)} stages" if self._visual_steps else ""),
+              flush=True)
+
+    def _enlarge_visual(self, event=None):
+        """The same picture, over the whole screen, until it is tapped again.
+
+        Deliberately NOT an overlay: see show_visual. It is one raised image and
+        a caption, and the next tap anywhere takes it away.
+        """
+        image = getattr(self, "_visual_source", None)
+        if image is None:
+            return "break"
+        self.canvas.delete(self.BIG_VISUAL_TAG)
+        self._step_views.pop(self.BIG_VISUAL_TAG, None)
+        strip = self.BIG_STEP_STRIP_H if self._visual_steps else 0
+        big = image.copy()
+        big.thumbnail((UI_W - 40, UI_H - 54 - strip), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(big)
+        self._big_visual_photos = [photo]
+        self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill="#0B1020",
+                                     outline="", tags=self.BIG_VISUAL_TAG)
+        self.canvas.create_image(UI_W / 2, (UI_H - 26 - strip) / 2, image=photo,
+                                 anchor="center", tags=self.BIG_VISUAL_TAG)
+        self.canvas.create_text(UI_W / 2, UI_H - 16, text="tap anywhere to close",
+                                font=self._font(9), fill="#8891A8",
+                                tags=self.BIG_VISUAL_TAG)
+        if self._visual_steps:
+            self._draw_step_strip((0, UI_H - 30 - strip, UI_W, UI_H - 30),
+                                  self.BIG_VISUAL_TAG, small=False)
+        self.canvas.tag_raise(self.BIG_VISUAL_TAG)
+        self.canvas.tag_bind(self.BIG_VISUAL_TAG, "<Button-1>",
+                             lambda e: self.hide_big_visual())
+        return "break"
+
+    def hide_big_visual(self, event=None):
+        self.canvas.delete(self.BIG_VISUAL_TAG)
+        self._step_views.pop(self.BIG_VISUAL_TAG, None)
+        self._big_visual_photos = []
+        return "break"
+
+    def clear_visual(self):
+        """Take the picture off the board. It belonged to the last question."""
+        self.canvas.delete(self.VISUAL_TAG)
+        self.canvas.delete(self.BIG_VISUAL_TAG)
+        self._visual_photos = []
+        self._big_visual_photos = []
+        self._visual_source = None
+        self.canvas.delete(self.GRAPH_TAG)
+        self.canvas.delete(self.BIG_GRAPH_TAG)
+        self._graph = None
+        self._visual_steps = []
+        self._step_current = -1
+        self._step_views = {}
+
+    # -----------------------------------------------------------------
+    # the step strip
+    # -----------------------------------------------------------------
+    # WHY A STRIP UNDERNEATH RATHER THAN A GLOW ON THE BOX ITSELF. Lighting up
+    # the actual "Tadpole" box would be better, and it is not available: the
+    # diagram on the board was drawn by Seedream and arrives as a photograph of
+    # a diagram, with no boxes in it that this can reach. What it does still
+    # have is the LIST -- the stages were sent to Seedream in order and are kept
+    # in state.current_visual -- so the order is drawn under the picture as pips
+    # and the one she is speaking about is filled in.
+    #
+    # Pips plus one spelled-out label, rather than a chip per stage with its
+    # text in it. The board is 309 wide and "Tadpole with legs" is not going to
+    # fit into a fifth of that at any size a person can read.
+    STEP_STRIP_H = 22
+    BIG_STEP_STRIP_H = 40
+
+    def _draw_step_strip(self, box, tag, small):
+        """The pips and the current stage's name, for one view."""
+        x0, y0, x1, y1 = box
+        labels = self._visual_steps
+        if not labels:
+            return
+        radius = 5 if small else 9
+        gap = radius * 2 + (7 if small else 12)
+        mid = (y0 + y1) / 2
+        left = x0 + (8 if small else 20)
+        pips = []
+        for index in range(len(labels)):
+            cx = left + index * gap
+            pips.append(self.canvas.create_oval(
+                cx - radius, mid - radius, cx + radius, mid + radius,
+                fill=COL_TRACK, outline="", tags=tag))
+        name = self.canvas.create_text(
+            left + len(labels) * gap + (4 if small else 10), mid, text="",
+            anchor="w", font=self._font(7 if small else 13, True),
+            fill=COL_INDIGO, tags=tag)
+        self._step_views[tag] = {"pips": pips, "name": name,
+                                 "width": x1 - (left + len(labels) * gap) - 8,
+                                 "small": small}
+        self._paint_steps()
+
+    def _paint_steps(self):
+        """Put every view's pips and label where _step_current says."""
+        labels = self._visual_steps
+        for view in self._step_views.values():
+            for index, pip in enumerate(view["pips"]):
+                self.canvas.itemconfig(
+                    pip, fill=COL_INDIGO if index == self._step_current
+                    else COL_TRACK)
+            if 0 <= self._step_current < len(labels):
+                font = self._font(7 if view["small"] else 13, True)
+                text = f"{self._step_current + 1}. {labels[self._step_current]}"
+                text = self._ellipsize(text, font, max(40, view["width"]))
+            else:
+                text = ""
+            self.canvas.itemconfig(view["name"], text=text)
+
+    # Words too common to identify a stage. "The sun heats the sea" and "the
+    # tail is reabsorbed" share three of them, and a match on any one would
+    # light up the wrong pip for the whole explanation.
+    _STEP_STOPWORDS = {"the", "and", "of", "a", "an", "in", "to", "it", "is",
+                       "its", "with", "into", "then", "from", "for", "on",
+                       "are", "was", "this", "that", "they", "their"}
+
+    def _step_hit(self, label, spoken):
+        """True when this stage is what the spoken line is about."""
+        if label.lower() in spoken:
+            return True
+        return any(word in spoken for word in
+                   (w for w in re.findall(r"[a-z]+", label.lower())
+                    if len(w) >= 3 and w not in self._STEP_STOPWORDS))
+
+    def _match_step(self, line):
+        """Light the stage the line she is speaking belongs to.
+
+        Ties break toward the stage AFTER the current one, because an
+        explanation runs forwards: "the tadpole loses its tail and becomes a
+        froglet" names two stages, and the one she is arriving at is the one
+        worth showing.
+        """
+        labels = self._visual_steps
+        if not labels or not line:
+            return
+        spoken = line.lower()
+        hits = [i for i, label in enumerate(labels) if self._step_hit(label, spoken)]
+        if not hits:
+            return
+        wanted = self._step_current + 1
+        best = min(hits, key=lambda i: (abs(i - wanted), -i))
+        if best != self._step_current:
+            self._step_current = best
+            self._paint_steps()
+
+    # -----------------------------------------------------------------
+    # the live graph
+    # -----------------------------------------------------------------
+    # Canvas lines rather than a PNG, and that is the whole point of it. A
+    # picture of y = x^2 answers the question; a curve that MOVES while the
+    # student drags the power from 2 to 3 answers the next four. Everything
+    # here is arithmetic and create_line, so a drag costs about a millisecond
+    # and there is no network anywhere in the loop.
+    #
+    # ONE MODEL, TWO VIEWS. The board shows it small and the enlarged screen
+    # shows it big, and both can be up at once -- so the knob values live in
+    # self._graph and each view is redrawn from them. Dragging the big slider
+    # moves the little one underneath it, which is what makes closing the big
+    # view leave the board showing what the student just made.
+    GRAPH_TAG = "boardgraph"
+    BIG_GRAPH_TAG = "biggraph"
+    GRAPH_LINE = "#1D4ED8"
+    GRAPH_AXIS = "#98A4BE"
+    GRAPH_GRID = "#EDF1FA"
+
+    def show_graph(self, spec):
+        """Put a formula on the board as a curve with its numbers on sliders."""
+        self.clear_visual()
+        self._graph = {"spec": spec,
+                       "values": [k["value"] for k in spec["knobs"]],
+                       "views": {}}
+        app_state.current_graph = visuals.describe(spec, self._graph["values"])
+        self._draw_graph(self.VISUAL_BOX, self.GRAPH_TAG, small=True)
+        print(f"[UI] Live graph on the board: {spec['source']}", flush=True)
+
+    def _graph_window(self, points):
+        """The y range to draw between, given what the curve actually did.
+
+        The full spread, normally -- clipping the top off a parabola to make it
+        tidy is drawing a different parabola. The exception is an asymptote:
+        1/x near zero runs to eighty and turns every other value on the graph
+        into the same flat line along the axis. So when the extremes are more
+        than six times the span the middle ninety per cent occupies, the middle
+        ninety per cent is what gets drawn.
+        """
+        values = sorted(y for _, y in points if y is not None)
+        if not values:
+            return -1.0, 1.0
+        low, high = values[0], values[-1]
+        inner_low = values[int(len(values) * 0.05)]
+        inner_high = values[int(len(values) * 0.95) - 1]
+        inner = inner_high - inner_low
+        if inner > 0 and (high - low) > 6 * inner:
+            low, high = inner_low, inner_high
+        if high - low < 1e-9:
+            low, high = low - 1, high + 1
+        pad = (high - low) * 0.1
+        low, high = low - pad, high + pad
+        # Bring the x axis into view when it is nearly there anyway. A school
+        # graph that does not show where zero is has lost half its meaning.
+        span = high - low
+        if low > 0 and low < span * 0.25:
+            low = 0.0
+        elif high < 0 and -high < span * 0.25:
+            high = 0.0
+        return low, high
+
+    def _graph_curve(self, view):
+        """The screen points for the curve as the knobs stand, in Tk's order.
+
+        A list per unbroken run, so a hole in the function is a gap on the
+        screen and not a line drawn straight through the asymptote.
+        """
+        spec = self._graph["spec"]
+        points = visuals.sample(spec, self._graph["values"])
+        x0, y0, x1, y1 = view["plot"]
+        low, high = view["y_low"], view["y_high"]
+        left, right = spec["x_low"], spec["x_high"]
+        # CLIPPED TO THE PLOT, and it has to be: a canvas has no clip region,
+        # so a point computed outside the box is simply DRAWN outside it. The
+        # y window is fixed when the view is built, and dragging the power on
+        # y = x^2 up to four takes the curve to 625 on a sheet scaled to 25 --
+        # which came out as a parabola straight up through the board's heading
+        # and into the music card at the top of the screen.
+        #
+        # Each run therefore ends ON the edge it leaves through and the next
+        # one begins on the edge it comes back through, so the curve goes off
+        # the top of the graph the way it does on paper.
+        runs, run, edge = [], [], None
+        for x, y in points:
+            if y is None:                      # a hole: lift the pen
+                if len(run) >= 4:
+                    runs.append(run)
+                run, edge = [], None
+                continue
+            sx = x0 + (x - left) / (right - left) * (x1 - x0)
+            sy = y1 - (y - low) / (high - low) * (y1 - y0)
+            if y0 <= sy <= y1:
+                if not run and edge:
+                    run.extend(edge)
+                run.extend((sx, sy))
+                edge = None
+                continue
+            edge = (sx, max(y0, min(y1, sy)))
+            if run:
+                run.extend(edge)
+                if len(run) >= 4:
+                    runs.append(run)
+                run = []
+        if len(run) >= 4:
+            runs.append(run)
+        return runs
+
+    def _nice_ticks(self, low, high, count=4):
+        """Round numbers across a range -- 1, 2, 5 times a power of ten."""
+        span = high - low
+        if span <= 0:
+            return [low]
+        rough = max(span / count, 1e-12)
+        power = 10 ** math.floor(math.log10(rough))
+        for multiple in (1, 2, 2.5, 5, 10):
+            step = multiple * power
+            if span / step <= count + 1:
+                break
+        first = math.ceil(low / step) * step
+        ticks, value = [], first
+        while value <= high + step * 0.01:
+            ticks.append(0.0 if abs(value) < step * 1e-6 else value)
+            value += step
+        return ticks
+
+    def _draw_graph(self, box, tag, small):
+        """One view of the current graph, board-sized or full-screen."""
+        graph = self._graph
+        if graph is None:
+            return
+        spec = graph["spec"]
+        x0, y0, x1, y1 = box
+        row = 20 if small else 38
+        title_h = 14 if small else 30
+        pad = 8 if small else 26
+        sliders = spec["knobs"]
+        self._round_rect(x0, y0, x1, y1, 10 if small else 16,
+                         fill="#FFFFFF", outline="#D8E0F0",
+                         tags=(tag,))
+        heading = spec["title"] or spec["source"]
+        self.canvas.create_text((x0 + x1) / 2, y0 + title_h / 2 + 2, text=heading,
+                                font=self._font(7 if small else 12, True),
+                                fill=COL_INDIGO, tags=(tag,))
+        # The plot keeps everything the sliders do not need. Axis numbers hang
+        # below and to the left of it, so it is inset for them rather than
+        # sitting on the card's edge.
+        label = 20 if small else 34
+        plot = (x0 + pad + label, y0 + title_h + pad / 2,
+                x1 - pad, y1 - pad - label / 2 - len(sliders) * row)
+        view = {"plot": plot, "box": box, "small": small, "rows": []}
+        graph["views"][tag] = view
+        view["y_low"], view["y_high"] = self._graph_window(
+            visuals.sample(spec, graph["values"]))
+        self._draw_graph_frame(view, tag, small)
+        view["lines"] = []
+        self._repaint_graph(tag)
+        for index, knob in enumerate(sliders):
+            self._draw_slider(view, tag, index, knob, small, row,
+                              y1 - pad - (len(sliders) - index) * row)
+        if small:
+            # The same words in the same corner as a picture's hint. From the
+            # student's side this IS the picture, and a board that labels the
+            # same gesture two different ways teaches them to ignore both.
+            self.canvas.create_text(x1 - 2, y1 + 2, text="tap to enlarge",
+                                    anchor="se", font=self._font(7),
+                                    fill=COL_TEXT_FAINT,
+                                    tags=(tag,))
+
+    def _draw_graph_frame(self, view, tag, small):
+        """Grid, axes and the numbers along them. Fixed for the life of a view.
+
+        The y window is settled when the view is built and does not move while
+        a slider is dragged, deliberately: a graph whose axis rescales under
+        the finger makes every curve look identical and hides the one thing the
+        drag was meant to show.
+        """
+        spec = self._graph["spec"]
+        px0, py0, px1, py1 = view["plot"]
+        low, high = view["y_low"], view["y_high"]
+        left, right = spec["x_low"], spec["x_high"]
+        size = self._font(6 if small else 9)
+        items = (tag,)
+        for value in self._nice_ticks(left, right):
+            sx = px0 + (value - left) / (right - left) * (px1 - px0)
+            self.canvas.create_line(sx, py0, sx, py1, fill=self.GRAPH_GRID,
+                                    tags=items)
+            self.canvas.create_text(sx, py1 + (6 if small else 11), text=f"{value:g}",
+                                    font=size, fill=COL_TEXT_DIM, tags=items)
+        for value in self._nice_ticks(low, high):
+            sy = py1 - (value - low) / (high - low) * (py1 - py0)
+            self.canvas.create_line(px0, sy, px1, sy, fill=self.GRAPH_GRID,
+                                    tags=items)
+            self.canvas.create_text(px0 - 3, sy, text=f"{value:g}", anchor="e",
+                                    font=size, fill=COL_TEXT_DIM, tags=items)
+        if low <= 0 <= high:
+            sy = py1 - (0 - low) / (high - low) * (py1 - py0)
+            self.canvas.create_line(px0, sy, px1, sy, fill=self.GRAPH_AXIS,
+                                    width=1, tags=items)
+        if left <= 0 <= right:
+            sx = px0 + (0 - left) / (right - left) * (px1 - px0)
+            self.canvas.create_line(sx, py0, sx, py1, fill=self.GRAPH_AXIS,
+                                    width=1, tags=items)
+
+    def _repaint_graph(self, tag):
+        """Move the curve to wherever the knobs now are. The whole live part."""
+        view = self._graph["views"].get(tag)
+        if view is None:
+            return
+        for item in view.get("lines", []):
+            self.canvas.delete(item)
+        view["lines"] = [
+            self.canvas.create_line(*run, fill=self.GRAPH_LINE, smooth=True,
+                                    width=2 if view["small"] else 4,
+                                    tags=(tag, tag + "curve"))
+            for run in self._graph_curve(view)]
+        self.canvas.tag_bind(tag + "curve", "<Button-1>",
+                             self._enlarge_graph if view["small"] else
+                             (lambda e: "break"))
+
+    def _draw_slider(self, view, tag, index, knob, small, row, top):
+        """Label, track and knob for one number, and the taps that move it."""
+        x0, _, x1, _ = view["box"]
+        pad = 10 if small else 30
+        mid = top + row / 2
+        name = self._font(7 if small else 11, True)
+        wide = 54 if small else 96
+        track = (x0 + pad + wide, x1 - pad - (34 if small else 62))
+        row_tag = f"{tag}s{index}"
+        # An invisible catcher across the whole row, so a finger that lands
+        # anywhere near the track moves the knob. A three-pixel line is not a
+        # touch target on a screen operated with a thumb.
+        self.canvas.create_rectangle(x0 + pad, top, x1 - pad, top + row,
+                                     fill="#FFFFFF", outline="",
+                                     tags=(tag, row_tag))
+        self.canvas.create_text(x0 + pad, mid, text=knob["label"], anchor="w",
+                                font=name, fill=COL_TEXT_DIM,
+                                tags=(tag, row_tag))
+        self.canvas.create_line(track[0], mid, track[1], mid, fill=COL_TRACK,
+                                width=4 if small else 7,
+                                tags=(tag, row_tag))
+        radius = 6 if small else 11
+        dot = self.canvas.create_oval(0, 0, 0, 0, fill=COL_INDIGO,
+                                      outline="#FFFFFF", width=2,
+                                      tags=(tag, row_tag))
+        readout = self.canvas.create_text(x1 - pad, mid, text="", anchor="e",
+                                          font=name, fill=COL_TEXT,
+                                          tags=(tag, row_tag))
+        view["rows"].append({"track": track, "mid": mid, "dot": dot,
+                             "radius": radius, "readout": readout})
+        self._place_knob(view, index)
+        for sequence in ("<Button-1>", "<B1-Motion>"):
+            self.canvas.tag_bind(row_tag, sequence,
+                                 lambda event, i=index, t=tag: self._drag_knob(t, i, event))
+
+    def _place_knob(self, view, index):
+        """Put one slider's dot and readout where its value says they go."""
+        knob = self._graph["spec"]["knobs"][index]
+        value = self._graph["values"][index]
+        row = view["rows"][index]
+        left, right = row["track"]
+        fraction = (value - knob["low"]) / (knob["high"] - knob["low"])
+        x = left + max(0.0, min(1.0, fraction)) * (right - left)
+        radius = row["radius"]
+        self.canvas.coords(row["dot"], x - radius, row["mid"] - radius,
+                           x + radius, row["mid"] + radius)
+        self.canvas.itemconfig(row["readout"], text=f"{value:g}")
+
+    def _drag_knob(self, tag, index, event):
+        """A finger on a slider. Every view redraws, not just the touched one."""
+        graph = self._graph
+        if graph is None:
+            return "break"
+        view = graph["views"].get(tag)
+        if view is None:
+            return "break"
+        knob = graph["spec"]["knobs"][index]
+        left, right = view["rows"][index]["track"]
+        fraction = max(0.0, min(1.0, (event.x - left) / max(1.0, right - left)))
+        value = knob["low"] + fraction * (knob["high"] - knob["low"])
+        step = knob["step"]
+        value = round(round(value / step) * step, 6)
+        if value == graph["values"][index]:
+            return "break"
+        graph["values"][index] = value
+        app_state.current_graph = visuals.describe(graph["spec"], graph["values"])
+        for other, panel in list(graph["views"].items()):
+            self._place_knob(panel, index)
+            self._repaint_graph(other)
+        return "break"
+
+    def _enlarge_graph(self, event=None):
+        """The same graph over the whole screen, sliders and all."""
+        if self._graph is None:
+            return "break"
+        self.canvas.delete(self.BIG_GRAPH_TAG)
+        self._graph["views"].pop(self.BIG_GRAPH_TAG, None)
+        ground = self.BIG_GRAPH_TAG + "ground"
+        self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill="#0B1020", outline="",
+                                     tags=(self.BIG_GRAPH_TAG, ground))
+        self.canvas.tag_bind(ground, "<Button-1>", lambda e: self.hide_big_graph())
+        # The dark ground around the card is the close button, so it is left
+        # wide enough to be hit with a thumb -- 30px up the sides and a clear
+        # 46px strip along the bottom, where the words telling you so are.
+        self._draw_graph((30, 22, UI_W - 30, UI_H - 46), self.BIG_GRAPH_TAG,
+                         small=False)
+        self.canvas.create_text(UI_W / 2, UI_H - 16, text="tap the dark edge to close",
+                                font=self._font(9), fill="#8891A8",
+                                tags=(self.BIG_GRAPH_TAG,))
+        self.canvas.tag_raise(self.BIG_GRAPH_TAG)
+        return "break"
+
+    def hide_big_graph(self, event=None):
+        self.canvas.delete(self.BIG_GRAPH_TAG)
+        if self._graph is not None:
+            self._graph["views"].pop(self.BIG_GRAPH_TAG, None)
+        return "break"
+
+    def clear_transcript(self):
+        """Put the board back to its opening line.
+
+        Called when the device changes hands. Whoever is next did not ask about
+        photosynthesis, and leaving the last student's answer up says they did.
+        """
+        self.transcript = ""
+        self.speaker = "user"
+        self.clear_visual()
+        app_state.current_graph = None
+        app_state.current_visual = None
+        # MARK THE LINE THAT IS SHOWING AS ALREADY SHOWN, which is not the same
+        # as marking nothing shown, and the difference is a bug you can watch
+        # happen. caption_now() has no end: once a reply has finished speaking it
+        # goes on returning that reply's last cue for as long as the session
+        # stands. So an index of -1 here told _follow_spoken_captions that cue
+        # was new, and 120ms after the board was cleared it painted the previous
+        # student's answer straight back onto it -- switch from Akshay to Sahil
+        # after a question about frogs and Sahil gets the frogs.
+        session = audio.caption_session()
+        self._caption_shown = (session, audio.caption_now(session)[0])
+        self.canvas.itemconfig(self.speaker_id, text="You said:", fill=COL_INDIGO)
+        self.canvas.itemconfig(
+            self.transcript_id, fill=COL_TEXT_DIM,
+            text="Tap SPEAK or say \u201cHey Liza\u201d to begin.")
+
     def set_transcript(self, text, speaker="user"):
         text = (text or "").strip()
         if not text:
             return
+        # A NEW QUESTION USED TO TAKE THE DIAGRAM DOWN WITH IT, and that was
+        # wrong for the question students actually ask next. "Can you explain
+        # it?" is a question ABOUT the picture, and wiping the picture to answer
+        # it leaves them listening to a description of something they can no
+        # longer see -- which for a teaching device is the whole value gone.
+        #
+        # So the board now holds until something replaces it: another visual, a
+        # change of student, or her own [ACTION: hide_visual] when the
+        # conversation has genuinely moved off it. The model is told what is up
+        # there in ON_BOARD and decides which of those it is, because it is the
+        # only part of this that can tell "explain it" from "what is gravity".
         # The FULL line is kept here and only the drawn copy is clipped.
         self.transcript = text
         self.speaker = speaker
@@ -2020,10 +2734,13 @@ class TutorUI:
     # somebody brushing past her. A button a child has to reach for cannot be
     # pressed by accident, which is the whole difference between an interruption
     # they asked for and one they did not.
-    KG_ASK_BOX = (22, 196, 166, 306)
-    # The story screen has no free column -- its captions run the full width --
-    # so it takes the gap in the bottom row instead.
-    KG_ASK_BOX_STORY = (190, 414, 300, 462)
+    # A pill on the wall to the left of the board, not the 144x110 card it was.
+    # Against a painted classroom that card read as a hole cut in the room; the
+    # tinted worksheet it was drawn for had nothing behind it to interrupt.
+    KG_ASK_BOX = (24, 198, 172, 246)
+    # The story screen has no free column -- its caption fills the board -- so
+    # it stands in the bottom row instead, in the second of the four slots.
+    KG_ASK_BOX_STORY = (204, 394, 366, 442)
 
     # Its own tag, because this button is redrawn several times on one screen --
     # pressed, stopped, finished -- and each redraw must REPLACE the last. Drawn
@@ -2050,6 +2767,7 @@ class TutorUI:
             tag = self._overlay_button(
                 x0, y0, x1, y1, "Listening", self._kg_ask,
                 fill="#FEF3C7", text_colour="#92400E", size=13,
+                radius=12 if roomy else (y1 - y0) // 2,
                 sub="tap to stop" if roomy else None,
                 label_frac=0.58 if roomy else None, sub_frac=0.80)
             self.canvas.addtag_withtag(self.KG_ASK_TAG, tag)
@@ -2057,6 +2775,7 @@ class TutorUI:
 
         tag = self._overlay_button(
             x0, y0, x1, y1, "Ask me", self._kg_ask, fill="#F59E0B", size=14,
+            radius=12 if roomy else (y1 - y0) // 2,
             sub="I'll stop and listen" if roomy else None,
             label_frac=0.66 if roomy else None, sub_frac=0.85)
         if roomy:
@@ -2115,6 +2834,12 @@ class TutorUI:
         if not getattr(self, "_kg_asking", False):
             return
         self._kg_asking = False
+        # And the panel stops saying she is listening, because she is not. The
+        # press set it to "listening" and only a spoken reply ever put it back,
+        # so a press that heard nothing at all left the caption up for good.
+        # set_state ignores this while she is still talking, which is what makes
+        # it safe to call unconditionally.
+        self.set_state("idle")
         if self.overlay in self.KG_ASK_SCREENS:
             self._kg_ask_button(self._kg_ask_box())
 
@@ -2142,8 +2867,15 @@ class TutorUI:
             pass
 
     def _overlay_screen(self, name, title, subtitle=None, tint=COL_BG,
-                        backdrop=None, backdrop_at=(0, 0)):
+                        backdrop=None, backdrop_at=(0, 0), chalk=False):
         """The opaque backing every profile and KG screen is built on.
+
+        `chalk` writes the title and subtitle ON the blackboard instead of at
+        the top of the screen -- in chalk, centred on the board rather than on
+        the canvas. It is a flag rather than four colour-and-position arguments
+        because there is one classroom and every screen in it is written on the
+        same board; a caller that wants to place its own wording anywhere else
+        should draw it itself.
 
         `name` is set here, AFTER the clear, and not by the callers: _clear_overlay
         resets it to None, so a caller that set it first had it wiped again on
@@ -2205,6 +2937,15 @@ class TutorUI:
             art = ui_asset(*backdrop)
             if art is not None:
                 self._place_overlay_asset(art, *backdrop_at)
+        if chalk:
+            self.canvas.create_text(BOARD_MID, 90, text=title,
+                                    font=self._font(19, True), fill=CHALK,
+                                    tags=self.OVERLAY_TAG)
+            if subtitle:
+                self.canvas.create_text(BOARD_MID, 114, text=subtitle,
+                                        font=self._font(10), fill=CHALK_DIM,
+                                        tags=self.OVERLAY_TAG)
+            return
         self.canvas.create_text(UI_W / 2, 40, text=title, font=self._font(20, True),
                                 fill=COL_TEXT, tags=self.OVERLAY_TAG)
         if subtitle:
@@ -2231,6 +2972,79 @@ class TutorUI:
         if command is not None:
             self.canvas.tag_bind(tag, "<Button-1>", lambda e: command())
         return tag
+
+    # ---------- the classroom screens ----------
+    # The strip of pills along the floor, and the slots they stand in.
+    #
+    # FIXED slots, not an even spread over however many buttons a screen has
+    # this time. Back belongs at the far left of every screen that has one, and
+    # the alphabet screen loses its Previous button on the first letter -- a row
+    # that reflows would slide the remaining three under the finger already
+    # reaching for one of them, which on a screen built for four-year-olds is
+    # the difference between Next and Back.
+    KG_ROW_Y0, KG_ROW_Y1 = 394, 442
+    KG_ROW_3 = ((44, 204), (320, 480), (596, 756))
+    KG_ROW_4 = ((24, 186), (204, 366), (430, 596), (614, 776))
+
+    def _kg_class_screen(self, name, title, subtitle=None):
+        """A KG lesson in the classroom, with its heading written on the board."""
+        self._overlay_screen(name, title, subtitle,
+                             backdrop=KG_CLASS_BG, chalk=True)
+
+    def _kg_class_button(self, slot, label, command, primary=False, arrow=None,
+                         size=12):
+        """One pill on the classroom floor.
+
+        Capitals, because that is the alphabet these screens are teaching and a
+        child part-way through it can pick "NEXT" out of a row where they could
+        not pick "Next" -- and because the wording is for the adult beside them
+        anyway; the colour is what the child reads.
+        """
+        x0, x1 = slot
+        y0, y1 = self.KG_ROW_Y0, self.KG_ROW_Y1
+        fill = CLASS_BLUE if primary else CLASS_PILL
+        ink = "#FFFFFF" if primary else CLASS_INK
+        # Shrunk to fit rather than trusted to. Every label here is chosen by
+        # the screen and none of them is measured by whoever writes it, so a
+        # wording change of two characters is enough to push the text out
+        # through the ends of its own pill -- which is what "That's enough" did
+        # at 118px inside 112. One point at a time down to 9, because a label
+        # that has to go smaller than that is the wrong label, not a font
+        # problem, and a caller should hear about it.
+        text = label.upper()
+        room = (x1 - x0) - (52 if arrow else 26)
+        while size > 9 and self._font(size, True).measure(text) > room:
+            size -= 1
+        if self._font(size, True).measure(text) > room:
+            print(f"[UI] Button label {label!r} does not fit its pill; "
+                  f"shortening it.", flush=True)
+            text = self._ellipsize(text, self._font(size, True), room)
+        tag = self._overlay_button(x0, y0, x1, y1, text, command,
+                                   fill=fill, text_colour=ink,
+                                   radius=(y1 - y0) // 2, size=size)
+        if arrow:
+            # Same tag as the pill, so the mark is part of the target rather
+            # than a hole in the middle of it.
+            cy = (y0 + y1) / 2
+            if arrow == "left":
+                x = x0 + 24
+                pts = (x + 5, cy - 8, x + 5, cy + 8, x - 6, cy)
+            else:
+                x = x1 - 24
+                pts = (x - 5, cy - 8, x - 5, cy + 8, x + 6, cy)
+            self.canvas.create_polygon(*pts, fill=ink, outline=ink,
+                                       tags=(self.OVERLAY_TAG, tag))
+        return tag
+
+    def _kg_glass_card(self, box, radius=22, wash=0.46):
+        """The frosted panel a lesson is presented on. Falls back to a flat card."""
+        card = glass_card(tuple(box), radius, wash)
+        if card is None:
+            self._round_rect(box[0], box[1], box[2], box[3], radius,
+                             fill="#EFF3F8", outline="#CBD5E1",
+                             tags=self.OVERLAY_TAG)
+            return
+        self._place_overlay_asset(card, box[0], box[1])
 
     # ---------- the chip that shows who is using the device ----------
     def _build_profile_chip(self):
@@ -2677,6 +3491,10 @@ class TutorUI:
     def route_for_profile(self, profile):
         """KG goes to the spelling and story screens; everyone else to the
         normal flow. The one place that decision is made."""
+        # Whatever is on the board belonged to whoever was here before. The
+        # history behind it is already swapped per student in ai_loop; this is
+        # the one copy of the last answer that was being left on the screen.
+        self.clear_transcript()
         if profile and profiles.is_kindergarten(profile.get("class")):
             kg.set_kg_active(True)
             self.show_kg_home(greet=True)
@@ -2784,64 +3602,87 @@ class TutorUI:
         else:
             reading, picture = "", entry[2]
 
-        title = "हिंदी अक्षर" if language == "hi" else "A B C"
-        self._overlay_screen("kg_alpha", title,
-                             f"{self._kg_alpha_index + 1} of {len(bank)}",
-                             tint="#EFF6FF" if language == "en" else "#FDF2F8")
-        accent = "#2563EB" if language == "en" else "#DB2777"
+        title = "हिंदी अक्षर" if language == "hi" else "English Alphabets"
+        self._kg_class_screen("kg_alpha", title,
+                              f"{self._kg_alpha_index + 1} of {len(bank)}")
 
-        # With a picture the letter moves left and they sit side by side, which
-        # is how a wall chart does it. Without one the letter takes the middle,
-        # so a letter whose traditional word has no emoji still looks deliberate
-        # rather than like something failed to load.
+        # She stands in the room and the letter is held up beside her, on a
+        # frosted card over the right-hand end of the board. The card starts at
+        # 405 and she ends at 386, so nothing of her is ever behind it.
         self._kg_keep_mascot()
         self._kg_ask_button()
-        # 120 rather than 132, and +/-100 rather than +/-140: the letter and its
-        # picture now share a 390px column instead of half of an 800px screen.
-        has_picture = picture_image(picture, 120) is not None if picture else False
-        letter_x = self.KG_CX - 100 if has_picture else self.KG_CX
-        self.canvas.create_text(letter_x, 186, text=letter,
-                                font=self._font(76, True), fill=accent,
+        card = (405, 140, 780, 336)
+        self._kg_glass_card(card)
+
+        # With a picture the letter moves left and they sit side by side, which
+        # is how a wall chart does it. Without one the letter takes the middle
+        # of the card, so a Hindi letter whose word has no picture still looks
+        # deliberate rather than like something failed to load.
+        has_picture = picture_image(picture, 116) is not None if picture else False
+        card_mid = (card[0] + card[2]) / 2
+        letter_x = card[0] + 92 if has_picture else card_mid
+        letter_y = 206 if reading else 214
+        # Navy on the frosted panel rather than the white of the mockup. The
+        # card runs from x=405 to x=780 and the board it sits on ends at 606, so
+        # its right-hand third is always over the pale wall -- white lettering
+        # is legible on the half over the board and washes out completely on the
+        # half that is not, and the word is centred right on that seam. Navy is
+        # the one colour that holds up across the whole panel, and it is the
+        # same navy as the buttons on the floor.
+        self.canvas.create_text(letter_x, letter_y, text=letter,
+                                font=self._font(56, True), fill=CLASS_BLUE,
                                 tags=self.OVERLAY_TAG)
         if reading:
             # The Latin reading is for the adult sitting alongside, not the child.
-            self.canvas.create_text(letter_x, 244, text=f"({reading})",
-                                    font=self._font(11), fill=COL_TEXT_DIM,
+            self.canvas.create_text(letter_x, 252, text=f"({reading})",
+                                    font=self._font(10), fill="#3F5C8C",
                                     tags=self.OVERLAY_TAG)
         if has_picture:
-            self._place_emoji(picture, self.KG_CX + 100, 186, 120)
-        self.canvas.create_text(self.KG_CX, 306, text=word,
-                                font=self._font(22, True), fill=COL_TEXT,
+            self._place_emoji(picture, card[0] + 268, 210, 116)
+        # A rule under both of them, then the word: the card reads as one thing
+        # with a caption rather than as two pictures and some text.
+        self.canvas.create_line(card[0] + 30, 282, card[2] - 30, 282,
+                                fill="#FFFFFF", width=3, tags=self.OVERLAY_TAG)
+        self.canvas.create_text(card_mid, 308, text=word.upper(),
+                                font=self._font(19, True), fill=CLASS_BLUE,
                                 tags=self.OVERLAY_TAG)
 
-        self._overlay_button(20, 396, 170, 452, "Back",
-                             self.show_kg_home, fill="#E6E9F5",
-                             text_colour=COL_TEXT, size=11)
+        self._kg_class_button(self.KG_ROW_4[0], "Back", self.show_kg_home,
+                              arrow="left")
         if self._kg_alpha_index > 0:
-            self._overlay_button(200, 396, 360, 452, "Previous",
-                                 lambda: self.show_kg_alphabet(
-                                     language, self._kg_alpha_index - 1),
-                                 fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        self._overlay_button(390, 396, 560, 452, "Say it again",
-                             lambda: self._kg_say_letter(letter, word, language),
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+            self._kg_class_button(self.KG_ROW_4[1], "Previous",
+                                  lambda: self.show_kg_alphabet(
+                                      language, self._kg_alpha_index - 1))
+        self._kg_class_button(self.KG_ROW_4[2], "Say it again",
+                              lambda: self._kg_say_letter(letter, word, language),
+                              primary=True)
         if self._kg_alpha_index < len(bank) - 1:
-            self._overlay_button(590, 396, 780, 452, "Next", lambda:
-                                 self.show_kg_alphabet(language,
-                                                       self._kg_alpha_index + 1),
-                                 fill=accent, size=13)
+            self._kg_class_button(self.KG_ROW_4[3], "Next",
+                                  lambda: self.show_kg_alphabet(
+                                      language, self._kg_alpha_index + 1),
+                                  arrow="right")
         else:
-            self._overlay_button(590, 396, 780, 452, "Start again",
-                                 lambda: self.show_kg_alphabet(language, 0),
-                                 fill=accent, size=12)
+            self._kg_class_button(self.KG_ROW_4[3], "Start again",
+                                  lambda: self.show_kg_alphabet(language, 0),
+                                  size=11, arrow="right")
         self._kg_say_letter(letter, word, language)
 
     def _kg_say_letter(self, letter, word, language):
+        """Say the letter, then the letter with its word.
+
+        Both lines go through the SOUND of the letter rather than the letter
+        itself -- see LETTER_SOUNDS. A bare "A." handed to a multilingual voice
+        came back as आ, which is the one thing this screen must not teach. The
+        Hindi line takes a danda for the same reason: a lone Devanagari glyph
+        with no punctuation was being read as its Latin transliteration.
+        """
         if language == "hi":
-            kg.kg_say_many([(f"{letter}", "curious"), (f"{letter} से {word}।", "warm")])
+            kg.kg_say_many([(f"{letter}।", "curious"),
+                            (f"{letter} से {word}।", "warm")])
         else:
-            kg.kg_say_many([(f"{letter}.", "curious"),
-                         (f"{letter} for {word}.", "warm")])
+            sound = kg_content.letter_sound(letter)
+            kg.kg_say_many([(f"{sound}.", "curious"),
+                            (f"{sound} for {kg_content.spoken_word(word)}.", "warm")])
 
     # ----- counting -----
     def show_kg_counting(self, value=1, grew=False):
@@ -2866,72 +3707,77 @@ class TutorUI:
         self._kg_count_grew = grew
         english = kg_content.number_name(n, "en")
 
-        self._overlay_screen("kg_count", "Counting",
-                             f"{n} of {kg_content.COUNT_MAX}", tint="#ECFDF5")
+        self._kg_class_screen("kg_count", "Counting",
+                              f"{n} of {kg_content.COUNT_MAX}")
         self._kg_keep_mascot()
         self._kg_ask_button()
-        self.canvas.create_text(self.KG_CX, 138, text=str(n),
-                                font=self._font(70, True), fill="#059669",
+        # Something to actually count. Apples rather than dots: a child counts
+        # things, and "five apples" is a sentence they can check against the
+        # numeral. Five or seven to a row: the apples share the card with the
+        # numeral above them and the mascot standing to its left, so a row has
+        # 344 usable pixels rather than the whole screen.
+        #
+        # Worked out BEFORE anything is drawn because the card is sized to them.
+        # A fixed card stood two thirds empty at one apple and at anything past
+        # twenty, where there is nothing left to lay out at all.
+        per_row = 5 if n <= 10 else 7
+        size = 38 if n <= 10 else 28
+        gap = 9 if n <= 10 else 6
+        rows = (n + per_row - 1) // per_row if n <= 20 else 0
+        # The sum line sits between the name and the apples when there is one.
+        apples_top = 274 if grew else 258
+        card_low = (apples_top + rows * size + (rows - 1) * 7 + 16) if rows else 276
+
+        # The same frosted card the alphabet is held up on, in the same place,
+        # so moving between the two lessons does not move the lesson.
+        card = (400, 140, 784, min(388, card_low))
+        self._kg_glass_card(card)
+        mid = (card[0] + card[2]) / 2
+        self.canvas.create_text(mid, 186, text=str(n),
+                                font=self._font(50, True), fill=COUNT_GREEN,
                                 tags=self.OVERLAY_TAG)
-        self.canvas.create_text(self.KG_CX, 198, text=english,
-                                font=self._font(20, True), fill=COL_TEXT,
+        self.canvas.create_text(mid, 232, text=english,
+                                font=self._font(18, True), fill=COUNT_GREEN,
                                 tags=self.OVERLAY_TAG)
         # The sum in the same words she speaks, so the child being read to and
         # the child starting to read see one sentence rather than two.
         if grew:
             self.canvas.create_text(
-                self.KG_CX, 236, text=f"{n - 1}   and 1 more   makes   {n}",
-                font=self._font(15, True), fill="#047857", tags=self.OVERLAY_TAG)
+                mid, 260, text=f"{n - 1}   and 1 more   makes   {n}",
+                font=self._font(12, True), fill="#92400E", tags=self.OVERLAY_TAG)
 
-        # Something to actually count. Apples rather than dots: a child counts
-        # things, and "five apples" is a sentence they can check against the
-        # numeral. Two rows past ten so twenty still fits across 800px.
-        if n <= 20:
-            # Five or seven to a row, not ten. The apples share their column
-            # with the mascot standing beside them now rather than having the
-            # whole 800px, and a row of ten at the old size ran 392px wide -- two
-            # pixels past the column on its own. Three rows is the most that
-            # still clears the button strip at 396.
-            per_row = 5 if n <= 10 else 7
-            size = 34 if n <= 10 else 28
-            gap = 8 if n <= 10 else 6
-            rows = [list(range(min(per_row, n - r * per_row)))
-                    for r in range((n + per_row - 1) // per_row)]
-            top = 302 if len(rows) == 1 else 290 - (len(rows) - 2) * 16
-            index = 0
-            for row_index, row in enumerate(rows):
-                total = len(row) * size + (len(row) - 1) * gap
-                x = self.KG_CX - total / 2 + size / 2
-                y = top + row_index * (size + 6)
-                for _ in row:
-                    index += 1
-                    if grew and index == n:
-                        # The one that was just added, ringed -- "one more" has
-                        # to be visible and not only spoken.
-                        half = size / 2 + 5
-                        self.canvas.create_oval(x - half, y - half, x + half,
-                                                y + half, outline="#F59E0B",
-                                                width=3, tags=self.OVERLAY_TAG)
-                    self._place_emoji(kg_content.COUNT_EMOJI, x, y, size)
-                    x += size + gap
+        index = 0
+        for row_index in range(rows):
+            count = min(per_row, n - row_index * per_row)
+            total = count * size + (count - 1) * gap
+            x = mid - total / 2 + size / 2
+            y = apples_top + size / 2 + row_index * (size + 7)
+            for _ in range(count):
+                index += 1
+                if grew and index == n:
+                    # The one that was just added, ringed -- "one more" has to
+                    # be visible and not only spoken.
+                    half = size / 2 + 5
+                    self.canvas.create_oval(x - half, y - half, x + half,
+                                            y + half, outline="#B45309",
+                                            width=3, tags=self.OVERLAY_TAG)
+                self._place_emoji(kg_content.COUNT_EMOJI, x, y, size)
+                x += size + gap
 
-        self._overlay_button(20, 396, 170, 452, "Back", self.show_kg_home,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._kg_class_button(self.KG_ROW_4[0], "Back", self.show_kg_home,
+                              arrow="left")
         if n > 1:
-            self._overlay_button(200, 396, 360, 452, "Previous",
-                                 lambda: self.show_kg_counting(n - 1),
-                                 fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        self._overlay_button(390, 396, 560, 452, "Say it again",
-                             lambda: self._kg_say_number(n, grew),
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+            self._kg_class_button(self.KG_ROW_4[1], "Previous",
+                                  lambda: self.show_kg_counting(n - 1))
+        self._kg_class_button(self.KG_ROW_4[2], "Say it again",
+                              lambda: self._kg_say_number(n, grew), primary=True)
         if n >= kg_content.COUNT_MAX:
-            self._overlay_button(590, 396, 780, 452, "Start again",
-                                 lambda: self.show_kg_counting(1),
-                                 fill="#059669", size=12)
+            self._kg_class_button(self.KG_ROW_4[3], "Start again",
+                                  lambda: self.show_kg_counting(1),
+                                  size=11, arrow="right")
         else:
-            self._overlay_button(590, 396, 780, 452, "Next",
-                                 lambda: self._kg_count_next(n),
-                                 fill="#059669", size=13)
+            self._kg_class_button(self.KG_ROW_4[3], "Next",
+                                  lambda: self._kg_count_next(n), arrow="right")
         self._kg_say_number(n, grew)
 
     def _kg_say_number(self, n, grew=None):
@@ -2986,21 +3832,23 @@ class TutorUI:
         self.show_kg_counting(n + 1, grew=True)
 
     def _kg_count_milestone(self, n):
-        self._overlay_screen("kg_count_more", f"You counted to {n}!",
-                             "Shall we keep going?", tint="#ECFDF5")
-        self.canvas.create_text(UI_W / 2, 170, text="\u2b50",
-                                font=self._font(58, True), fill="#F59E0B",
+        # In the same room as the counting it interrupts. It arrives in the
+        # middle of a lesson, and a screen that changed the wallpaper to ask one
+        # question read as having left the lesson rather than paused it.
+        self._kg_class_screen("kg_count_more", f"You counted to {n}!",
+                              "Shall we keep going?")
+        self.canvas.create_text(BOARD_MID, 162, text="\u2b50",
+                                font=self._font(46, True), fill=CHALK_WARM,
                                 tags=self.OVERLAY_TAG)
         self.canvas.create_text(
-            UI_W / 2, 240,
+            BOARD_MID, 220, width=366, justify="center",
             text=f"That is all the way to {kg_content.number_name(n, 'en').lower()}.",
-            font=self._font(14), fill=COL_TEXT, tags=self.OVERLAY_TAG)
-        self._overlay_button(140, 300, 380, 360, "Yes, keep going!",
-                             lambda: self.show_kg_counting(n + 1, grew=True),
-                             fill="#059669", size=14)
-        self._overlay_button(420, 300, 660, 360, "That's enough",
-                             self.show_kg_home, fill="#E6E9F5",
-                             text_colour=COL_TEXT, size=13)
+            font=self._font(13), fill=CHALK, tags=self.OVERLAY_TAG)
+        self._kg_class_button(self.KG_ROW_4[1], "That's enough",
+                              self.show_kg_home, size=11, arrow="left")
+        self._kg_class_button(self.KG_ROW_4[2], "Yes, keep going!",
+                              lambda: self.show_kg_counting(n + 1, grew=True),
+                              primary=True, size=11)
         kg.kg_say_many([(f"Wow! You counted all the way to {n}!", "excited"),
                      ("Shall we keep going?", "curious")])
 
@@ -3027,48 +3875,63 @@ class TutorUI:
         kg.kg_say_many([("Put the letters in order!", "encouraging"),
                      ("Tap them from A to Z.", "curious")])
 
+    # Both rows of cards, sized to the board rather than to the screen: the
+    # puzzle is written on the blackboard now, and the blackboard is 394px wide
+    # where the screen is 800. Five answer slots at 66 and five letters at 58
+    # both clear a fingertip, and the answer row is the larger of the two on
+    # purpose -- it is the one being built.
+    KG_ORDER_SLOT_W, KG_ORDER_SLOT_H, KG_ORDER_SLOT_Y = 66, 56, 128
+    KG_ORDER_TILE_W, KG_ORDER_TILE_H, KG_ORDER_TILE_Y = 58, 48, 196
+
+    @staticmethod
+    def _kg_board_row_x(count, width, gap=12):
+        """Left edge of a row of `count` cards, centred on the BOARD, not the
+        screen. The board's middle is 409; centring on 400 sits it visibly off
+        the chalk. Shared by the A-to-Z slots and the spelling answer boxes,
+        which are the same row of cards asking two different questions."""
+        return BOARD_MID - (count * width + (count - 1) * gap) / 2
+
     def _draw_kg_order(self):
-        self._overlay_screen("kg_order", "A to Z",
-                             "Tap the letters in the right order",
-                             tint="#FFFBEB")
+        self._kg_class_screen("kg_order", "A to Z",
+                              "Tap the letters in the right order")
         # What they have chosen so far, left to right.
-        slot, gap = 84, 12
-        total = len(self._kg_order_target) * slot + (len(self._kg_order_target) - 1) * gap
-        x = (UI_W - total) / 2
+        slot, high = self.KG_ORDER_SLOT_W, self.KG_ORDER_SLOT_H
+        top = self.KG_ORDER_SLOT_Y
+        x = self._kg_board_row_x(len(self._kg_order_target), slot)
         for index in range(len(self._kg_order_target)):
             picked = (self._kg_order_picked[index]
                       if index < len(self._kg_order_picked) else "")
-            self._round_rect(x, 100, x + slot, 100 + 76, 12, fill="#FFFFFF",
-                             outline="#F5D9A0", tags=self.OVERLAY_TAG)
-            self.canvas.create_text(x + slot / 2, 138, text=picked,
-                                    font=self._font(30, True), fill="#D97706",
+            self._round_rect(x, top, x + slot, top + high, 12, fill="#FFFFFF",
+                             outline="#FFFFFF", tags=self.OVERLAY_TAG)
+            self.canvas.create_text(x + slot / 2, top + high / 2, text=picked,
+                                    font=self._font(26, True), fill=CLASS_BLUE,
                                     tags=self.OVERLAY_TAG)
-            x += slot + gap
+            x += slot + 12
 
         if self._kg_order_done:
-            self.canvas.create_text(UI_W / 2, 214, text="Perfect! A to Z!",
-                                    font=self._font(17, True), fill="#059669",
+            self.canvas.create_text(BOARD_MID, 218, text="Perfect!  A to Z!",
+                                    font=self._font(17, True), fill=CHALK_WARM,
                                     tags=self.OVERLAY_TAG)
         else:
             # The letters still to place.
             remaining = [c for c in self._kg_order_pool
                          if c not in self._kg_order_picked]
-            total = len(remaining) * slot + max(0, len(remaining) - 1) * gap
-            x = (UI_W - total) / 2
+            tile, tall = self.KG_ORDER_TILE_W, self.KG_ORDER_TILE_H
+            y = self.KG_ORDER_TILE_Y
+            x = self._kg_board_row_x(len(remaining), tile)
             for letter in remaining:
-                self._overlay_button(x, 226, x + slot, 226 + 76, letter,
+                self._overlay_button(x, y, x + tile, y + tall, letter,
                                      lambda c=letter: self._kg_order_tap(c),
-                                     fill="#FFFFFF", text_colour="#92400E",
-                                     radius=12, size=26)
-                x += slot + gap
+                                     fill="#FFFFFF", text_colour=CLASS_INK,
+                                     radius=12, size=22)
+                x += tile + 12
 
-        self._overlay_button(20, 396, 170, 452, "Back", self.show_kg_home,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        self._overlay_button(320, 396, 480, 452, "Start over",
-                             self._kg_order_reset, fill="#E6E9F5",
-                             text_colour=COL_TEXT, size=11)
-        self._overlay_button(610, 396, 780, 452, "New letters",
-                             self.show_kg_order, fill="#D97706", size=12)
+        self._kg_class_button(self.KG_ROW_3[0], "Back", self.show_kg_home,
+                              arrow="left")
+        self._kg_class_button(self.KG_ROW_3[1], "Start over",
+                              self._kg_order_reset, primary=True)
+        self._kg_class_button(self.KG_ROW_3[2], "New letters",
+                              self.show_kg_order, arrow="right")
 
     def _kg_order_reset(self):
         self._kg_order_picked = []
@@ -3094,8 +3957,12 @@ class TutorUI:
         self._kg_order_done = True
         self._draw_kg_order()
         kg.kg_say_many([(random.choice(kg_content.PRAISE), "proud"),
-                     (" ".join(self._kg_order_target) + ".", "excited")])
-        self.root.after(4500, self._kg_order_next_if_still_here)
+                     (" ".join(kg_content.letter_sound(c)
+                               for c in self._kg_order_target) + ".", "excited")])
+        # Same reason as the spelling screen: five letters read back one at a
+        # time is longer than any fixed guess, and the guess was cutting the
+        # praise off on the puzzle they had just solved.
+        self._kg_after_speaking(self._kg_order_next_if_still_here, settle_ms=900)
 
     def _kg_order_next_if_still_here(self):
         if self.overlay == "kg_order":
@@ -3103,22 +3970,28 @@ class TutorUI:
 
     # ----- which language should the story be in? -----
     def show_kg_story_picker(self):
-        self._overlay_screen("kg_story_lang", "Story Time",
-                             "Which language would you like?", tint="#FFF6E8")
-        english = self._overlay_button(60, 130, 380, 340, "English",
+        # Under the board rather than across the middle of the screen: the
+        # question is written on the board, and the two answers stand below it
+        # where the class can see them. Both cards keep white lettering, so the
+        # fills are the darker end of their colours -- amber-500 under white was
+        # 2.2:1, which was already too little on a lit room and is less on this
+        # one.
+        self._kg_class_screen("kg_story_lang", "Story Time",
+                              "Which language would you like?")
+        english = self._overlay_button(110, 226, 390, 378, "English",
                                        lambda: self.show_kg_story("en"),
-                                       fill="#F59E0B", size=22,
+                                       fill="#B45309", size=20, radius=18,
                                        sub="A story in English",
-                                       label_frac=0.56, sub_frac=0.74)
-        self._kg_book_glyph(220, 196, english)
-        hindi = self._overlay_button(420, 130, 740, 340, "हिंदी",
+                                       label_frac=0.68, sub_frac=0.86)
+        self._kg_book_glyph(250, 272, english)
+        hindi = self._overlay_button(410, 226, 690, 378, "हिंदी",
                                      lambda: self.show_kg_story("hi"),
-                                     fill="#DB2777", size=24,
+                                     fill="#BE185D", size=22, radius=18,
                                      sub="हिंदी में कहानी",
-                                     label_frac=0.56, sub_frac=0.74)
-        self._kg_book_glyph(580, 196, hindi)
-        self._overlay_button(300, 396, 500, 448, "Back", self.show_kg_home,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+                                     label_frac=0.68, sub_frac=0.86)
+        self._kg_book_glyph(550, 272, hindi)
+        self._kg_class_button(self.KG_ROW_3[1], "Back", self.show_kg_home,
+                              arrow="left")
         kg.kg_say_many([("Would you like a story in English,", "curious"),
                      ("या हिंदी में?", "curious")])
 
@@ -3151,23 +4024,30 @@ class TutorUI:
                 self.KG_TEST_END_SILENCE_S)
 
     def show_kg_test_picker(self):
-        self._overlay_screen("kg_test_pick", "Test yourself",
-                             "What would you like to be tested on?",
-                             tint="#EFF6FF")
+        # The three choices stand under the board, the way the two story
+        # languages do, so the two pickers in this app are one screen with
+        # different things on it rather than two designs to keep in step.
+        #
+        # Each fill is a step darker than the colour the same subject wears on
+        # the home tiles. All three carry white lettering, and emerald-600 under
+        # white is 3.0:1 -- fine for the 22pt label and not for the 8pt line
+        # under it.
+        self._kg_class_screen("kg_test_pick", "Test yourself",
+                              "What would you like to be tested on?")
         options = [
-            ("A B C", "English letters", "#2563EB", "en"),
-            ("क ख ग", "हिंदी अक्षर", "#DB2777", "hi"),
-            ("1 2 3", "Counting", "#059669", "count"),
+            ("A B C", "English letters", "#1D4ED8", "en"),
+            ("क ख ग", "हिंदी अक्षर", "#BE185D", "hi"),
+            ("1 2 3", "Counting", "#047857", "count"),
         ]
         for index, (label, sub, colour, kind) in enumerate(options):
-            x0 = 40 + index * 250
-            tag = self._overlay_button(x0, 130, x0 + 230, 330, label,
+            x0 = 35 + index * 250
+            tag = self._overlay_button(x0, 226, x0 + 230, 378, label,
                                        lambda k=kind: self.start_kg_test(k),
-                                       fill=colour, size=22, sub=sub,
-                                       label_frac=0.58, sub_frac=0.78)
-            self._kg_tile_glyph(label.split()[0], x0 + 115, 176, tag)
-        self._overlay_button(300, 396, 500, 452, "Back", self.show_kg_home,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+                                       fill=colour, size=22, radius=18, sub=sub,
+                                       label_frac=0.62, sub_frac=0.84)
+            self._kg_tile_glyph(label.split()[0], x0 + 115, 268, tag)
+        self._kg_class_button(self.KG_ROW_3[1], "Back", self.show_kg_home,
+                              arrow="left")
         kg.kg_say("What would you like to be tested on?", "curious")
 
     def start_kg_test(self, kind):
@@ -3210,9 +4090,11 @@ class TutorUI:
         question = self._kg_test_question()
         if question is None:
             return
-        self._overlay_screen(
-            "kg_test", f"Question {self._kg_test_at + 1} of {len(self._kg_test_qs)}",
-            "Listening..." if self._kg_test_listening else " ", tint="#F0F9FF")
+        # No subtitle: what she is doing is written beside the question, on the
+        # strip below, and saying "Listening..." in two places at once made the
+        # board and the strip look like two different answers to it.
+        self._kg_class_screen(
+            "kg_test", f"Question {self._kg_test_at + 1} of {len(self._kg_test_qs)}")
 
         if question["kind"] == "count":
             # The thing being counted IS the question, so it is drawn large.
@@ -3230,17 +4112,25 @@ class TutorUI:
             # the same apples on the table with one of them struck through.
             n = value + 1 if (second_half and step > 0) else value
             marked = n if second_half else 0
+            # Ten to a row still, but sized to the BOARD rather than to 800px:
+            # ten at 44 ran 512 wide, and the board's writing surface is 394.
+            # Three sizes rather than two, because a question about three apples
+            # and a question about twenty-one are both drawn here and the small
+            # one should not be drawn to the big one's scale.
             per_row = 10
-            size = 44 if n <= 10 else 34
-            gap = 8
+            size = 44 if n <= 7 else 33 if n <= 10 else 30
+            gap = 10 if n <= 7 else 6
             rows = [min(per_row, n - r * per_row)
                     for r in range((n + per_row - 1) // per_row)]
-            top = 150 if len(rows) == 1 else 132
+            # Centred in the 124px the board has under its heading, however
+            # many rows that turns out to be.
+            pitch = size + 6
+            top = 190 - (len(rows) - 1) * pitch / 2
             index = 0
             for row_index, count in enumerate(rows):
                 total = count * size + (count - 1) * gap
-                x = (UI_W - total) / 2 + size / 2
-                y = top + row_index * (size + 8)
+                x = BOARD_MID - total / 2 + size / 2
+                y = top + row_index * pitch
                 for _ in range(count):
                     index += 1
                     half = size / 2 + 5
@@ -3263,40 +4153,51 @@ class TutorUI:
                                                 tags=self.OVERLAY_TAG)
                     x += size + gap
         else:
-            self._place_emoji(question["picture"], UI_W / 2, 168, 150)
+            self._place_emoji(question["picture"], BOARD_MID, 188, 112)
 
+        # The question itself, and what she is doing about it, on a frosted
+        # strip below the board. Not chalked onto the board with the picture,
+        # which has the whole of the board's 124 usable pixels -- and not
+        # printed straight onto the wall, which runs from plain paint through a
+        # noticeboard to a potted plant depending on how long the wording is.
         prompt = {"name": {"count": "Count them out loud.  How many?",
                            "hi": "यह क्या है?"}.get(
                       question["kind"], "What is this?"),
                   "spell": {"count": self._kg_step_prompt(question.get("step", 1)),
                             "hi": "किस अक्षर से शुरू होता है?"}.get(
                       question["kind"], "Now spell it")}[self._kg_test_stage]
-        self.canvas.create_text(UI_W / 2, 268, text=prompt,
-                                font=self._font(17, True), fill=COL_TEXT,
+        status = self._kg_test_listening or self._kg_test_note
+        self._kg_glass_card((150, 276, 650, 352 if status else 326), radius=18)
+        self.canvas.create_text(UI_W / 2, 300, text=prompt,
+                                font=self._font(16, True), fill=CLASS_BLUE,
                                 tags=self.OVERLAY_TAG)
         if self._kg_test_listening:
-            self._round_rect(UI_W / 2 - 130, 292, UI_W / 2 + 130, 336, 22,
-                             fill="#E0F2FE", outline="#0EA5E9",
-                             tags=self.OVERLAY_TAG)
-            self.canvas.create_text(UI_W / 2, 314, text="I'm listening...",
-                                    font=self._font(13, True), fill="#075985",
+            self.canvas.create_text(UI_W / 2, 332, text="I'm listening...",
+                                    font=self._font(13, True), fill="#92400E",
                                     tags=self.OVERLAY_TAG)
         elif self._kg_test_note:
-            self.canvas.create_text(UI_W / 2, 314, text=self._kg_test_note,
-                                    font=self._font(14, True), fill=COL_TEXT,
+            self.canvas.create_text(UI_W / 2, 332, text=self._kg_test_note,
+                                    font=self._font(13, True), fill=CLASS_BLUE,
                                     tags=self.OVERLAY_TAG)
 
-        self.canvas.create_text(60, 40, text=f"Score {self._kg_test_score}",
-                                font=self._font(11, True), fill="#0EA5E9",
+        # The score takes the left column, in the exact box the Ask pill stands
+        # in on the lessons -- there is no Ask button during a test, and one
+        # thing in that column on every KG screen is worth more than the score
+        # being a pixel higher. Not the top corner, which is where the clock is
+        # painted on the wall.
+        x0, y0, x1, y1 = self.KG_ASK_BOX
+        self._round_rect(x0, y0, x1, y1, (y1 - y0) // 2, fill="#FFFFFF",
+                         outline="#FFFFFF", tags=self.OVERLAY_TAG)
+        self.canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2,
+                                text=f"Score {self._kg_test_score}",
+                                font=self._font(12, True), fill=CLASS_INK,
                                 tags=self.OVERLAY_TAG)
-        self._overlay_button(20, 400, 170, 452, "Stop", self.show_kg_home,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        self._overlay_button(330, 400, 470, 452, "Say again",
-                             self._kg_test_repeat, fill="#E6E9F5",
-                             text_colour=COL_TEXT, size=11)
-        self._overlay_button(620, 400, 780, 452, "Skip",
-                             self._kg_test_skip, fill="#E6E9F5",
-                             text_colour=COL_TEXT, size=11)
+        self._kg_class_button(self.KG_ROW_3[0], "Stop", self.show_kg_home,
+                              arrow="left")
+        self._kg_class_button(self.KG_ROW_3[1], "Say again",
+                              self._kg_test_repeat, primary=True)
+        self._kg_class_button(self.KG_ROW_3[2], "Skip", self._kg_test_skip,
+                              arrow="right")
 
     @staticmethod
     def _kg_step_prompt(step, spoken=False):
@@ -3442,11 +4343,16 @@ class TutorUI:
             # spelling a KG child is taught, so the first letter is the skill.
             right = question["letter"] in (heard or "")
             answer = question["letter"]
+            said = (kg_content.letter_sound(answer) if kind == "en" else answer)
         else:
             verdict, _letters = kg_content.heard_spelling(
                 heard, kg_content.spelling_target(question["word"]))
             right = verdict == "correct"
+            # Two forms of the same answer: C. A. T. goes on the board, "see.
+            # ay. tee." goes to the voice. Reading the written one aloud is how
+            # the alphabet screen came to teach आ for A.
             answer = kg_content.spell_out(question["word"])
+            said = kg_content.spell_out_spoken(question["word"])
 
         if right:
             self._kg_test_score += 1
@@ -3454,14 +4360,20 @@ class TutorUI:
             lines = [(random.choice(self._kg_praise_for(kind)), "proud")]
         else:
             self._kg_test_note = f"It is {answer}"
-            lines = [("Not quite.", "gentle"), (f"It is {answer}", "curious")]
+            lines = [("Not quite.", "gentle"), (f"It is {said}", "curious")]
         self._draw_kg_test()
         kg.kg_say_many(lines)
         # The index moves when the NEXT question actually starts, not here.
-        # Incrementing now left a 3.2s gap in which the screen still on display
+        # Incrementing now left a gap in which the screen still on display
         # belonged to a question the index had already passed -- and on the last
         # one, any redraw in that gap (tapping "Say again") indexed off the end.
-        self.root.after(3200, lambda r=self._kg_test_round: self._kg_test_advance(r))
+        #
+        # And it waits for her to STOP, rather than for 3.2 seconds. "Not quite.
+        # It is see. ay. tee." is longer than that, so the correction was being
+        # cut off by the next question on exactly the answers that needed it.
+        self._kg_after_speaking(
+            lambda r=self._kg_test_round: self._kg_test_advance(r),
+            settle_ms=700)
 
     def _kg_test_advance(self, token):
         if self._kg_test_stale(token):
@@ -3473,24 +4385,24 @@ class TutorUI:
         total = len(self._kg_test_qs) * 2          # two marks per question
         score = self._kg_test_score
         share = score / total if total else 0
-        self._overlay_screen("kg_test_done", "All done!",
-                             f"You scored {score} out of {total}", tint="#EFF6FF")
-        self._place_emoji("\U0001F31F" if share >= 0.8 else "\U0001F44F", UI_W / 2, 160, 108)
+        self._kg_class_screen("kg_test_done", "All done!",
+                              f"You scored {score} out of {total}")
+        self._place_emoji("\U0001F31F" if share >= 0.8 else "\U0001F44F",
+                          BOARD_MID, 166, 84)
         if share >= 0.8:
             message, tone = "Brilliant! You really know these.", "excited"
         elif share >= 0.5:
             message, tone = "Well done! Keep practising.", "encouraging"
         else:
             message, tone = "Good try! Let's learn some more together.", "warm"
-        self.canvas.create_text(UI_W / 2, 254, text=message,
-                                font=self._font(16, True), fill=COL_TEXT,
-                                tags=self.OVERLAY_TAG)
-        self._overlay_button(140, 300, 380, 358, "Try again",
-                             lambda: self.start_kg_test(self._kg_test_kind),
-                             fill="#0EA5E9", size=14)
-        self._overlay_button(420, 300, 660, 358, "Back",
-                             self.show_kg_home, fill="#E6E9F5",
-                             text_colour=COL_TEXT, size=13)
+        self.canvas.create_text(BOARD_MID, 230, text=message, width=366,
+                                justify="center", font=self._font(15, True),
+                                fill=CHALK, tags=self.OVERLAY_TAG)
+        self._kg_class_button(self.KG_ROW_4[1], "Back", self.show_kg_home,
+                              arrow="left")
+        self._kg_class_button(self.KG_ROW_4[2], "Try again",
+                              lambda: self.start_kg_test(self._kg_test_kind),
+                              primary=True)
         kg.kg_say_many([(f"You scored {score} out of {total}!", "excited"),
                      (message, tone)])
         # Recorded against the knowledge graph, so a parent switching to the
@@ -3734,7 +4646,7 @@ class TutorUI:
                 self._kg_feedback = "Let's write it together."
                 self._draw_kg_spelling()
                 kg.kg_say_many([("Let's write it together.", "warm"),
-                             (f"{word} is {kg_content.spell_out(word)}", "curious"),
+                             (f"{word} is {kg_content.spell_out_spoken(word)}", "curious"),
                              ("Now you write it.", "encouraging")])
                 self.root.after(300, lambda r=self._kg_round: self._kg_to_writing(r))
                 return
@@ -3791,10 +4703,10 @@ class TutorUI:
             self._draw_kg_spelling()
             kg.kg_say_many([
                 ("Ooh, so close!", "encouraging"),
-                (f"You said {kg_content.spell_out(letters)}", "gentle"),
+                (f"You said {kg_content.spell_out_spoken(letters)}", "gentle"),
                 ("You have all the right letters, but they are in a different order.",
                  "gentle"),
-                (f"Listen. {word} is {kg_content.spell_out(word)}", "curious"),
+                (f"Listen. {word} is {kg_content.spell_out_spoken(word)}", "curious"),
                 ("Now you say it.", "encouraging"),
             ])
         elif tries == 1:
@@ -3807,8 +4719,8 @@ class TutorUI:
             self._draw_kg_spelling()
             kg.kg_say_many([
                 (nudge, "encouraging"),
-                (f"You said {kg_content.spell_out(letters)}", "gentle"),
-                (f"But {word} is {kg_content.spell_out(word)}", "curious"),
+                (f"You said {kg_content.spell_out_spoken(letters)}", "gentle"),
+                (f"But {word} is {kg_content.spell_out_spoken(word)}", "curious"),
                 ("Now you say it.", "encouraging"),
             ])
         elif tries == 2:
@@ -3819,7 +4731,7 @@ class TutorUI:
             kg.kg_say_many([
                 ("Not yet. Let me help you.", "gentle"),
                 (f"Look at the letters on the screen. {word}.", "curious"),
-                (kg_content.spell_out(word), "storyteller"),
+                (kg_content.spell_out_spoken(word), "storyteller"),
                 ("Now you say it, just like that.", "encouraging"),
             ])
         else:
@@ -3830,7 +4742,7 @@ class TutorUI:
             kg.kg_say_many([
                 ("Let's say it together.", "warm"),
                 (f"{word}.", "excited"),
-                (kg_content.spell_out(word), "storyteller"),
+                (kg_content.spell_out_spoken(word), "storyteller"),
                 ("Your turn. Say the letters.", "encouraging"),
             ])
         self._kg_listen_again(self._kg_round)
@@ -3867,55 +4779,64 @@ class TutorUI:
                 subtitle = self._kg_word["hint"]
         else:
             subtitle = f"Now write it:  {self._kg_word['hint']}"
-        self._overlay_screen("kg_spell", "Spell a Word", subtitle, tint="#F6F2FF")
+        self._kg_class_screen("kg_spell", "Spell a Word", subtitle)
 
         if saying:
             self._draw_kg_saying()
             return
 
         # What they have tapped so far, as one box per letter of the answer, so
-        # the child can see how many letters are still to come.
+        # the child can see how many letters are still to come. On the board,
+        # where the word they are answering was written a moment ago.
         target = self._kg_word["word"]
-        slot, gap = 56, 10
-        total = len(target) * slot + (len(target) - 1) * gap
-        x = (UI_W - total) / 2
+        slot, high, top = 62, 58, 140
+        x = self._kg_board_row_x(len(target), slot)
         for index in range(len(target)):
             typed = self._kg_typed[index] if index < len(self._kg_typed) else ""
-            self._round_rect(x, 96, x + slot, 96 + 64, 10, fill="#FFFFFF",
-                             outline="#D9D2F5", tags=self.OVERLAY_TAG)
-            self.canvas.create_text(x + slot / 2, 128, text=typed.upper(),
-                                    font=self._font(22, True), fill="#7C3AED",
+            self._round_rect(x, top, x + slot, top + high, 12, fill="#FFFFFF",
+                             outline="#FFFFFF", tags=self.OVERLAY_TAG)
+            self.canvas.create_text(x + slot / 2, top + high / 2,
+                                    text=typed.upper(),
+                                    font=self._font(24, True), fill=CLASS_BLUE,
                                     tags=self.OVERLAY_TAG)
-            x += slot + gap
+            x += slot + 12
 
         if self._kg_feedback:
-            self.canvas.create_text(UI_W / 2, 180, text=self._kg_feedback,
-                                    font=self._font(12, True), fill=COL_TEXT,
+            self.canvas.create_text(BOARD_MID, 226, text=self._kg_feedback,
+                                    font=self._font(14, True), fill=CHALK_WARM,
                                     tags=self.OVERLAY_TAG)
 
-        for r, row in enumerate(["ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ"]):
-            width, gap = 76, 5
+        # TWO rows of thirteen, below the board, rather than three rows of nine
+        # across the middle of it. The board is 394px wide where the screen is
+        # 800, so a keyboard that fits ON it would have 40px keys -- under 11mm
+        # on this panel, which is below what a four-year-old's finger reliably
+        # hits. Under the board there is the whole width to spend, and the keys
+        # come out 54x52. The room shows around them; they are opaque, and the
+        # desk they stand over is not something a child needs to see.
+        for r, row in enumerate(["ABCDEFGHIJKLM", "NOPQRSTUVWXYZ"]):
+            width, gap = 54, 4
             total = len(row) * width + (len(row) - 1) * gap
             x = (UI_W - total) / 2
-            y = 200 + r * 60
+            # 276, not 268: the board's wooden frame runs to y=274, and a
+            # keyboard that starts above it shows the frame's bottom lip in
+            # every gap between the keys.
+            y = 276 + r * 56
             for letter in row:
-                self._overlay_button(x, y, x + width, y + 54, letter,
+                self._overlay_button(x, y, x + width, y + 50, letter,
                                      lambda c=letter: self._kg_letter(c),
-                                     fill="#FFFFFF", text_colour="#4C3A8F",
+                                     fill="#FFFFFF", text_colour=CLASS_INK,
                                      radius=10, size=16)
                 x += width + gap
 
-        self._overlay_button(20, 396, 150, 448, "Undo", self._kg_undo,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        self._overlay_button(166, 396, 316, 448, "Say it again",
-                             lambda: kg.kg_say(f"{self._kg_word['word']}. "
-                                            f"{self._kg_word['hint']}."),
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        self._overlay_button(484, 396, 634, 448, "Next word",
-                             self.show_kg_spelling, fill="#7C3AED", size=11)
-        self._overlay_button(650, 396, 780, 448, "Back",
-                             self.show_kg_home, fill="#E6E9F5",
-                             text_colour=COL_TEXT, size=11)
+        self._kg_class_button(self.KG_ROW_4[0], "Back", self.show_kg_home,
+                              arrow="left")
+        self._kg_class_button(self.KG_ROW_4[1], "Undo", self._kg_undo)
+        self._kg_class_button(self.KG_ROW_4[2], "Say it again",
+                              lambda: kg.kg_say(f"{self._kg_word['word']}. "
+                                             f"{self._kg_word['hint']}."),
+                              primary=True)
+        self._kg_class_button(self.KG_ROW_4[3], "Next word",
+                              self.show_kg_spelling, size=11, arrow="right")
 
     def _draw_kg_saying(self):
         """The SAY stage. No keyboard at all -- it is not their turn to write.
@@ -3925,28 +4846,32 @@ class TutorUI:
         recall test is the written stage immediately after.
         """
         word = self._kg_word["word"].upper()
-        self.canvas.create_text(UI_W / 2, 150, text=word, font=self._font(44, True),
-                                fill="#7C3AED", tags=self.OVERLAY_TAG)
-        self.canvas.create_text(UI_W / 2, 208, text="  ".join(word),
-                                font=self._font(16, True), fill="#A78BFA",
+        # Written on the board, in chalk, at the size a teacher writes it. The
+        # spaced-out copy underneath is the same word as SEPARATE letters, which
+        # is the thing being asked for.
+        self.canvas.create_text(BOARD_MID, 152, text=word,
+                                font=self._font(36, True), fill=CHALK,
+                                tags=self.OVERLAY_TAG)
+        self.canvas.create_text(BOARD_MID, 194, text="  ".join(word),
+                                font=self._font(14, True), fill=CHALK_DIM,
                                 tags=self.OVERLAY_TAG)
 
+        # No pill around the listening line any more. A rounded box in a flat
+        # colour reads as a button on a screen whose every other rounded box IS
+        # one, and this is the one thing here that must not be pressed.
         if self._kg_listening:
-            self._round_rect(UI_W / 2 - 150, 250, UI_W / 2 + 150, 300, 24,
-                             fill="#EDE7FF", outline="#7C3AED",
-                             tags=self.OVERLAY_TAG)
-            self.canvas.create_text(UI_W / 2, 275, text="I'm listening...",
-                                    font=self._font(15, True), fill="#5B21B6",
+            self.canvas.create_text(BOARD_MID, 226, text="I'm listening...",
+                                    font=self._font(14, True), fill=CHALK_WARM,
                                     tags=self.OVERLAY_TAG)
         elif self._kg_feedback:
-            self.canvas.create_text(UI_W / 2, 275, text=self._kg_feedback,
-                                    font=self._font(15, True), fill=COL_TEXT,
+            self.canvas.create_text(BOARD_MID, 226, text=self._kg_feedback,
+                                    font=self._font(14, True), fill=CHALK_WARM,
                                     tags=self.OVERLAY_TAG)
 
         if self._kg_heard:
-            self.canvas.create_text(UI_W / 2, 322,
+            self.canvas.create_text(BOARD_MID, 250,
                                     text=f"I heard:  {'  '.join(self._kg_heard)}",
-                                    font=self._font(11), fill=COL_TEXT_DIM,
+                                    font=self._font(10), fill=CHALK_DIM,
                                     tags=self.OVERLAY_TAG)
 
         # A way past the microphone, always. If the room is loud, or the child
@@ -3954,14 +4879,12 @@ class TutorUI:
         # a dead end -- so writing is one tap away at every moment.
         # Repeating the word and then NOT listening left the child talking to a
         # closed microphone -- they hear the word, spell it, and nothing happens.
-        self._overlay_button(166, 396, 396, 448, "Say it again",
-                             self._kg_repeat_word,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        self._overlay_button(412, 396, 634, 448, "Write it",
-                             self._kg_to_writing, fill="#7C3AED", size=12)
-        self._overlay_button(650, 396, 780, 448, "Back",
-                             self.show_kg_home, fill="#E6E9F5",
-                             text_colour=COL_TEXT, size=11)
+        self._kg_class_button(self.KG_ROW_3[0], "Back", self.show_kg_home,
+                              arrow="left")
+        self._kg_class_button(self.KG_ROW_3[1], "Write it",
+                              self._kg_to_writing, primary=True)
+        self._kg_class_button(self.KG_ROW_3[2], "Say it again",
+                              self._kg_repeat_word, arrow="right")
 
     def _kg_letter(self, letter):
         target = self._kg_word["word"]
@@ -3977,15 +4900,19 @@ class TutorUI:
             praise = random.choice(kg_content.PRAISE)
             self._kg_feedback = praise
             self._draw_kg_spelling()
-            kg.kg_say(f"{praise} {target}. {kg_content.spell_out(target)}")
-            # Long enough for the praise to finish before the next word starts.
-            self.root.after(4200, self._kg_next_if_still_spelling)
+            kg.kg_say(f"{praise} {target}. {kg_content.spell_out_spoken(target)}")
+            # WAIT for her to finish, rather than betting 4.2 seconds on it.
+            # "Wonderful! Shoe. ess. aitch. oh. ee." runs past four seconds, and
+            # the next word interrupted the praise for it every time -- which is
+            # the child being cut off at the exact moment they got it right.
+            self._kg_after_speaking(self._kg_next_if_still_spelling,
+                                    settle_ms=900)
         else:
             nudge = random.choice(kg_content.ENCOURAGEMENT)
             self._kg_feedback = nudge
             self._kg_typed = ""
             self._draw_kg_spelling()
-            kg.kg_say(f"{nudge} {target} is spelled {kg_content.spell_out(target)}. "
+            kg.kg_say(f"{nudge} {target} is spelled {kg_content.spell_out_spoken(target)}. "
                    f"Now you try. {target}.")
 
     def _kg_next_if_still_spelling(self):
@@ -4014,17 +4941,24 @@ class TutorUI:
     # audio and letting the screen carry on without it.
     KG_NARRATE_GRACE_S = 12.0
 
-    KG_CAPTION_STYLE = {
-        "excited":     ("#EA580C", 21),
-        "amazed":      ("#C2410C", 20),
-        "proud":       ("#B45309", 20),
-        "encouraging": ("#B45309", 19),
-        "curious":     ("#4C3A8F", 19),
-        "storyteller": ("#3F3D56", 19),
-        "warm":        ("#9D174D", 19),
-        "gentle":      ("#4B5563", 18),
-        "sad":         ("#1D4ED8", 18),
-        "mysterious":  ("#4C1D95", 18),
+    # How a beat is written, by the tone it is spoken in. Coloured chalk rather
+    # than the ten inks this was on the white card: three chalks is what a
+    # classroom has, and every one of them clears 4.5:1 against the lightest
+    # pixel of the board where the ten inks were chosen against white paper.
+    # Sizes are 4pt down from that card, because the board is 394px wide and
+    # not 720 -- and none goes below 14pt bold, which is where AA stops asking
+    # 4.5:1 of them and starts asking 3:1.
+    KG_CHALK_TONE = {
+        "excited":     (CHALK_YELLOW, 17),
+        "amazed":      (CHALK_YELLOW, 16),
+        "proud":       (CHALK_YELLOW, 16),
+        "encouraging": (CHALK_YELLOW, 15),
+        "curious":     (CHALK_BLUE, 15),
+        "storyteller": (CHALK, 15),
+        "warm":        (CHALK_YELLOW, 15),
+        "gentle":      (CHALK, 14),
+        "sad":         (CHALK_BLUE, 14),
+        "mysterious":  (CHALK_BLUE, 14),
     }
 
     def show_kg_story(self, language=None):
@@ -4124,65 +5058,75 @@ class TutorUI:
         segments = self._kg_story["segments"]
         asked = self._kg_story_asked
 
-        # The card fills the screen now that it holds one line instead of a
-        # wall of text: a caption a child is meant to follow has to be the
-        # biggest thing on the screen, not a strip along the top of it.
+        # The story is written on the blackboard, one line at a time, which is
+        # where a story being read to a class is written. It used to be a white
+        # card filling the screen, and that card was the right answer while the
+        # screen behind it was a blank tint -- here it would have hidden the
+        # room the lesson is happening in.
+        #
+        # The board is 394px wide against the card's 720, so the caption is
+        # 15pt rather than 19pt and the longest beat in the bank wraps to three
+        # lines instead of two. Measured, not guessed: 84px of text in the 124px
+        # the board has under its heading.
         subtitle = "What do you think?" if asked else "Listen to the story"
-        self._overlay_screen("kg_story", self._kg_story["title"], subtitle,
-                             tint="#FFF6E8")
-        self._round_rect(40, 92, 760, 388, 16, fill="#FFFFFF",
-                         outline="#F3E2C6", tags=self.OVERLAY_TAG)
+        self._kg_class_screen("kg_story", self._kg_story["title"], subtitle)
 
         if asked:
-            self.canvas.create_text(UI_W / 2, 168, text=self._kg_story["question"],
-                                    width=640, justify="center",
-                                    font=self._font(18, True), fill=COL_TEXT,
+            self.canvas.create_text(BOARD_MID, 186, text=self._kg_story["question"],
+                                    width=366, justify="center",
+                                    font=self._font(16, True), fill=CHALK,
                                     tags=self.OVERLAY_TAG)
-            self._overlay_button(180, 240, 380, 330, "YES",
+            # Below the board, on the wall, and big: this is the only thing on
+            # the screen a child is being asked to press.
+            self._overlay_button(209, 278, 397, 362, "YES",
                                  lambda: self._kg_answer(True),
-                                 fill="#14B8A6", size=20)
-            self._overlay_button(420, 240, 620, 330, "NO",
+                                 fill="#0F766E", size=20, radius=20)
+            self._overlay_button(421, 278, 609, 362, "NO",
                                  lambda: self._kg_answer(False),
-                                 fill="#F43F5E", size=20)
+                                 fill="#BE123C", size=20, radius=20)
         else:
             # The line just gone, small and faded, so the story has somewhere to
-            # have come from and the current line is unmistakably the current one.
+            # have come from and the current line is unmistakably the current
+            # one. ONE line of it, cut short if it will not fit: the board has
+            # room for the beat being read or for the whole of the beat before
+            # it, and it is not a difficult choice between those two.
             previous, _tone = self._kg_caption_at(beat - 1)
             if previous:
-                self.canvas.create_text(UI_W / 2, 138, text=previous, width=640,
-                                        justify="center", font=self._font(11),
-                                        fill="#B9AE99", tags=self.OVERLAY_TAG)
+                self.canvas.create_text(
+                    BOARD_MID, 138,
+                    text=self._ellipsize(previous, self._font(9), 356),
+                    justify="center", font=self._font(9),
+                    fill=CHALK_DIM, tags=self.OVERLAY_TAG)
 
             text, tone = self._kg_caption_at(beat)
             if text is None:
                 text, tone = self._kg_story["title"], "storyteller"
-            colour, size = self.KG_CAPTION_STYLE.get(tone, (COL_TEXT, 19))
-            self.canvas.create_text(UI_W / 2, 232, text=text, width=660,
+            colour, size = self.KG_CHALK_TONE.get(tone, (CHALK, 15))
+            self.canvas.create_text(BOARD_MID, 196, text=text, width=366,
                                     justify="center", font=self._font(size, True),
                                     fill=colour, tags=self.OVERLAY_TAG)
 
             # One dot per beat, filled as far as she has read. A pre-reader
             # cannot read "beat 4 of 10", but they can see four lit dots.
             if segments:
-                gap = min(22, 640 / max(len(segments), 1))
-                x = UI_W / 2 - gap * (len(segments) - 1) / 2
+                gap = min(20, 360 / max(len(segments), 1))
+                x = BOARD_MID - gap * (len(segments) - 1) / 2
                 for index in range(len(segments)):
                     done = index <= beat
                     r = 5 if done else 3
-                    self.canvas.create_oval(x - r, 350 - r, x + r, 350 + r,
-                                            fill="#F59E0B" if done else "#EFE3CC",
+                    self.canvas.create_oval(x - r, 246 - r, x + r, 246 + r,
+                                            fill=CHALK_WARM if done else "#A8BFA4",
                                             outline="", tags=self.OVERLAY_TAG)
                     x += gap
 
+        self._kg_class_button(self.KG_ROW_4[0], "Back",
+                              self.show_kg_story_picker, arrow="left")
+        # Slot 1 of the same row; see KG_ASK_BOX_STORY.
         self._kg_ask_button(self.KG_ASK_BOX_STORY)
-        self._overlay_button(20, 414, 170, 462, "Read again",
-                             self._kg_narrate,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
-        self._overlay_button(320, 414, 480, 462, "Next story",
-                             self.show_kg_story, fill="#F59E0B", size=11)
-        self._overlay_button(630, 414, 780, 462, "Back",
-                             self.show_kg_story_picker,
-                             fill="#E6E9F5", text_colour=COL_TEXT, size=11)
+        self._kg_class_button(self.KG_ROW_4[2], "Read again", self._kg_narrate,
+                              primary=True)
+        self._kg_class_button(self.KG_ROW_4[3], "Next story",
+                              self.show_kg_story, size=11, arrow="right")
 
     def _kg_answer(self, said_yes):
         # Answered in the story's own language: praise in English after a Hindi
@@ -4210,6 +5154,11 @@ class HeadlessUI:
         self.emotion = None
     def set_state(self, state_type, caption=None): self.current_state = state_type
     def set_transcript(self, text, speaker="user"): pass
+    def show_visual(self, path, steps=None):
+        print(f"[UI] (headless) visual: {path} steps={steps or []}", flush=True)
+    def show_graph(self, spec): print(f"[UI] (headless) graph: {spec['source']}", flush=True)
+    def clear_visual(self): pass
+    def clear_transcript(self): pass
     def set_weather(self, reading): pass
     def set_now_playing(self, title, loading=False): pass
     def set_media_progress(self, pos, dur, paused): pass

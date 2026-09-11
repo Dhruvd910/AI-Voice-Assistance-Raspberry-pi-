@@ -230,7 +230,12 @@ def audio_player_worker():
                         # reason: this is the one point every spoken line passes
                         # through, so nothing she says can miss the screen.
                         note_spoken(sentence)
-                        ui_call(lambda s=sentence: state.ui_instance.set_transcript(s, "liza"))
+                        # The BOARD is not written here any more. This point is
+                        # one whole sentence of generation ahead of the speaker,
+                        # so writing the panel from it put the text in front of
+                        # the voice. The screen polls caption_now instead and
+                        # shows the line that is actually audible; the cue below
+                        # is what it reads.
                         # Stamped BEFORE the sentence is generated, because
                         # clock["generated"] is then exactly the audio that
                         # precedes it -- which is where it lands on the timeline.

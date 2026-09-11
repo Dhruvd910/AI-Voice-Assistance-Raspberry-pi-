@@ -20,6 +20,7 @@ import speech_recognition as sr
 import profiles
 import state
 from media import stop_media_playback
+from config import KG_ASK_START_S, KG_DOUBT_MEMORY
 from state import (_kg_listen_lock, _kg_listen_next, _kg_listen_valid_from,
                    kg_ask_cancel,
                    audio_queue, kg_active, kg_listen_requests, kg_listen_results,
@@ -193,9 +194,26 @@ def kg_wait_until_quiet(settle_s=0.4, limit_s=30.0):
 # turn. They start, stop, think, and start again -- the same pauses that made
 # the spelling screen cut them off mid-word before each KG screen was allowed
 # to say how patient its own question deserved to be.
-KG_DOUBT_WAIT_S = 8.0        # how long to wait for them to start at all
+# How long to wait for them to START now lives in config, because it is the one
+# of the three anybody will want to change; see KG_ASK_START_S for why it is
+# three seconds and not eight.
+KG_DOUBT_WAIT_S = KG_ASK_START_S
 KG_DOUBT_PHRASE_S = 14.0     # how long they may then go on for
 KG_DOUBT_PAUSE_S = 1.4       # the silence that ends their turn
+
+
+# The last few things this child asked her, so a follow-up is a follow-up.
+#
+# "Why?" is how a four-year-old asks their second question, and every doubt used
+# to reach the model with no history at all -- so "why?" arrived as the whole
+# question and got an answer about nothing. Kept in memory only: it belongs to
+# the child standing in front of the screen right now, and set_kg_active clears
+# it when the device changes hands.
+_kg_doubt_history = []
+
+
+def kg_forget_doubts():
+    _kg_doubt_history.clear()
 
 KG_DOUBT_PROMPT = (
     "You are Liza, teaching a child of about four to six. The child is in the "
@@ -206,6 +224,15 @@ KG_DOUBT_PROMPT = (
     "is a real answer and children can hear it. Never tell them the question "
     "was silly, or wrong, or not what you were doing -- a child told that once "
     "stops asking.\n\n"
+    "SOUND LIKE A FRIEND, not a reference book. A child who has just plucked up "
+    "the courage to interrupt should hear somebody who is glad they did. Start "
+    "warmly when it fits -- 'Ooh, good question!', 'I love that one' -- use "
+    "their name now and then, and where you can, hand the idea back to "
+    "something they can see or touch. Warm, never gushing: one friendly opening "
+    "at most, and then the answer.\n\n"
+    "If they are following up on what you just told them -- 'why?', 'and "
+    "then?' -- the earlier turns are above. Answer the follow-up, and do not "
+    "repeat what you have already said.\n\n"
     "Answer in ENGLISH, or in HINDI WRITTEN IN DEVANAGARI. Those are the only "
     "two her voice can read, and anything else is not spoken at all -- to the "
     "child that is the device ignoring them. If the question reaches you in "
@@ -231,8 +258,11 @@ def kg_answer_doubt(question, language="en"):
     try:
         done = assistant.openrouter_client.with_options(max_retries=0).chat.completions.create(
             model=assistant.LLM_MODEL,
-            messages=[{"role": "system", "content": KG_DOUBT_PROMPT},
-                      {"role": "user", "content": f"{who} asks: {question}"}],
+            # The last few exchanges sit between the instruction and the new
+            # question, so "why?" and "and then what?" mean what they mean.
+            messages=([{"role": "system", "content": KG_DOUBT_PROMPT}]
+                      + list(_kg_doubt_history)
+                      + [{"role": "user", "content": f"{who} asks: {question}"}]),
             max_tokens=180, temperature=0.5,
             extra_body={"reasoning": {"enabled": False}})
         answer = (done.choices[0].message.content or "").strip()
@@ -261,6 +291,13 @@ def kg_answer_doubt(question, language="en"):
             return ""
         if assistant.RE_UNREADABLE_SCRIPT.search(answer):
             return ""
+    if answer:
+        # Remembered only once there is something worth remembering. An answer
+        # that came back unreadable, or not at all, is not part of the
+        # conversation and must not become context for the next question.
+        _kg_doubt_history.append({"role": "user", "content": question})
+        _kg_doubt_history.append({"role": "assistant", "content": answer})
+        del _kg_doubt_history[:-KG_DOUBT_MEMORY]
     return answer
 
 
@@ -346,6 +383,9 @@ def kg_holds_microphone(ui):
 
 
 def set_kg_active(active):
+    # Either way the device has just changed hands or changed mode, so the
+    # questions the last child asked are not context for the next one.
+    kg_forget_doubts()
     if active:
         # Whatever she was doing was for the previous, older student.
         kg_active.set()
@@ -365,22 +405,30 @@ def set_kg_active(active):
 # child: the scary bit is slow and quiet, the exciting bit is fast and loud. The
 # first version of this table span only 0.85..1.05 and every tone sounded the
 # same. Measured on the same sentence, speed 0.6 gives 4.24s against 2.80s at
-# 1.3, and saturates past about 1.3 -- so this uses 0.7..1.2, which is the range
-# that is actually audible.
+# 1.3, and saturates past about 1.3.
+#
+# It then span 0.72..1.20, and that is too far the other way. A story is ten
+# beats read back to back, and at that spread the reading lurches -- one beat
+# gallops, the next drags, and a child listening hears the MACHINE changing
+# gear rather than the story changing mood. 0.84..1.10 is half the spread and
+# still well outside the 0.85..1.05 that sounded flat, because the emotion name
+# itself is doing most of the work: the same sentence at excited and at
+# mysterious already comes back at different durations with speed left alone.
+# Speed is the seasoning here, not the dish.
 KG_EMOTIONS = {
-    # fast and loud -- the payoff moments
-    "excited":       {"emotion": "excited",       "speed": 1.20, "volume": 1.3},
-    "encouraging":   {"emotion": "enthusiastic",  "speed": 1.05, "volume": 1.15},
-    "proud":         {"emotion": "proud",         "speed": 1.00, "volume": 1.2},
+    # quicker and fuller -- the payoff moments
+    "excited":       {"emotion": "excited",       "speed": 1.10, "volume": 1.20},
+    "encouraging":   {"emotion": "enthusiastic",  "speed": 1.04, "volume": 1.12},
+    "proud":         {"emotion": "proud",         "speed": 1.00, "volume": 1.15},
     # middle -- narration and asking
-    "amazed":        {"emotion": "amazed",        "speed": 1.00, "volume": 1.25},
-    "curious":       {"emotion": "curious",       "speed": 0.95, "volume": 1.0},
-    "storyteller":   {"emotion": "contemplative", "speed": 0.90, "volume": 1.0},
-    "warm":          {"emotion": "affectionate",  "speed": 0.90, "volume": 1.0},
-    # slow and quiet -- worry, suspense, kindness
-    "gentle":        {"emotion": "calm",          "speed": 0.85, "volume": 0.9},
-    "sad":           {"emotion": "sad",           "speed": 0.80, "volume": 0.85},
-    "mysterious":    {"emotion": "mysterious",    "speed": 0.72, "volume": 0.8},
+    "amazed":        {"emotion": "amazed",        "speed": 1.00, "volume": 1.15},
+    "curious":       {"emotion": "curious",       "speed": 0.97, "volume": 1.00},
+    "storyteller":   {"emotion": "contemplative", "speed": 0.94, "volume": 1.00},
+    "warm":          {"emotion": "affectionate",  "speed": 0.94, "volume": 1.00},
+    # slower and softer -- worry, suspense, kindness
+    "gentle":        {"emotion": "calm",          "speed": 0.90, "volume": 0.95},
+    "sad":           {"emotion": "sad",           "speed": 0.88, "volume": 0.92},
+    "mysterious":    {"emotion": "mysterious",    "speed": 0.84, "volume": 0.90},
 }
 
 

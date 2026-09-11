@@ -28,7 +28,8 @@ except ImportError:
     webrtcvad = None
 
 from config import (BARGE_IN_DEBUG, BARGE_IN_ENABLED, BARGE_IN_LEAD_S,
-                    BARGE_IN_MARGIN, BARGE_IN_MS, BARGE_IN_WARMUP_FRAMES,
+                    BARGE_IN_GAP_MS, BARGE_IN_MARGIN, BARGE_IN_MS,
+                    BARGE_IN_WARMUP_FRAMES,
                     CAPTURE_RATE, CONTINUATION_MAX_ROUNDS, CONTINUATION_WAIT_S,
                     HALLUCINATIONS, MEDIA_BARGE_IN_MARGIN, MIC_CHUNK,
                     MIC_DEVICE_INDEX, MIC_ENERGY_CEILING, MIC_ENERGY_FLOOR,
@@ -65,6 +66,16 @@ def wake_word_match(text, pattern, asleep=False):
         print(f"[WAKE] Ignored (asleep; {len(words)} words is a conversation, "
               f"not a wake): {text!r}", flush=True)
         return None
+    # "Liza, stop the video" -- the bare name with a stop command right behind
+    # it. Only RE_WAKE_WORD_OVER_MEDIA has this group, and only it needs the
+    # exemption: the guards below exist to stop an ordinary sentence ABOUT her
+    # being read as an address TO her, and nobody says "Liza stop the video"
+    # about somebody else. Without this the sentence was four words long and the
+    # bare-name limit is three, so the pattern matched and the guard threw it
+    # away -- which is the "I have to say it three or four times" being reported.
+    if match.groupdict().get("stopword"):
+        print(f"[WAKE] Stop command addressed to her: {text!r}", flush=True)
+        return match
     if not RE_WAKE_GREETING.match(match.group(0)):
         # A bare name has to OPEN the utterance, not merely sit near the front.
         # The lead-word gate above allows two words before the match, which is
@@ -243,19 +254,28 @@ def calibrate_barge_in(quiet_s=6.0, talk_s=10.0):
     if you_over >= BARGE_IN_MS:
         print("\n  You cleared it, and for long enough. Barge-in should already be "
               "working here.")
-    elif you <= max(her, 1.0) * 1.05:
+    elif you <= her * 1.05:
         print("\n  Your voice did not come through any louder than hers does. No "
               "margin can separate the two, so lowering it would only make her "
               "interrupt herself. Move the microphone closer to where the child "
               "sits, or the speaker further from the microphone, and run this "
               "again.")
     else:
-        # Halfway between, in the log domain, so it sits clear of BOTH.
-        # Scale the CURRENT margin by where you landed relative to the bar,
-        # then sit halfway between that and where her own voice reaches.
-        need = BARGE_IN_MARGIN / max(you, 0.01)
-        floor = BARGE_IN_MARGIN * max(her, 0.01)
-        suggest = round(max((need * max(floor, need)) ** 0.5, 1.15), 2)
+        # `you` and `her` are peaks expressed as a FRACTION OF THE BAR, and the
+        # bar is echo x BARGE_IN_MARGIN. So the margin a voice actually reached
+        # is BARGE_IN_MARGIN x that fraction: reaching 0.9 of a bar set at 1.8
+        # means the voice was 1.62x her echo, and any margin under 1.62 would
+        # have let it through.
+        #
+        # This was written as BARGE_IN_MARGIN / you, which is the same
+        # expression upside down -- so the worse you were drowned out, the
+        # HIGHER a margin it recommended. Anyone who ran this because they could
+        # not interrupt her was told to make it harder.
+        reach = BARGE_IN_MARGIN * you          # the margin your voice reached
+        floor = max(BARGE_IN_MARGIN * her, 1.15)   # the one hers did; stay above it
+        # Halfway between the two in the log domain, so it sits clear of BOTH,
+        # and never so close to `reach` that it only just works.
+        suggest = round(min((reach * floor) ** 0.5, reach * 0.95), 2)
         print("\n  You are above her, but under the bar. That is why she cannot be "
               "interrupted, and it is only a tuning problem.")
         print("  Put this in .env, then `liza restart`:")
@@ -548,9 +568,13 @@ class VoiceListener:
         self._last_audio_at = 0.0
         # Barge-in signals, written by the worker thread, read by ai_loop.
         self._loud_run_ms = 0.0
+        # How long the run above has been interrupted for. A short gap pauses
+        # the run; a long one ends it. See BARGE_IN_GAP_MS.
+        self._quiet_run_ms = 0.0
         self._echo_level = 0.0
         self._was_playing = False
         self._audible_frames = 0
+        self._seeding = True
         self._playing_since = 0.0
         # Audio the student had already spoken when their interruption cut the
         # reply off; see hold_barge_in().
@@ -796,7 +820,9 @@ class VoiceListener:
             self._playing_since = 0.0
             self._echo_level = 0.0
             self._loud_run_ms = 0.0
+            self._quiet_run_ms = 0.0
             self._audible_frames = 0
+            self._seeding = True
             return
         if not self._was_playing:
             # Seeded on the first frame of playback rather than climbing from
@@ -808,13 +834,43 @@ class VoiceListener:
             self._echo_level = float(level)
             self._playing_since = time.time()
             self._audible_frames = 0
+            self._seeding = True
         # A reference seeded on silence is not a reference. Until it has had
         # long enough to measure whatever is actually coming out of the speaker,
         # the bar is meaningless and nothing is allowed to clear it -- which is
         # what let a video's own soundtrack "interrupt" the video.
-        if time.time() - self._playing_since < BARGE_IN_LEAD_S:
+        #
+        # SEEDING ENDS ON AUDIO, NOT ON THE CLOCK, and that is the fix for a
+        # reply nobody could interrupt at all. playback_active is set before any
+        # sound reaches the speaker, so on a slow first Cartesia chunk the whole
+        # of BARGE_IN_LEAD_S could elapse against a silent room. The reference
+        # was then stuck at the level of that silence, and from there it could
+        # never recover: the bar sits just above MIN_SPEECH_RMS, every frame of
+        # her own voice is "over" it, and BOTH the reference update and the
+        # _audible_frames counter live in the branch that over-bar frames do not
+        # take. A low bar stopped the reference learning, and the unlearned
+        # reference kept the bar low.
+        #
+        # The visible half of that deadlock is barge_in_ready(), which waits on
+        # _audible_frames and so could never arm however loudly anyone shouted.
+        # Measured against the detector directly, with the lead-in hearing
+        # silence: a student at twice her level sat 16.7x over the bar for the
+        # whole reply with _audible_frames still at zero. From the log of the
+        # reply this was reported on, 30.01x for 29640ms -- half a minute of
+        # somebody talking over her, and the gate never opened.
+        #
+        # So seeding now holds until her voice has ACTUALLY been heard, which is
+        # the thing the clock was standing in for. BARGE_IN_LEAD_S stays as a
+        # floor so the first frames of a reply can never arm anything.
+        if self._seeding:
             self._echo_level = max(self._echo_level, float(level))
             self._loud_run_ms = 0.0
+            self._quiet_run_ms = 0.0
+            if level >= MIN_SPEECH_RMS:
+                self._audible_frames += 1
+            if (time.time() - self._playing_since >= BARGE_IN_LEAD_S
+                    and self._audible_frames >= BARGE_IN_WARMUP_FRAMES):
+                self._seeding = False
             return
         bar = max(self._echo_level * (BARGE_IN_MARGIN if margin is None else margin),
                   MIN_SPEECH_RMS)
@@ -841,8 +897,28 @@ class VoiceListener:
 
         if voiced and level > bar:
             self._loud_run_ms += VAD_FRAME_MS
+            self._quiet_run_ms = 0.0
         else:
-            self._loud_run_ms = 0.0
+            # A GAP IS NOT THE END OF A SENTENCE, and treating it as one is why
+            # a real interruption was still being missed after the bar came
+            # down. From the log, the one genuine attempt in that session:
+            #
+            #   the loudest voice reached 1.44x the bar for 210ms
+            #
+            # Well over the bar, and thrown away because BARGE_IN_MS asks for
+            # 260ms and this reset the count to zero on the first frame that did
+            # not qualify. Speech is not continuous at 30ms resolution -- there
+            # is a gap at every stop consonant, and more of them when the signal
+            # is competing with her own voice coming back down the same
+            # microphone. What was being measured was not "how long did they
+            # talk" but "how long did they talk without webrtcvad blinking".
+            #
+            # So a short gap PAUSES the count instead of clearing it. Long
+            # enough and it still clears: a cough followed a quarter of a second
+            # later by a door is two noises, not an interruption.
+            self._quiet_run_ms += VAD_FRAME_MS
+            if self._quiet_run_ms >= BARGE_IN_GAP_MS:
+                self._loud_run_ms = 0.0
             # A GAP IN PLAYBACK MUST NOT DRAG THE REFERENCE DOWN, and this is
             # the guard for it. Observed on this device, in the log, twice:
             #
@@ -899,6 +975,7 @@ class VoiceListener:
 
     def reset_barge_in(self):
         self._loud_run_ms = 0.0
+        self._quiet_run_ms = 0.0
 
     def take_calibration(self):
         """(peak level/bar seen, ms spent over the bar) since the last call."""
@@ -925,6 +1002,7 @@ class VoiceListener:
             keep = int(self._loud_run_ms // VAD_FRAME_MS) + 4    # + ~120ms of lead
             self._carry = [f[0] for f in frames[-keep:]] if keep > 0 and frames else []
             self._loud_run_ms = 0.0
+            self._quiet_run_ms = 0.0
 
     def has_carry(self):
         return bool(self._carry)
@@ -947,6 +1025,7 @@ class VoiceListener:
             while len(self._frames) > keep:
                 self._frames.popleft()
             self._loud_run_ms = 0.0
+            self._quiet_run_ms = 0.0
 
     def wait_for_utterance(self, timeout, phrase_limit, end_silence, preroll_ms=None,
                            cancel=None):
@@ -1402,6 +1481,28 @@ def rejoin_absorbed_consonant(command):
     return RE_ABSORBED_CONSONANT.sub(lambda m: m.group(1) + m.group(2), command, count=1)
 
 
+def _reread_wake_question(wav_data, seed, pattern, asleep, question, language):
+    """Recover a question asked in the student's own language after an
+    English-forced wake pass. Falls back to what it was given."""
+    try:
+        text, spoken = transcribe(wav_data, seed, model=WAKE_STT_MODEL)
+    except Exception as exc:
+        print(f"[WAKE] Could not re-read the question ({exc}); "
+              f"using the English reading.", flush=True)
+        return question, language
+    match = wake_word_match(text, pattern, asleep=asleep) if text else None
+    if not match:
+        # The auto-detected reading does not contain the wake word at all, so
+        # there is nothing in it to cut and no way to tell question from name.
+        return question, language
+    reread = re.sub(r'\s+', ' ', text[:match.start()] + " " + text[match.end():])
+    reread = rejoin_absorbed_consonant(reread.strip(" ,.!?।-")).strip(" ,.!?।-")
+    if len(reread.split()) < 2:
+        return question, language
+    print(f"[WAKE] Question re-read as {spoken or '?'}: {reread!r}", flush=True)
+    return reread, spoken
+
+
 def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
                          pattern=None, seed=None, timeout=None, phrase_limit=None,
                          cancel=None):
@@ -1469,7 +1570,24 @@ def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
             # seed is what teaches Whisper to hand the wake phrase back on room
             # noise, and from sleep a false wake is the worse failure.
             seed = WAKE_SEED_PROMPT_ASLEEP if asleep else WAKE_SEED_PROMPT
-        text, language = transcribe(wav_data, seed, model=WAKE_STT_MODEL)
+        # FORCED TO ENGLISH, rather than letting Whisper choose.
+        #
+        # The wake phrase is one to two seconds of audio, which is the worst
+        # case for language auto-detection -- the same weakness
+        # STT_ALLOWED_LANGUAGES exists to contain on the conversation path. On
+        # this device it chose Hindi for "Hey Liza" most of the time and then
+        # spelled the name a different way almost every time, and the fuzzy
+        # Devanagari branch of RE_WAKE_WORD can only chase so many spellings.
+        # logs/liza.log settles it: 124 wakes heard against 1497 ignored, and
+        # the four commonest ignored strings -- 'हे लाग' x101, 'हे लाओ' x25,
+        # 'है लीज़ा' x8, 'ہے لیزا' x7 in Urdu script -- are all somebody saying
+        # "Hey Liza" into the microphone and not being answered.
+        #
+        # Forcing English makes the name come back in Latin letters, where the
+        # pattern already covers fourteen spellings of it. The Devanagari
+        # branches stay as a safety net for whatever still slips through.
+        text, language = transcribe(wav_data, seed, language="en",
+                                    model=WAKE_STT_MODEL)
         if is_repeated_hallucination(text):
             # "हे लीज़ा। हे लीज़ा। हे लीज़ा।" -- nobody says the wake word three
             # times in one breath. Whisper looping a short phrase is one of its
@@ -1490,6 +1608,18 @@ def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
             question = rejoin_absorbed_consonant(question).strip(" ,.!?।-")
             if len(question.split()) < 2 and not RE_ONE_WORD_COMMAND.match(question):
                 question, language = "", ""
+            elif question:
+                # There IS a question riding on the wake word, and the pass that
+                # found the wake word was forced to English -- so if it was
+                # asked in Hindi, what we are holding is romanised mush. Read
+                # the same audio again, letting Whisper choose this time.
+                #
+                # Only on a MATCH, which is the rare case and already a turn the
+                # student is waiting on. Doing it on every near-miss would
+                # double the cost of a room full of Hindi conversation, which on
+                # this device is most of what the microphone hears.
+                question, language = _reread_wake_question(
+                    wav_data, seed, pattern, asleep, question, language)
             return True, question, language
         if text:
             # Logged because a near-miss is otherwise invisible: the device just

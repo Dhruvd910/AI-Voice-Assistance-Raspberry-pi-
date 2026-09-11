@@ -34,7 +34,9 @@ import store
 import config  # noqa: F401  (imported for the .env it loads)
 # The listening settings moved to config.py, with the prose that explains
 # each of them; imported back by name because they are only ever read.
-from config import (KG_WAKE_WORD_ENABLED, MIC_ENERGY_CEILING,
+from config import (BARGE_IN_NEAR_MISS, KG_BARGE_IN_ENABLED,
+                    KG_WAKE_WORD_ENABLED, MIC_ENERGY_CEILING,
+                    NAME_DEVANAGARI, NAME_LATIN, RE_SLEEP_PHRASE, RE_STOP_TAIL,
                     MIC_ENERGY_FLOOR, NAME_END,
                     BARGE_IN_DEBUG, BARGE_IN_ENABLED, BARGE_IN_LEAD_S,
                     BARGE_IN_MARGIN, BARGE_IN_MS, BARGE_IN_WARMUP_FRAMES,
@@ -89,7 +91,7 @@ from prompts import (AGENTIC_ACTIONS, ASSISTANT_SCOPE, EMOTION_PERSONA,
                      MODE_INSTRUCTIONS, RETELL_ACKS, RETELL_EVALUATE_AFTER_S,
                      RETELL_EVALUATION_PROMPT, RETELL_MIN_LISTEN_S, RETELL_NUDGES,
                      RETELL_NUDGE_AFTER_S, RETELL_PHRASE_LIMIT_S, RE_RETELL_MARK_NOW,
-                     SEARCH_NOTICES, UNIVERSAL_SYSTEM_PROMPT)
+                     SEARCH_NOTICES, SLEEP_ACKS, UNIVERSAL_SYSTEM_PROMPT)
 # The voice. audio.py reads two names back through this module at call time.
 # The Kindergarten flow. kg.py reads a few names back through this module at
 # call time; see its foot for which.
@@ -239,10 +241,18 @@ WAKE_WORD_ENABLED = os.getenv("WAKE_WORD", "1") != "0"
 # The cost -- that a bare "Liza, stop" is ignored on this path -- is paid back
 # by the level-margin path, which keeps the loose pattern precisely because
 # clearing the bar is already proof a person spoke over the track.
+# The one exception to "the greeting is required here". A bare name is unsafe
+# over a track because songs say names; a bare name with STOP as the very next
+# word is not, because songs do not tell Liza to close the video. This is what
+# people actually say to something that is already playing -- "Liza, stop",
+# "Liza band karo" -- and requiring "hey" in front of it is why they ended up
+# saying it four times. RE_STOP_TAIL is shared with RE_WAKE_WORD, so the loose
+# pattern the level-margin path uses accepts exactly the same commands.
 RE_WAKE_WORD_OVER_MEDIA = re.compile(
-    r'\b(?:hey|hi|hello|ok|okay|hay)\s+'
-    r'(?:liza|lisa|leeza|leesa|lizza|lyza|eliza|elisa|lija|leza|laiza|liesa|lizah|luiza)\b'
-    r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)\s*(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)' + NAME_END,
+    r'\b(?:hey|hi|hello|ok|okay|hay)\s+' + NAME_LATIN + r'\b'
+    r'|(?:हे|अरे|ओके|हाय|सुनो|हैलो)\s*' + NAME_DEVANAGARI + NAME_END
+    + r'|(?:\b' + NAME_LATIN + r'\b|' + NAME_DEVANAGARI + NAME_END + r')'
+    + RE_STOP_TAIL,
     re.IGNORECASE)
 
 
@@ -267,15 +277,29 @@ MEDIA_BARGE_IN = os.getenv("MEDIA_BARGE_IN", "1") != "0"
 # primary route, and 6s of it was most of the delay in "Hey Liza, stop the
 # music". Still slow enough to keep the call count per track in the low tens.
 #
-# Raised from 3.0. This is the BLIND check -- the one on a timer, that runs
-# whether or not anybody has spoken -- and it now turns the track down to listen
-# rather than listening over it. Every three seconds that is a dip the student
-# hears for the whole length of a song, which is its own version of the problem
-# it was meant to solve. A voice in the room does not wait for this: the
-# barge-in path above ignores the cooldown entirely and checks at once, so the
-# only thing a longer gap here costs is the case where somebody speaks too
-# quietly to arm that path at all.
-MEDIA_BARGE_IN_COOLDOWN_S = float(os.getenv("MEDIA_BARGE_IN_COOLDOWN_S", "10.0"))
+# 5.0. It was raised to 10.0 on the grounds that this check dips the volume, and
+# it does not: `ducked_volume` is only taken when a voice armed the level path,
+# and the blind check listens OVER the track at full volume. So the only thing
+# a longer gap bought was fewer Whisper calls, and the only thing it cost was
+# the one case this check exists for -- somebody speaking too quietly to arm the
+# level path, waiting up to ten seconds to be heard at all.
+#
+# Each check occupies MEDIA_WAKE_TIMEOUT_S plus the phrase it records, so at 5.0
+# the cycle is seven to ten seconds: roughly twenty-five calls over a
+# three-minute song, which is where this sat when the count was last thought
+# acceptable. A voice at normal volume does not wait for any of this; it arms
+# the level path and gets a retry 0.6s later.
+MEDIA_BARGE_IN_COOLDOWN_S = float(os.getenv("MEDIA_BARGE_IN_COOLDOWN_S", "5.0"))
+# And a much shorter one after a check that a VOICE triggered.
+#
+# The cooldown above is for the blind timer, which runs whether or not anybody
+# is there. A check that fired because somebody spoke over the track is a
+# different thing entirely: it is evidence that a person in the room is trying
+# to say something, and the commonest reason it came back with nothing is that
+# they were half a second into the sentence when the two-second window opened.
+# Pushing the next chance five seconds out is what turns "Liza, stop" into
+# saying it four times.
+MEDIA_RETRY_COOLDOWN_S = float(os.getenv("MEDIA_RETRY_COOLDOWN_S", "0.6"))
 # No wake-word check at all for this long after a player comes up.
 #
 # Observed, and reported as "it opens the file but after 1-2 seconds it closes
@@ -538,6 +562,9 @@ STANDBY_AFTER_TIMEOUTS = 3   # -> ~30s of quiet before dropping back to standby
 RE_ANSWER_PREFIX = re.compile(r'ANSWER:\s*')
 RE_GREETING_PREFIX = re.compile(r'^\s*(?:"|\')?\s*(hi there|hello there|hi|hello|hey|greetings)\b[,!.:\s-]*', re.IGNORECASE)
 RE_EMOJI = re.compile(r'[\U00010000-\U0010ffff]')
+# " * " and " x " between two things, and the real multiplication sign. Bounded
+# by whitespace on both sides so markdown emphasis and ordinary words are safe.
+RE_TIMES_SIGN = re.compile(r'(?<=\s)[*\u00d7\u2715\u2716](?=\s)')
 RE_SENTENCE_SPLIT = re.compile(r'(?<=[.?!।])\s+')
 RE_DEVANAGARI = re.compile(r'[ऀ-ॿ]')
 RE_LATIN_WORD = re.compile(r'[A-Za-z]{2,}')
@@ -673,12 +700,38 @@ def remember_reply(chat_history, text):
     The ANSWER: prefix is deliberately kept -- it is the output contract, and
     the surviving examples are what hold the model to it. An empty reply is
     dropped instead of stored: a failed turn that leaves a blank assistant
-    message behind teaches the model that blank replies are allowed."""
+    message behind teaches the model that blank replies are allowed.
+
+    THE ACTION TAG IS KEPT NOW, AND IT USED TO BE STRIPPED. The reasoning for
+    stripping was that a tag in history is a worked example and she would start
+    tagging replies that were never meant to do anything. That is true, and it
+    is only half of what happens -- because the SENTENCE stays either way. Strip
+    the tag off "Here is the graph of y equals x squared." and what is left in
+    history is a worked example of promising a picture and drawing nothing, and
+    she copies that just as readily.
+
+    Measured by replaying a real conversation from logs/liza.log, four requests
+    to plot or change a graph and three questions that only asked to be told,
+    three runs each:
+
+        tags stripped   9 of 12 promises drew nothing,  0 of 9 drew unasked
+        tags kept       0 of 12 promises drew nothing,  3 of 9 drew unasked
+
+    Both columns are bugs and the left one is the worse: a graph she says she is
+    putting up and does not is a student waiting at a blank board. The right
+    column is a picture nobody minded. So the tags stay, and the over-drawing is
+    held down where it belongs -- in the prompt, in section I and rule 9, which
+    say that a question asking to be TOLD something gets words and no tag
+    whatever earlier turns in the conversation happen to show."""
     text = RE_EMOTION_TAG.sub('', text or '')
-    # Tags are instructions to the device, not part of the conversation. Left in
-    # history they become worked examples, and she starts tagging replies that
-    # were never meant to do anything.
-    text = RE_ACTION_TAG_STRIP.sub('', text).strip()
+    # "ANSWER: EMOTION: calm\nANSWER: ..." -- the model doubles its own header
+    # perhaps one reply in three. The EMOTION is not at the start of a line, so
+    # the pattern above walks straight past it and the malformed shape goes into
+    # history, where it becomes the example for the next reply and the drift
+    # feeds itself. Collapsed here to the single ANSWER: the contract asks for.
+    text = re.sub(r'^\s*ANSWER:\s*EMOTION:.*\n+(?=\s*ANSWER:)', '', text,
+                  flags=re.IGNORECASE)
+    text = text.strip()
     if text:
         chat_history.append({"role": "assistant", "content": text})
     return chat_history
@@ -1016,6 +1069,56 @@ EMOTION_STYLE = {
     "playful": "#D946EF", "neutral": "#8891A8",
 }
 
+# ...AND HOW EACH ONE IS SPOKEN.
+#
+# The emotion line has only ever been a colour on her face. The prompt says so
+# in as many words -- "Shown on your face, NEVER spoken aloud" -- and it was
+# read, painted, and thrown away, so every reply came out of the speaker in
+# exactly the same voice whatever she had just decided she felt about it. The
+# KG screens have had emotion-aware delivery since they were written; the
+# conversation the rest of the device is built around has not.
+#
+# Cartesia takes this as a generation parameter, so it changes the DELIVERY and
+# never the words -- see the note above KG_EMOTIONS. Only emotion names already
+# proven to work on this account are used; the eleven the prompt offers are
+# mapped onto them rather than sent through.
+#
+# The speeds are a much narrower band than the KG story table, and deliberately:
+# a story is read, a conversation is spoken. Measured on this account, the same
+# sentence came back at 4.00s at the old speed="fast", 4.08s at 1.00 and 3.84s
+# at 1.10 -- so moving the default reply from the "fast" preset to 1.00 costs
+# two per cent, which is nothing, and the whole audible range here is about
+# eight. As with the KG table, the emotion name does most of the work and the
+# speed is seasoning.
+EMOTION_VOICE = os.getenv("EMOTION_VOICE", "1") != "0"
+EMOTION_DELIVERY = {
+    "excited":     {"emotion": "excited",       "speed": 1.08, "volume": 1.10},
+    "playful":     {"emotion": "excited",       "speed": 1.05, "volume": 1.05},
+    "happy":       {"emotion": "affectionate",  "speed": 1.02, "volume": 1.05},
+    "encouraging": {"emotion": "enthusiastic",  "speed": 1.02, "volume": 1.05},
+    "proud":       {"emotion": "proud",         "speed": 1.00, "volume": 1.08},
+    "neutral":     {"speed": 1.00, "volume": 1.00},
+    "curious":     {"emotion": "curious",       "speed": 0.99, "volume": 1.00},
+    "thoughtful":  {"emotion": "contemplative", "speed": 0.97, "volume": 1.00},
+    "calm":        {"emotion": "calm",          "speed": 0.97, "volume": 0.98},
+    "concerned":   {"emotion": "contemplative", "speed": 0.95, "volume": 0.98},
+    "sorry":       {"emotion": "sad",           "speed": 0.95, "volume": 0.96},
+}
+
+
+def emotion_delivery(mood):
+    """The Cartesia generation_config for a mood word, or None.
+
+    None means "say it however you would have", which is what happens with
+    EMOTION_VOICE=0 and for any word the model invents outside the eleven it was
+    given. Never raises on a word it has not seen: a mood is a nicety, and a
+    reply that does not get spoken because of one is not.
+    """
+    if not EMOTION_VOICE:
+        return None
+    return EMOTION_DELIVERY.get((mood or "").strip().lower(),
+                                EMOTION_DELIVERY["neutral"])
+
 # THE SAME WORD, BUT WITH THE "EMOTION:" LABEL MISSING.
 #
 # The contract asks for "EMOTION: curious" on its own line and the strip above
@@ -1085,6 +1188,14 @@ def clean_text_for_tts(text):
         clean = trimmed
 
     clean = RE_EMOJI.sub('', clean)
+    # A SPACED asterisk is multiplication, not markdown, and the strip below
+    # deletes it. Observed in the log: "F = G * (m1 * m2) / r²" was spoken as
+    # "F = G  (m1  m2) / r²" -- the equation read out with the operator missing,
+    # which is worse than not reading it at all. Markdown emphasis has no spaces
+    # around its asterisks, so this cannot touch **bold**.
+    # No spaces added: the pattern already requires whitespace either side,
+    # so adding them again gives "G  times  (".
+    clean = RE_TIMES_SIGN.sub('times', clean)
     return clean.replace('*', '').replace('_', '').replace('#', '').replace('`', '').replace('[', '').replace(']', '').strip()
 
 THINKING_FILLER_ENABLED = os.getenv("THINKING_FILLER", "1") != "0"
@@ -1203,6 +1314,9 @@ def ai_loop(ui, headless=False):
     # wake read is allowed 16s and a RE-TELL recitation 40s, and waiting out the
     # longer of the two on every stall is 25 extra seconds of being deaf.
     listen_started = [0.0, 0.0]
+    # True while she is mid-reply, so the pass AFTER the reply ends can report
+    # how close anybody came to interrupting it. See the report below.
+    was_replying = False
     media_listen_after = 0.0    # earliest next wake-word check during playback
 
     # RE-TELL: the student's recitation is collected across many turns and marked
@@ -1320,7 +1434,9 @@ def ai_loop(ui, headless=False):
             # frames hold_barge_in() sets aside are picked up by the very next
             # wait_for_utterance. That is what stops the question arriving with
             # its first word missing.
-            if (BARGE_IN_ENABLED and listener is not None and listener.available
+            if (KG_BARGE_IN_ENABLED
+                    and BARGE_IN_ENABLED and listener is not None
+                    and listener.available
                     and playback_active.is_set() and not kg_listen_waiting()):
                 # Her own first syllables are not an interruption of themselves.
                 if time.time() - state.playback_started_at < BARGE_IN_LEAD_S:
@@ -1567,6 +1683,14 @@ def ai_loop(ui, headless=False):
             # voice coming back. VoiceListener._track_barge_in() answers that,
             # continuously, against a reference measured from her own playback.
             if playback_active.is_set() or not audio_queue.empty():
+                if not was_replying:
+                    was_replying = True
+                    # Drained at the START too, so the near-miss reported below
+                    # belongs to THIS reply. The detector also measures while a
+                    # track plays, and a song's own peaks would otherwise be
+                    # logged as somebody trying to interrupt the answer after it.
+                    if listener is not None and listener.available:
+                        listener.take_calibration()
                 # A Speak tap while she is talking means "stop and listen to me"
                 # -- the touch equivalent of talking over her. Nothing read
                 # wake_event on this path before, so the tap did nothing at all
@@ -1609,6 +1733,40 @@ def ai_loop(ui, headless=False):
                 session_active = True
                 silence_counter = 0
                 continue
+
+            # SHE HAS JUST FINISHED A REPLY NOBODY MANAGED TO INTERRUPT.
+            #
+            # Barge-in cannot be tuned by reasoning about it -- the bar depends
+            # on the speaker volume, the distance from the speaker to the
+            # microphone, and the room -- and the only tool for it was
+            # `--calibrate-barge-in`, which needs somebody standing there
+            # talking over her on purpose. So this measures the same thing
+            # PASSIVELY, out of ordinary use: the detector already records the
+            # loudest thing it heard as a fraction of the bar it was judged
+            # against, and that fraction is exactly the number BARGE_IN_MARGIN
+            # should have been.
+            #
+            # Only printed when somebody clearly spoke and clearly failed. A
+            # quiet room reports nothing, so this cannot become noise in the log
+            # -- and when a student says "I talked over her and she carried on",
+            # the answer is already written down.
+            if was_replying:
+                was_replying = False
+                if listener is not None and listener.available:
+                    peak, over_ms = listener.take_calibration()
+                    if peak >= BARGE_IN_NEAR_MISS:
+                        # peak is a fraction OF THE BAR, and the bar is the echo
+                        # times the margin -- so the margin that voice actually
+                        # reached is the two multiplied. Anything under it would
+                        # have let the interruption through. See the same sum in
+                        # calibrate_barge_in, and the note there about it having
+                        # been written the other way up.
+                        reached = BARGE_IN_MARGIN * peak
+                        print(f"[BARGE-IN] Nobody got through that reply. The "
+                              f"loudest voice reached {peak:.2f}x the bar for "
+                              f"{over_ms:.0f}ms. BARGE_IN_MARGIN is "
+                              f"{BARGE_IN_MARGIN}; it would have to be under "
+                              f"{reached:.2f} to let that in.", flush=True)
 
             # --- MEDIA PLAYING: the wake word is the only way in ---
             # Full transcription here would answer the song: lyrics and dialogue
@@ -1768,12 +1926,17 @@ def ai_loop(ui, headless=False):
                     # Before anything below decides to pause or resume, so the
                     # track never comes back at 15% and stays there.
                     media_restore_volume(ducked_volume)
-                    media_listen_after = time.time() + MEDIA_BARGE_IN_COOLDOWN_S
+                    # A voice-triggered check gets to try again almost at once;
+                    # see MEDIA_RETRY_COOLDOWN_S. The blind timer waits its turn.
+                    media_listen_after = time.time() + (
+                        MEDIA_RETRY_COOLDOWN_S if suspected
+                        else MEDIA_BARGE_IN_COOLDOWN_S)
                 if not woke:
                     # Not for her: put the track back where it was.
                     if ducked:
                         media_set_pause(False)
                     continue
+
 
                 # A wake word heard over a track PAUSES it. It does not stop it.
                 #
@@ -1804,7 +1967,7 @@ def ai_loop(ui, headless=False):
                           flush=True)
                     if ducked:
                         media_set_pause(False)
-                    media_listen_after = time.time() + MEDIA_BARGE_IN_COOLDOWN_S
+                    media_listen_after = time.time() + MEDIA_RETRY_COOLDOWN_S
                     continue
 
                 print(f"[MEDIA] Command after wake: {spoken!r}", flush=True)
@@ -2235,6 +2398,56 @@ def ai_loop(ui, headless=False):
             stt_language = ""
             stop_playback_event.clear()
 
+        # --- "GO TO SLEEP" ---
+        #
+        # First of everything that reads `text`, and deliberately so. Sleeping is
+        # the one request that must work from wherever the conversation has got
+        # to, and every branch below this claims the sentence for something else:
+        # in RE-TELL it would be banked as part of the recitation and marked, in
+        # TUTOR it would be answered as a question about sleep.
+        #
+        # RE-TELL is where this was missed, because it is the mode where the
+        # student is across the room reciting and never touches the device -- so
+        # the Sleep button, which was the only way, meant walking over to it.
+        #
+        # Never on a verdict: `text` is then the whole recitation, and although
+        # RE_SLEEP_PHRASE is anchored and could not match one, a student whose
+        # entire answer was the word "sleep" should be marked, not obeyed.
+        if text and not is_retell_eval and RE_SLEEP_PHRASE.match(text):
+            print(f"[STATE] Asked out loud to sleep: {text!r}", flush=True)
+            if retell_buffer:
+                # Said so rather than done quietly. Being asked to sleep ends the
+                # session, and a recitation that was going to be marked is not.
+                print(f"[RE-TELL] {len(retell_buffer)} chunk(s) were waiting to "
+                      f"be marked and are dropped; say \"how did I do\" first "
+                      f"to be marked before sleeping.", flush=True)
+            interrupt_playback()
+            if media_active.is_set():
+                stop_media_playback()
+            ack_language = detect_user_language(text, stt_language)
+            audio_queue.put(SLEEP_ACKS.get(ack_language, SLEEP_ACKS["en"]))
+            audio_queue.put("[END_OF_RESPONSE]")
+            # SAID BEFORE SHE GOES, and waited for. go_to_sleep tears playback
+            # down, so queueing a goodnight and sleeping in the same breath
+            # would cut it off half way through -- and standby opens the
+            # microphone the moment it is entered, which would then record the
+            # rest of it as somebody trying to wake her.
+            time.sleep(0.3)                      # let the player pick it up
+            quiet_by = time.time() + 8.0
+            while ((playback_active.is_set() or not audio_queue.empty())
+                   and time.time() < quiet_by):
+                time.sleep(0.1)
+            ui_invoke("go_to_sleep")
+            # Set here as well, rather than left to the UI thread: go_to_sleep
+            # runs through root.after and this loop is about to read the flag.
+            sleep_event.set()
+            time.sleep(0.2)                      # ...and let ui.asleep land
+            session_active = False
+            silence_counter = 0
+            pending_question = pending_language = ""
+            retell_buffer, retell_silence_from, retell_nudged = [], 0.0, False
+            continue
+
         # --- MEDIA PLAYBACK: bypasses the LLM entirely, see start_media_playback() ---
         # Skipped for a verdict: `text` is then the student's whole recitation,
         # and a lesson that happens to start with "play..." must not launch mpv.
@@ -2547,6 +2760,11 @@ def ai_loop(ui, headless=False):
                     full_response = ""
                     emotion_parsed = False
                     is_searching = False
+                    # How this reply should be SPOKEN, decided once the emotion
+                    # line has been read and then attached to every sentence of
+                    # it. None until then, and None means "however you would
+                    # have" -- see emotion_delivery.
+                    delivery = None
                     # Whether any audio has been queued for THIS reply yet; see
                     # the first-flush note in the splitter below.
                     spoken_anything = False
@@ -2566,15 +2784,38 @@ def ai_loop(ui, headless=False):
                         if not is_searching and not emotion_parsed:
                             if "ANSWER:" in full_response:
                                 emotion_parsed = True
-                                # Everything before ANSWER: is dropped from the
-                                # speech, which is exactly where the EMOTION line
-                                # lives. Read it here so the mood chip changes as
-                                # she starts talking, not after she has finished.
-                                mood = RE_EMOTION_LINE.search(full_response.split("ANSWER:")[0])
+                                # THE LAST "ANSWER:", not the first, and this is
+                                # not a nicety -- it is a bug that ate words out
+                                # of answers.
+                                #
+                                # The model intermittently emits the prefix
+                                # twice: "ANSWER: EMOTION: curious\nANSWER: A
+                                # life cycle is...". split("ANSWER:")[1] is then
+                                # the text BETWEEN the two, and everything after
+                                # the second one was dropped on the floor. What
+                                # the student heard was the answer with its
+                                # opening clause missing and the next word
+                                # capitalised to cover the seam: "Living thing
+                                # goes through during its life..." for "A life
+                                # cycle is the series of changes a living thing
+                                # goes through during its life...". Three of the
+                                # six answers in the last log lost their first
+                                # clause this way, and it read as her being
+                                # abrupt rather than as anything broken.
+                                #
+                                # Reading the mood from everything BEFORE the
+                                # last one fixes the other half of the same bug:
+                                # with the doubled prefix, the text before the
+                                # FIRST "ANSWER:" is empty, so the emotion line
+                                # was never found and the reply was delivered
+                                # flat.
+                                head, _, tail = full_response.rpartition("ANSWER:")
+                                mood = RE_EMOTION_LINE.search(head)
                                 if mood:
                                     ui_invoke("set_emotion", mood.group(1))
-                                try: buffer = full_response.split("ANSWER:")[1].lstrip()
-                                except IndexError: buffer = ""
+                                delivery = emotion_delivery(mood.group(1) if mood
+                                                            else None)
+                                buffer = tail.lstrip()
                             else: continue 
                         elif not is_searching:
                             buffer += delta 
@@ -2614,7 +2855,11 @@ def ai_loop(ui, headless=False):
                                 if clean:
                                     spoken_anything = True
                                     answered.set()
-                                    audio_queue.put(clean)
+                                    # Every sentence of the reply carries the
+                                    # same delivery, so the mood does not change
+                                    # gear half way through one answer.
+                                    audio_queue.put((clean, delivery) if delivery
+                                                    else clean)
 
                     # THE RAW MODEL OUTPUT, before any cleaning touches it.
                     # Without this a wrong answer cannot be told apart from a
@@ -2628,12 +2873,19 @@ def ai_loop(ui, headless=False):
                         print(f"[LLM RAW] {full_response.strip()[:700]!r}", flush=True)
 
                     if not is_searching:
-                        if not emotion_parsed: buffer = full_response 
+                        if not emotion_parsed:
+                            # The reply never carried the contract at all, so
+                            # there is no mood to read and the tail is the whole
+                            # of it. clean_text_for_tts still strips a stray
+                            # EMOTION: line if one turned up without ANSWER:.
+                            buffer = full_response
+                            delivery = emotion_delivery(None)
                         if buffer.strip():
                             clean = clean_text_for_tts(buffer.strip())
                             if clean:
                                 answered.set()
-                                audio_queue.put(clean)
+                                audio_queue.put((clean, delivery) if delivery
+                                                else clean)
                     
                     if is_searching:
                         try: search_query = full_response.split("SEARCH:")[1].strip()
