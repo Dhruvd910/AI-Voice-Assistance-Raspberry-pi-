@@ -59,6 +59,16 @@ PRAISE = [
     "Yes! You got every letter.",
 ]
 
+# Separate from PRAISE for the same reason STORY_PRAISE is: that list is about
+# spelling. "Yes! You got every letter. It is sixteen." is what sharing it with
+# the counting test produced.
+COUNT_PRAISE = [
+    "Yes! That's right.",
+    "Perfect. You counted them all.",
+    "That's it. Well counted.",
+    "Correct! You got every one.",
+]
+
 # Separate from PRAISE because that list is about spelling -- "You spelled it",
 # "You got every letter" -- and answering a question about a story is not
 # spelling anything. Sharing one list produced "Perfect. You spelled it. You
@@ -258,6 +268,10 @@ for _story in STORIES:
 # are wrong because a microphone misheard them.
 LETTER_NAMES = {
     "ay": "a", "aye": "a", "bee": "b", "be": "b", "see": "c", "sea": "c",
+    # "and" for N is not a spelling of the letter's name -- it is what Whisper
+    # returns for a child saying "N" in the middle of a word. logs/liza.log:
+    # HAND came back as 'H A and D', which without this reads as H-A-A-N-D.
+    "and": "n", "in": "n", "hen": "n", "ess": "s", "yes": "s",
     "cee": "c", "dee": "d", "de": "d", "ee": "e", "eff": "f", "ef": "f",
     "gee": "g", "aitch": "h", "haitch": "h", "eye": "i", "jay": "j",
     "kay": "k", "el": "l", "ell": "l", "em": "m", "en": "n", "oh": "o",
@@ -310,7 +324,32 @@ def heard_spelling(text, target):
         return "correct", attempt
     if sorted(attempt) == sorted(target):
         return "jumbled", attempt
+    if _one_edit_apart(attempt, target):
+        return "near", attempt
     return "wrong", attempt
+
+
+def _one_edit_apart(attempt, target):
+    """True when one letter separates the two: swapped, missing, or extra.
+
+    This is the shape a MICROPHONE error takes on this device, and the log has
+    all three of it. A child spelling HAND came back as 'H A N B' three times
+    running -- B for D, the same way every time -- and SHOE as 'H O E', with the
+    S simply gone. A child who does not know a word does not misspell it
+    identically three times; a microphone does.
+
+    The caller decides what to do about it, and only starts believing it on the
+    second attempt. See TutorUI._kg_judge_spoken.
+    """
+    if attempt == target or abs(len(attempt) - len(target)) > 1:
+        return False
+    if len(attempt) == len(target):
+        return sum(a != b for a, b in zip(attempt, target)) == 1
+    short, long = sorted((attempt, target), key=len)
+    for cut in range(len(long)):
+        if long[:cut] + long[cut + 1:] == short:
+            return True
+    return False
 
 
 def random_word(exclude=None):
@@ -327,8 +366,45 @@ def random_story(exclude=None):
 
 
 def spell_out(word):
-    """"cat" -> "C. A. T." -- full stops so the voice says letters, not a word."""
+    """"cat" -> "C. A. T." -- full stops so the voice says letters, not a word.
+
+    This is the WRITTEN form, for anything that goes on the screen. Use
+    spell_out_spoken for anything that goes to the voice.
+    """
     return " ".join(f"{letter.upper()}." for letter in word)
+
+
+# How each English letter is SAID when it is read on its own.
+#
+# A single Latin letter is the worst input a multilingual voice can be given:
+# there is nothing around it to say which language it is in, and on this device
+# "A." came back as the Hindi आ, "E." as ई, and so on down the alphabet. The
+# alphabet screen exists to teach a child what these letters SOUND like, so
+# getting it wrong there is not a blemish, it is the lesson being taught
+# backwards.
+#
+# Spelling out the English NAME of the letter takes the ambiguity away: "ay" is
+# an English word and is read as one. It costs a phonetic spelling in the logs
+# and in anything that echoes a spoken line, which is why this is separate from
+# spell_out rather than replacing it.
+LETTER_SOUNDS = {
+    "A": "ay",   "B": "bee",  "C": "see",  "D": "dee",  "E": "ee",
+    "F": "eff",  "G": "jee",  "H": "aitch", "I": "eye", "J": "jay",
+    "K": "kay",  "L": "el",   "M": "em",   "N": "en",   "O": "oh",
+    "P": "pee",  "Q": "cue",  "R": "aar",  "S": "ess",  "T": "tee",
+    "U": "you",  "V": "vee",  "W": "double-you", "X": "eks",
+    "Y": "why",  "Z": "zed",
+}
+
+
+def letter_sound(letter):
+    """How to SAY one English letter. The letter itself if it is not one."""
+    return LETTER_SOUNDS.get((letter or "").strip().upper(), letter)
+
+
+def spell_out_spoken(word):
+    """"cat" -> "see. ay. tee." -- the spelling as it should be HEARD."""
+    return " ".join(f"{letter_sound(letter)}." for letter in word if letter.strip())
 
 
 # ===========================================================================
@@ -338,34 +414,51 @@ def spell_out(word):
 # the letter so the label under it is useful to a parent who does not read
 # Devanagari. Words are the ones Indian KG classes actually use, because a child
 # who has seen the chart at school should recognise them here.
-# (letter, word, picture). The picture is an emoji, rendered to a bitmap by
-# assist.emoji_image.
+# (letter, word, picture). The picture NAMES A FILE in the A_Z artwork folder,
+# which holds one drawing per letter; picture_image looks for it there as well
+# as in pictures/, so a name here needs no path.
 #
 # The WORD is whichever one Indian classrooms actually teach, and the picture
 # has to be that word -- not something adjacent. An earlier pass chose words for
 # having a convenient emoji and got both wrong: J was "Juice" rather than Joker,
-# N was "Nose" rather than Nest, and Q said "Queen" while showing a crown. Where
-# the traditional word has no emoji at all (Y for Yak) the entry keeps the word
-# and shows no picture, exactly as the picture-less Hindi letters do.
+# N was "Nose" rather than Nest, and Q said "Queen" while showing a crown.
+#
+# With drawn artwork instead of emoji that constraint runs the other way: the
+# folder is complete, so every letter has a picture, and the six words that had
+# been picked to suit an emoji now follow the drawing that arrived for them --
+# G is Grapes rather than Goat, J Juice rather than Joker, M Monkey rather than
+# Moon, R Rabbit rather than Rainbow, T Tiger rather than Tree, and X the Xmas
+# tree rather than an X-ray, which is what an Indian KG chart prints anyway.
+#
+# Two filenames are misspelled in the artwork ("rabit", "X-max"). They are
+# written here exactly as they are on disk: a name that has to match a file is
+# not the place to correct someone's spelling.
 ENGLISH_ALPHABET = [
-    ("A", "Apple", "\U0001F34E"),      ("B", "Ball", "\u26BD"),
-    ("C", "Cat", "\U0001F431"),        ("D", "Dog", "\U0001F436"),
-    ("E", "Elephant", "\U0001F418"),   ("F", "Fish", "\U0001F41F"),
-    ("G", "Goat", "\U0001F410"),       ("H", "Hat", "\U0001F452"),
-    ("I", "Ice cream", "\U0001F366"),  ("J", "Joker", "\U0001F0CF"),
-    ("K", "Kite", "\U0001FA81"),       ("L", "Lion", "\U0001F981"),
-    ("M", "Moon", "\U0001F319"),       ("N", "Nest", "\U0001FAA9"),
-    ("O", "Orange", "\U0001F34A"),     ("P", "Parrot", "\U0001F99C"),
-    ("Q", "Queen", "\U0001F478"),      ("R", "Rainbow", "\U0001F308"),
-    ("S", "Sun", "\u2600\uFE0F"),      ("T", "Tree", "\U0001F333"),
-    ("U", "Umbrella", "\u2602\uFE0F"), ("V", "Van", "\U0001F690"),
-    ("W", "Watch", "\u231A"),          ("X", "X-ray", "\U0001FA7B"),
-    # No yak emoji exists, and the nearest (buffalo, ox) is a different animal.
-    # This is a FILE instead: drop pictures/yak.png in and it is used. Until
-    # then picture_image returns None and the screen shows the letter alone,
-    # exactly as it did before -- a missing file is never a broken screen.
-    ("Y", "Yak", "yak.png"),           ("Z", "Zebra", "\U0001F993"),
+    ("A", "Apple", "apple.png"),        ("B", "Ball", "ball.png"),
+    ("C", "Cat", "cat.png"),            ("D", "Dog", "dog.png"),
+    ("E", "Elephant", "elephant.png"),  ("F", "Fish", "fish.png"),
+    ("G", "Grapes", "grapes.png"),      ("H", "Hat", "hat.png"),
+    ("I", "Ice cream", "Ice-Cream.png"), ("J", "Juice", "juice.png"),
+    ("K", "Kite", "kite.png"),          ("L", "Lion", "lion.png"),
+    ("M", "Monkey", "monkey.png"),      ("N", "Nest", "nest.png"),
+    ("O", "Orange", "orange.png"),      ("P", "Parrot", "parrot.png"),
+    ("Q", "Queen", "queen.png"),        ("R", "Rabbit", "rabit.png"),
+    ("S", "Sun", "sun.png"),            ("T", "Tiger", "tiger.png"),
+    ("U", "Umbrella", "umbrella.png"),  ("V", "Van", "van.png"),
+    ("W", "Watch", "watch.png"),        ("X", "Xmas", "X-max.png"),
+    ("Y", "Yak", "yak.png"),            ("Z", "Zebra", "zebra.png"),
 ]
+
+# What the voice should say where it differs from what the card shows. "Xmas"
+# is what the chart prints under the tree, and it is what a child will see
+# written -- but read aloud it comes out "eks-mas", which teaches them a word
+# that does not exist. The card keeps the spelling; the voice says the word.
+SPOKEN_WORDS = {"Xmas": "Christmas tree"}
+
+
+def spoken_word(word):
+    """The word as it should be SAID. Same as the word, nearly always."""
+    return SPOKEN_WORDS.get(word, word)
 
 # स्वर -- the vowels, taught first.
 HINDI_VOWELS = [
@@ -620,19 +713,57 @@ def matches_answer(said, expected):
     return bool(parts) and all(p in " ".join(spoken) for p in parts)
 
 
-def number_matches(said, value):
-    """True when a spoken answer means `value`, as a digit or a name in either
-    language. Children answer counting questions in whichever language is in
-    their head, so both are accepted whatever the question was asked in."""
+# Every way a number can arrive in a transcript: the digits, the English name
+# and the Hindi name. Built once, longest form first, so "twenty one" is matched
+# in preference to the "twenty" inside it.
+_NUMBER_LOOKUP = None
+# Neither \b nor \w behaves the way this needs across Devanagari and digits
+# together, so the boundary is spelled out.
+_NUMBER_EDGE = "0-9A-Za-z\u0900-\u097F"
+
+
+def _number_lookup():
+    global _NUMBER_LOOKUP
+    if _NUMBER_LOOKUP is None:
+        table = {}
+        for index, (english, hindi) in enumerate(NUMBER_NAMES):
+            value = index + 1
+            table[english.lower()] = value
+            table[hindi] = value
+            table[str(value)] = value
+        forms = sorted(table, key=len, reverse=True)
+        pattern = re.compile(
+            f"(?<![{_NUMBER_EDGE}])(?:" + "|".join(re.escape(f) for f in forms)
+            + f")(?![{_NUMBER_EDGE}])")
+        _NUMBER_LOOKUP = (table, pattern)
+    return _NUMBER_LOOKUP
+
+
+def spoken_numbers(said):
+    """Every number in an utterance, in the order it was said.
+
+    Digits and names, both languages, because children answer counting questions
+    in whichever language is in their head whatever the question was asked in.
+    """
     if not said:
-        return False
-    lowered = said.lower()
-    if re.search(rf"(?<!\d){value}(?!\d)", lowered):
-        return True
-    english = number_name(value, "en")
-    hindi = number_name(value, "hi")
-    return bool((english and matches_answer(said, english))
-                or (hindi and matches_answer(said, hindi)))
+        return []
+    table, pattern = _number_lookup()
+    return [table[match.group(0).lower()]
+            for match in pattern.finditer(said.lower())]
+
+
+def number_matches(said, value):
+    """True when a spoken answer means `value`.
+
+    The LAST number said is the answer, not any number in the sentence. A child
+    asked how many apples there are does not reply "fifteen": they count, out
+    loud, "one, two, three..." and the number they land on is what they mean.
+    Matching anywhere in the utterance -- what this used to do -- marked that
+    child correct on a question whose answer was three, because "three" went
+    past on the way. Reading the last one marks what they actually decided.
+    """
+    numbers = spoken_numbers(said)
+    return bool(numbers) and numbers[-1] == value
 
 
 def test_questions(kind, count=5):
@@ -641,13 +772,28 @@ def test_questions(kind, count=5):
     would be unanswerable."""
     if kind == "count":
         values = random.sample(range(1, min(21, COUNT_MAX + 1)), min(count, 20))
-        return [{"kind": "count", "value": v} for v in values]
+        # The second half of a counting question is one step off the number they
+        # just counted -- and the step goes BOTH WAYS, chosen per question. Always
+        # adding taught the child the shape of the question rather than the idea
+        # behind it: after two of them they answer "one more than that" without
+        # looking. Taking one away is the same idea run backwards and it is the
+        # other half of what a KG child is learning.
+        #
+        # One apple never has one taken away: that lands on zero, which is a
+        # harder idea than either of these and has no picture a child can count.
+        return [{"kind": "count", "value": v,
+                 "step": 1 if v < 2 else random.choice((1, -1))}
+                for v in values]
     if kind == "hi":
         bank = [e for e in HINDI_ALPHABET if e[3]]
         picked = random.sample(bank, min(count, len(bank)))
         return [{"kind": "hi", "letter": e[0], "word": e[1], "picture": e[3]}
                 for e in picked]
-    bank = [e for e in ENGLISH_ALPHABET if e[2]]
+    # Anything the voice cannot read as it is written is left out. A test asks
+    # for the word BACK -- named, then spelled -- and "Xmas" would be asked for
+    # as "Christmas tree" and marked against the letters X-M-A-S. It is a fine
+    # thing to show on a chart and an unfair thing to be tested on.
+    bank = [e for e in ENGLISH_ALPHABET if e[2] and e[1] not in SPOKEN_WORDS]
     picked = random.sample(bank, min(count, len(bank)))
     return [{"kind": "en", "letter": e[0], "word": e[1], "picture": e[2]}
             for e in picked]
