@@ -72,6 +72,9 @@ subprocess_lock = threading.Lock()
 
 # ---------------------------------------------------------------- media
 media_active = threading.Event()   # a song or video is playing via mpv
+# Set while the track is turned down for a wake check. The barge-in detector
+# treats a ducked track as silence, so it never learns the ducked level.
+media_ducked = threading.Event()
 media_process = None
 media_procs = []                   # [yt-dlp, mpv] for the current playback
 # When that player came up. Read by the barge-in path, which must not listen

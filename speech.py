@@ -44,7 +44,7 @@ from config import (BARGE_IN_DEBUG, BARGE_IN_ENABLED, BARGE_IN_LEAD_S,
                     WAKE_BARE_NAME_MAX_WORDS, WAKE_LISTEN_TIMEOUT_S, WAKE_MAX_LEAD_WORDS,
                     WAKE_PHRASE_LIMIT_S, WAKE_SEED_PROMPT, WAKE_SEED_PROMPT_ASLEEP,
                     WAKE_SLEEP_MAX_WORDS, WAKE_STT_MODEL)
-from state import audio_queue, media_active, playback_active
+from state import audio_queue, media_active, media_ducked, playback_active
 
 def wake_word_match(text, pattern, asleep=False):
     """The regex hit, but only when it sits where a real wake word sits.
@@ -786,7 +786,15 @@ class VoiceListener:
             if not whole:
                 continue
             speaking = playback_active.is_set()
-            playing = speaking or media_active.is_set()
+            # A track turned down for a wake check counts as NOT playing. If it
+            # counted, the reference slid down to the ducked level over the check,
+            # the song coming back at full volume was "a voice louder than the
+            # track", and she ducked again -- replayed through _track_barge_in
+            # with no voice in the room, it re-armed 240ms after every restore,
+            # which is the music going low, normal, low on its own. Not playing
+            # resets the detector, so it re-seeds on the full-volume track.
+            playing = speaking or (media_active.is_set()
+                                   and not media_ducked.is_set())
             # Her own voice outranks the track when both are somehow audible:
             # cutting her off is the disruptive one, so it keeps the strict bar.
             margin = BARGE_IN_MARGIN if speaking else MEDIA_BARGE_IN_MARGIN

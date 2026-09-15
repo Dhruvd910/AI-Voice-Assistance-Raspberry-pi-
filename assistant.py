@@ -1865,6 +1865,8 @@ def ai_loop(ui, headless=False):
                     # still hands Whisper a clip recorded into a nearly quiet
                     # room, which is the whole point of doing it here. The track
                     # is only really PAUSED once a wake word is confirmed below.
+                    print("[MEDIA] A voice may be over the track; turning it down "
+                          "to listen for the wake word.", flush=True)
                     suspected = True
                 elif time.time() < media_listen_after:
                     # Poll fast when the VAD can arm the path above, so a voice

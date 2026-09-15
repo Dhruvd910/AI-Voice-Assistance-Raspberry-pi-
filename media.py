@@ -20,7 +20,8 @@ from ddgs import DDGS
 
 import state
 from config import MPV_AUDIO_DEVICE
-from state import media_active, note_media_started, set_playing_state, subprocess_lock
+from state import (media_active, media_ducked, note_media_started, set_playing_state,
+                   subprocess_lock)
 from uibridge import ui_call
 
 # Linux prctl(PR_SET_PDEATHSIG): asks the kernel to signal a child when its
@@ -576,14 +577,20 @@ def media_duck_volume():
     current = mpv_command(["get_property", "volume"])
     if current is None:
         return None
+    # Before the volume drops, so the barge-in detector never measures the
+    # track at its ducked level -- see the media_ducked note in speech.py.
+    media_ducked.set()
     mpv_command(["set_property", "volume", MEDIA_DUCK_VOLUME])
     return current
 
 def media_restore_volume(previous):
     """Put back what media_duck_volume() turned down."""
-    if previous is None or not media_active.is_set():
-        return
-    mpv_command(["set_property", "volume", previous])
+    try:
+        if previous is None or not media_active.is_set():
+            return
+        mpv_command(["set_property", "volume", previous])
+    finally:
+        media_ducked.clear()
 
 def stop_media_playback():
     """Stops music/video without touching Liza's own speech pipeline, which is
@@ -609,6 +616,7 @@ def stop_media_playback():
             try: proc.kill()
             except Exception: pass
     media_active.clear()
+    media_ducked.clear()
     set_playing_state(None)
     return True
 
