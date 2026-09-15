@@ -1087,6 +1087,10 @@ def execute_action(name, param, language="en"):
         reason, detail = show_visual_action(param)
     elif name == "hide_visual":
         reason, detail = hide_visual_action()
+    elif name == "enlarge_visual":
+        reason, detail = enlarge_visual_action(True)
+    elif name == "shrink_visual":
+        reason, detail = enlarge_visual_action(False)
     else:
         print(f"[ACTION] Unknown action {name!r}.", flush=True)
 
@@ -1110,7 +1114,8 @@ def execute_action(name, param, language="en"):
 # holding the picture back until the sentence describing it has finished is the
 # whole of the delay. Drawing it costs about a twentieth of a second, so it
 # lands while she is still on her first word.
-IMMEDIATE_ACTIONS = {"stop_media", "close_file", "show_visual", "hide_visual"}
+IMMEDIATE_ACTIONS = {"stop_media", "close_file", "show_visual", "hide_visual",
+                     "enlarge_visual", "shrink_visual"}
 
 
 def show_visual_action(param):
@@ -1176,6 +1181,21 @@ def hide_visual_action():
     state.current_visual = None
     state.current_graph = None
     ui_invoke("clear_visual")
+    return "ok", ""
+
+def enlarge_visual_action(bigger):
+    """Open the board picture to full screen, or put it back.
+
+    There is a control on the picture for this, and a child on a device they
+    answer by talking to will ask out loud long before they go looking for one.
+
+    Silent when there is nothing on the board: the state block already tells her
+    what is up there, so reaching this with an empty board is her having
+    misread it, and a spoken complaint would only make that louder.
+    """
+    if state.current_visual is None and state.current_graph is None:
+        return "already", ""
+    ui_invoke("enlarge_current" if bigger else "shrink_current")
     return "ok", ""
 
 def device_state_block():

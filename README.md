@@ -13,6 +13,7 @@ A local-first, multimodal AI assistant designed for the Raspberry Pi. Liza combi
   * **Re-Tell Mode:** Step-by-step active examiner mode that listens as you explain a topic, validates your statements, and offers feedback.
 * **Physical Hardware Support:** Designed for 5-inch touchscreens (XPT2046 SPI) and supports physical GPIO push-buttons for instant wake-up.
 * **Live Web Search Fallback:** Automatically queries DuckDuckGo for real-time technical answers when needed.
+* **Visuals on the Transcribe Board:** Ask her to show a diagram, an equation, a graph or a picture and it appears on screen — see [Showing Things](#-showing-things-diagrams-equations-graphs--pictures) below.
 
 ---
 
@@ -84,6 +85,55 @@ to finish a sentence. While media is playing, wake her first as described above.
 
 ---
 
+## 🖼️ Showing Things: Diagrams, Equations, Graphs & Pictures
+
+Ask her to show something and a picture appears on the **transcribe board** — the
+panel on screen that normally shows what she's saying. Tap it to enlarge, tap
+again to close.
+
+| Say | What appears |
+| --- | --- |
+| "show me the water cycle" | A cycle diagram — stages arranged in a ring |
+| "draw the steps of photosynthesis" | A left-to-right flow diagram |
+| "what's the equation for gravity" *(just told, not drawn — see below)* | Spoken only |
+| "show me the equation for gravity" | The formula, typeset properly |
+| "show me y equals x squared" | A **live** graph, with a slider under every number in it |
+| "show me a toucan" | A real photograph |
+
+### The live graph is different from everything else
+
+Ask for a graph of a formula — "y = x^2", "y = m\*x + c" — and instead of a
+picture, you get a small plot with a **slider for every number in the
+expression**. Drag the power on `x^2` and watch it become `x^4` in real time.
+This runs entirely on the Pi: no network call, no delay, redraws on every pixel
+of finger movement. Say "now make it x cubed" and she updates the formula from
+whatever the slider is currently set to.
+
+A graph made of actual data points ("plot 0,0; 1,5; 2,20") or bars
+("Mon=3; Tue=5") is a normal picture instead — sliders only apply to formulas.
+
+### The board stays up so she can explain it
+
+Once something is on the board, it stays there — a follow-up question like
+"explain it" or "what's the second stage" talks you through the *same* picture
+instead of clearing it. If the diagram has stages, the one she's currently
+explaining lights up as she names it. She takes the picture down herself once
+the conversation moves to something unrelated.
+
+### How the picture gets made
+
+If you set a `FAL_KEY` in `.env` (a free key from
+[fal.ai](https://fal.ai/dashboard/keys)), every diagram, equation, graph and
+photo is drawn by **Seedream 4**, an AI image model — noticeably better
+looking than the built-in renderer. Without a key, or if the network call
+fails or times out, everything falls back to being drawn locally on the Pi
+(cycles and flow diagrams by hand, equations and point-graphs via matplotlib) —
+nothing breaks, it just looks plainer. The live-graph slider above is **never**
+sent over the network either way; it has to redraw instantly, so it's always
+drawn on-device.
+
+---
+
 ## ⚙️ Optional Settings
 
 Set these in `.env`:
@@ -98,6 +148,8 @@ Set these in `.env`:
 | `BARGE_MEDIA_GAIN` | `1.8` | How much louder than the music your voice must be to wake her. Raise it if playback pauses by itself; lower it if the wake word gets missed |
 | `BARGE_MAX_NO_SPEECH` | `0.35` | Reject a barge-in capture when Whisper is this unsure it was speech at all |
 | `BARGE_MIN_LOGPROB` | `-0.75` | Reject a barge-in capture below this confidence |
+| `FAL_KEY` | *(unset)* | Enables AI-drawn visuals via Seedream 4. Free key at [fal.ai](https://fal.ai/dashboard/keys). Without it, diagrams are drawn locally on the Pi instead |
+| `VISUAL_SEEDREAM_KINDS` | all kinds | Comma-separated list to limit which visual types use Seedream, e.g. `picture,photo,image,cycle,steps` to keep equations/graphs drawn locally (more reliably correct, less pretty) |
 
 > **Why those last three exist:** the microphone sits next to the speaker, so
 > anything it hears past a playing track is mostly the track itself, and Whisper
