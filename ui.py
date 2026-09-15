@@ -643,6 +643,87 @@ def emoji_image(char, px):
     return image
 
 
+# Hindi has to be drawn by Pillow, not by Tk. Tk 8.6 on X11 puts characters down
+# in the order they are stored and does no shaping at all, so the ि in तितली
+# lands after its consonant instead of before it and the ट्ट in लट्टू comes out as
+# two whole letters with a halant hanging between them. Measured on this Pi: Tk
+# drew लट्टू 142px wide where the shaped word is 96px. To a child learning to
+# read, that is a misspelling. Pillow with libraqm shapes it properly, so text
+# with any Devanagari in it is rasterised here and placed as an image instead.
+DEVANAGARI_FONTS = {
+    False: "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+    True: "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
+}
+_text_cache = {}
+
+
+def has_devanagari(text):
+    return any("ऀ" <= ch <= "ॿ" for ch in text or "")
+
+
+def _wrap_shaped(text, font, width, max_lines=None):
+    """Lines of `text` no wider than `width`, broken at spaces like Tk's width=.
+
+    Past `max_lines` the last kept line ends in an ellipsis, trimmed a WORD at a
+    time: cutting Devanagari by code point can strand a matra or a halant."""
+    lines = []
+    for paragraph in text.split("\n"):
+        line = ""
+        for word in paragraph.split():
+            trial = f"{line} {word}" if line else word
+            if line and font.getlength(trial) > width:
+                lines.append(line)
+                line = word
+            else:
+                line = trial
+        lines.append(line)
+    if max_lines and len(lines) > max_lines:
+        lines = lines[:max_lines]
+        words = lines[-1].split()
+        while len(words) > 1 and font.getlength(" ".join(words) + "…") > width:
+            words.pop()
+        lines[-1] = " ".join(words) + "…"
+    return lines
+
+
+def devanagari_image(text, px, bold, fill, width=None, justify="center",
+                     max_lines=None):
+    """Shaped text as a transparent PIL image, sized like Tk's line box, or None.
+
+    `width`, `justify` and `max_lines` do what create_text's width= and
+    justify= do, plus _ellipsize's job when max_lines is set."""
+    key = (text, px, bold, fill, width, justify, max_lines)
+    if key in _text_cache:
+        return _text_cache[key]
+    try:
+        from PIL import ImageFont
+        font = ImageFont.truetype(DEVANAGARI_FONTS[bold], px,
+                                  layout_engine=ImageFont.Layout.RAQM)
+        lines = _wrap_shaped(text, font, width, max_lines) if width else [text]
+        ascent, descent = font.getmetrics()
+        line_h = ascent + descent
+        boxes = [font.getbbox(line or " ", anchor="ls") for line in lines]
+        lengths = [max(box[2], font.getlength(line)) for box, line in zip(boxes, lines)]
+        above = max(ascent, -boxes[0][1])
+        below = max(descent, boxes[-1][3])
+        x_off = 2 - min(0, min(box[0] for box in boxes))
+        inner = math.ceil(max(lengths))
+        image = Image.new("RGBA", (inner + x_off + 2,
+                                   above + line_h * (len(lines) - 1) + below),
+                          (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        for row, (line, length) in enumerate(zip(lines, lengths)):
+            x = x_off + {"left": 0, "right": inner - length}.get(
+                justify, (inner - length) / 2)
+            draw.text((x, above + row * line_h), line, font=font, fill=fill,
+                      anchor="ls")
+    except Exception as exc:
+        print(f"[TEXT] Could not shape {text!r} ({exc}).", flush=True)
+        image = None
+    _text_cache[key] = image
+    return image
+
+
 def _rgb(colour):
     return tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
 
@@ -876,12 +957,53 @@ class TutorUI:
         self.set_now_playing(None)
         self.refresh_profile_chip()
 
-        self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
+        # Escape leaves fullscreen for good, so _hold_fullscreen stops re-asking.
+        self._fullscreen_wanted = True
+        self.root.bind("<Escape>", self._leave_fullscreen)
         self.root.bind("<Button-1>", self.tap_to_wake)
 
         self._animate()
         self._tick_clock()
         self._follow_spoken_captions()
+        self.root.after(400, self._hold_fullscreen)
+
+    # The fullscreen request at the top of __init__ is made before the window
+    # exists, and labwc (through Xwayland) honours that only some of the time. On
+    # the Pi 4, where startup is slow, she came up as an ordinary 800x418 window
+    # parked under the 62px taskbar -- xwininfo showed no _NET_WM_STATE_FULLSCREEN
+    # -- while the start before it had been fullscreen. So once the window is up,
+    # check what the screen actually gave her and ask again until it is all of it.
+    FULLSCREEN_TRIES = 10
+
+    def _hold_fullscreen(self, attempt=0):
+        if not self._fullscreen_wanted:
+            return
+        root = self.root
+        try:
+            filled = (root.winfo_ismapped() and root.winfo_rootx() <= 0
+                      and root.winfo_rooty() <= 0
+                      and root.winfo_width() >= root.winfo_screenwidth()
+                      and root.winfo_height() >= root.winfo_screenheight())
+            if filled:
+                if attempt:
+                    print(f"[UI] Fullscreen after {attempt} re-request(s).", flush=True)
+                return
+            if attempt >= self.FULLSCREEN_TRIES:
+                print("[UI] The window manager would not make Liza fullscreen "
+                      f"(window {root.winfo_width()}x{root.winfo_height()}"
+                      f"+{root.winfo_rootx()}+{root.winfo_rooty()}).", flush=True)
+                return
+            # Off, then on: Tk sends nothing for a state it believes it is in.
+            root.attributes("-fullscreen", False)
+            root.after(60, lambda: self._fullscreen_wanted
+                       and root.attributes("-fullscreen", True))
+        except tk.TclError:
+            return
+        root.after(800, lambda: self._hold_fullscreen(attempt + 1))
+
+    def _leave_fullscreen(self, event=None):
+        self._fullscreen_wanted = False
+        self.root.attributes("-fullscreen", False)
 
     # ---------- drawing helpers ----------
     def _pick_font(self):
@@ -930,6 +1052,31 @@ class TutorUI:
         self._overlay_photos.append(photo)
         return self.canvas.create_image(cx, cy, image=photo, anchor="center",
                                         tags=self.OVERLAY_TAG)
+
+    def _overlay_text(self, x, y, text, size, bold=False, fill=COL_TEXT,
+                      anchor="center", tags=None, width=None, justify="center",
+                      max_lines=None):
+        """canvas.create_text for modal screens, except Hindi comes out spelled
+        right -- see devanagari_image. Latin text is left to Tk unchanged.
+
+        `width` wraps like create_text's; `max_lines=1` cuts to one line with an
+        ellipsis, which is what _ellipsize does for Tk text."""
+        tags = tags or self.OVERLAY_TAG
+        if has_devanagari(text):
+            px = max(1, round(size * self.root.winfo_fpixels("1p")))
+            image = devanagari_image(text, px, bold, fill, width=width,
+                                     justify=justify, max_lines=max_lines)
+            if image is not None:
+                photo = ImageTk.PhotoImage(image)
+                self._overlay_photos.append(photo)
+                return self.canvas.create_image(x, y, image=photo, anchor=anchor,
+                                                tags=tags)
+        font = self._font(size, bold)
+        if width and max_lines == 1:
+            text, width = self._ellipsize(text, font, width), None
+        return self.canvas.create_text(x, y, text=text, font=font, fill=fill,
+                                       anchor=anchor, tags=tags, width=width or 0,
+                                       justify=justify)
 
     def _place_overlay_asset(self, image, x, y, tag=None):
         """Artwork on a modal screen. Cleared with the rest of the overlay.
@@ -2023,6 +2170,45 @@ class TutorUI:
     VISUAL_TAG = "boardvisual"
     BIG_VISUAL_TAG = "bigvisual"
 
+    # The board picture is 309x184 and the way into it used to be seven pixels
+    # of faint grey reading "tap to enlarge", which is not an affordance so much
+    # as a rumour. These are drawn from canvas primitives rather than PNG art so
+    # that a missing asset cannot leave a picture with no visible way to open it.
+    ICON_R = 15          # half the tap target: 30px square, sized for a child
+    ICON_GLYPH = 9       # half the glyph inside it
+    ICON_ARM = 6         # length of each corner-bracket arm
+
+    def _expand_icon(self, cx, cy, tag):
+        """Four corner brackets -- the fullscreen glyph -- on a white chip.
+
+        The chip is not decoration: the glyph sits on top of whatever the
+        picture happens to be, and indigo on a dark photograph is unreadable.
+        """
+        self._round_rect(cx - self.ICON_R, cy - self.ICON_R,
+                         cx + self.ICON_R, cy + self.ICON_R, 8,
+                         fill="#FFFFFF", outline="#D8E0F0", tags=tag)
+        g, a = self.ICON_GLYPH, self.ICON_ARM
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            x, y = cx + g * sx, cy + g * sy
+            self.canvas.create_line(x, y, x - a * sx, y, fill=COL_INDIGO,
+                                    width=2, capstyle="round", tags=tag)
+            self.canvas.create_line(x, y, x, y - a * sy, fill=COL_INDIGO,
+                                    width=2, capstyle="round", tags=tag)
+
+    def _close_icon(self, cx, cy, tag):
+        """A cross, in the same rose the Stop button uses.
+
+        Whatever else a child cannot read yet, they can read this one.
+        """
+        self._round_rect(cx - self.ICON_R, cy - self.ICON_R,
+                         cx + self.ICON_R, cy + self.ICON_R, 8,
+                         fill="#FFFFFF", outline="#D8E0F0", tags=tag)
+        g = self.ICON_GLYPH - 1
+        for dx in (-1, 1):
+            self.canvas.create_line(cx - g * dx, cy - g, cx + g * dx, cy + g,
+                                    fill=COL_STOP, width=3, capstyle="round",
+                                    tags=tag)
+
     def show_visual(self, path, steps=None):
         """Put a rendered diagram, equation, graph or picture on the board.
 
@@ -2065,9 +2251,12 @@ class TutorUI:
                          tags=self.VISUAL_TAG)
         self.canvas.create_image(cx, cy, image=photo, anchor="center",
                                  tags=self.VISUAL_TAG)
-        self.canvas.create_text(x1 - 2, y1 + 2, text="tap to enlarge", anchor="se",
-                                font=self._font(7), fill=COL_TEXT_FAINT,
-                                tags=self.VISUAL_TAG)
+        # Drawn after the image so it sits on top of it, and inside VISUAL_TAG
+        # so the tag_bind below makes it tappable and clear_visual sweeps it up.
+        # The whole picture stays tappable too -- this marks the door, it does
+        # not narrow it.
+        self._expand_icon(cx + fitted.width / 2 - 17,
+                          cy - fitted.height / 2 + 17, self.VISUAL_TAG)
         if self._visual_steps:
             self._draw_step_strip((x0, y1 - strip, x1, y1), self.VISUAL_TAG,
                                   small=True)
@@ -2102,6 +2291,9 @@ class TutorUI:
         if self._visual_steps:
             self._draw_step_strip((0, UI_H - 30 - strip, UI_W, UI_H - 30),
                                   self.BIG_VISUAL_TAG, small=False)
+        # Tapping anywhere still closes this. The cross is for the child who
+        # does not know that yet and is looking for the way out.
+        self._close_icon(UI_W - 26, 26, self.BIG_VISUAL_TAG)
         self.canvas.tag_raise(self.BIG_VISUAL_TAG)
         self.canvas.tag_bind(self.BIG_VISUAL_TAG, "<Button-1>",
                              lambda e: self.hide_big_visual())
@@ -2112,6 +2304,20 @@ class TutorUI:
         self._step_views.pop(self.BIG_VISUAL_TAG, None)
         self._big_visual_photos = []
         return "break"
+
+    # THE SPOKEN WAY IN AND OUT. A child who wants a closer look says "make it
+    # bigger" -- they do not go looking for a control, and on a device answered
+    # by talking to it that is the first thing they will try. These take the
+    # kind of thing on the board off the model's hands: it asks for bigger, and
+    # whichever of the two enlargers applies is picked here.
+    def enlarge_current(self):
+        if self._graph is not None:
+            return self._enlarge_graph()
+        return self._enlarge_visual()
+
+    def shrink_current(self):
+        self.hide_big_visual()
+        self.hide_big_graph()
 
     def clear_visual(self):
         """Take the picture off the board. It belonged to the last question."""
@@ -2382,13 +2588,18 @@ class TutorUI:
             self._draw_slider(view, tag, index, knob, small, row,
                               y1 - pad - (len(sliders) - index) * row)
         if small:
-            # The same words in the same corner as a picture's hint. From the
-            # student's side this IS the picture, and a board that labels the
+            # The same glyph in the same corner as a picture's. From the
+            # student's side this IS the picture, and a board that marks the
             # same gesture two different ways teaches them to ignore both.
-            self.canvas.create_text(x1 - 2, y1 + 2, text="tap to enlarge",
-                                    anchor="se", font=self._font(7),
-                                    fill=COL_TEXT_FAINT,
-                                    tags=(tag,))
+            #
+            # It carries its own binding because the only thing that opens the
+            # small graph otherwise is the curve, and a 2px line is not a target
+            # a child can hit. Drawn last so its chip covers the tail of a long
+            # title rather than fighting with it.
+            icon = tag + "expand"
+            self._expand_icon(x1 - 17, y0 + 17, icon)
+            self.canvas.addtag_withtag(tag, icon)
+            self.canvas.tag_bind(icon, "<Button-1>", self._enlarge_graph)
 
     def _draw_graph_frame(self, view, tag, small):
         """Grid, axes and the numbers along them. Fixed for the life of a view.
@@ -2432,11 +2643,22 @@ class TutorUI:
             return
         for item in view.get("lines", []):
             self.canvas.delete(item)
+        # A new canvas item lands on top of EVERYTHING. Dragging the big slider
+        # repaints the board's copy too, so its curve was being drawn over the
+        # enlarged graph -- stray lines across the full-screen view, a fresh
+        # set on every drag -- and over its own slider rows and expand icon.
+        # So the curve is slotted back in just above its view's grid each time.
+        # The first repaint comes straight after _draw_graph_frame, so the item
+        # on top of this view at that moment IS the last line of the grid.
+        if "under" not in view:
+            view["under"] = self.canvas.find_withtag(tag)[-1]
         view["lines"] = [
             self.canvas.create_line(*run, fill=self.GRAPH_LINE, smooth=True,
                                     width=2 if view["small"] else 4,
                                     tags=(tag, tag + "curve"))
             for run in self._graph_curve(view)]
+        if view["lines"]:
+            self.canvas.tag_raise(tag + "curve", view["under"])
         self.canvas.tag_bind(tag + "curve", "<Button-1>",
                              self._enlarge_graph if view["small"] else
                              (lambda e: "break"))
@@ -2530,6 +2752,13 @@ class TutorUI:
         self.canvas.create_text(UI_W / 2, UI_H - 16, text="tap the dark edge to close",
                                 font=self._font(9), fill="#8891A8",
                                 tags=(self.BIG_GRAPH_TAG,))
+        # "Tap the dark edge" is a rule you have to be told. The cross is one
+        # you already know, and it needs its own binding because the close here
+        # lives on the backdrop, not on the card or anything drawn over it.
+        close = self.BIG_GRAPH_TAG + "close"
+        self._close_icon(UI_W - 26, 26, close)
+        self.canvas.addtag_withtag(self.BIG_GRAPH_TAG, close)
+        self.canvas.tag_bind(close, "<Button-1>", lambda e: self.hide_big_graph())
         self.canvas.tag_raise(self.BIG_GRAPH_TAG)
         return "break"
 
@@ -2938,19 +3167,13 @@ class TutorUI:
             if art is not None:
                 self._place_overlay_asset(art, *backdrop_at)
         if chalk:
-            self.canvas.create_text(BOARD_MID, 90, text=title,
-                                    font=self._font(19, True), fill=CHALK,
-                                    tags=self.OVERLAY_TAG)
+            self._overlay_text(BOARD_MID, 90, title, 19, bold=True, fill=CHALK)
             if subtitle:
-                self.canvas.create_text(BOARD_MID, 114, text=subtitle,
-                                        font=self._font(10), fill=CHALK_DIM,
-                                        tags=self.OVERLAY_TAG)
+                self._overlay_text(BOARD_MID, 114, subtitle, 10, fill=CHALK_DIM)
             return
-        self.canvas.create_text(UI_W / 2, 40, text=title, font=self._font(20, True),
-                                fill=COL_TEXT, tags=self.OVERLAY_TAG)
+        self._overlay_text(UI_W / 2, 40, title, 20, bold=True, fill=COL_TEXT)
         if subtitle:
-            self.canvas.create_text(UI_W / 2, 68, text=subtitle, font=self._font(10),
-                                    fill=COL_TEXT_DIM, tags=self.OVERLAY_TAG)
+            self._overlay_text(UI_W / 2, 68, subtitle, 10, fill=COL_TEXT_DIM)
 
     def _overlay_button(self, x0, y0, x1, y1, label, command, fill=COL_INDIGO,
                         text_colour="#FFFFFF", radius=12, size=13, sub=None,
@@ -3629,9 +3852,8 @@ class TutorUI:
         # half that is not, and the word is centred right on that seam. Navy is
         # the one colour that holds up across the whole panel, and it is the
         # same navy as the buttons on the floor.
-        self.canvas.create_text(letter_x, letter_y, text=letter,
-                                font=self._font(56, True), fill=CLASS_BLUE,
-                                tags=self.OVERLAY_TAG)
+        self._overlay_text(letter_x, letter_y, letter, 56, bold=True,
+                           fill=CLASS_BLUE)
         if reading:
             # The Latin reading is for the adult sitting alongside, not the child.
             self.canvas.create_text(letter_x, 252, text=f"({reading})",
@@ -3643,9 +3865,8 @@ class TutorUI:
         # with a caption rather than as two pictures and some text.
         self.canvas.create_line(card[0] + 30, 282, card[2] - 30, 282,
                                 fill="#FFFFFF", width=3, tags=self.OVERLAY_TAG)
-        self.canvas.create_text(card_mid, 308, text=word.upper(),
-                                font=self._font(19, True), fill=CLASS_BLUE,
-                                tags=self.OVERLAY_TAG)
+        self._overlay_text(card_mid, 308, word.upper(), 19, bold=True,
+                           fill=CLASS_BLUE)
 
         self._kg_class_button(self.KG_ROW_4[0], "Back", self.show_kg_home,
                               arrow="left")
@@ -4168,17 +4389,14 @@ class TutorUI:
                       question["kind"], "Now spell it")}[self._kg_test_stage]
         status = self._kg_test_listening or self._kg_test_note
         self._kg_glass_card((150, 276, 650, 352 if status else 326), radius=18)
-        self.canvas.create_text(UI_W / 2, 300, text=prompt,
-                                font=self._font(16, True), fill=CLASS_BLUE,
-                                tags=self.OVERLAY_TAG)
+        self._overlay_text(UI_W / 2, 300, prompt, 16, bold=True, fill=CLASS_BLUE)
         if self._kg_test_listening:
             self.canvas.create_text(UI_W / 2, 332, text="I'm listening...",
                                     font=self._font(13, True), fill="#92400E",
                                     tags=self.OVERLAY_TAG)
         elif self._kg_test_note:
-            self.canvas.create_text(UI_W / 2, 332, text=self._kg_test_note,
-                                    font=self._font(13, True), fill=CLASS_BLUE,
-                                    tags=self.OVERLAY_TAG)
+            self._overlay_text(UI_W / 2, 332, self._kg_test_note, 13, bold=True,
+                               fill=CLASS_BLUE)
 
         # The score takes the left column, in the exact box the Ask pill stands
         # in on the lessons -- there is no Ask button during a test, and one
@@ -5072,10 +5290,8 @@ class TutorUI:
         self._kg_class_screen("kg_story", self._kg_story["title"], subtitle)
 
         if asked:
-            self.canvas.create_text(BOARD_MID, 186, text=self._kg_story["question"],
-                                    width=366, justify="center",
-                                    font=self._font(16, True), fill=CHALK,
-                                    tags=self.OVERLAY_TAG)
+            self._overlay_text(BOARD_MID, 186, self._kg_story["question"], 16,
+                               bold=True, fill=CHALK, width=366)
             # Below the board, on the wall, and big: this is the only thing on
             # the screen a child is being asked to press.
             self._overlay_button(209, 278, 397, 362, "YES",
@@ -5092,19 +5308,15 @@ class TutorUI:
             # it, and it is not a difficult choice between those two.
             previous, _tone = self._kg_caption_at(beat - 1)
             if previous:
-                self.canvas.create_text(
-                    BOARD_MID, 138,
-                    text=self._ellipsize(previous, self._font(9), 356),
-                    justify="center", font=self._font(9),
-                    fill=CHALK_DIM, tags=self.OVERLAY_TAG)
+                self._overlay_text(BOARD_MID, 138, previous, 9, fill=CHALK_DIM,
+                                   width=356, max_lines=1)
 
             text, tone = self._kg_caption_at(beat)
             if text is None:
                 text, tone = self._kg_story["title"], "storyteller"
             colour, size = self.KG_CHALK_TONE.get(tone, (CHALK, 15))
-            self.canvas.create_text(BOARD_MID, 196, text=text, width=366,
-                                    justify="center", font=self._font(size, True),
-                                    fill=colour, tags=self.OVERLAY_TAG)
+            self._overlay_text(BOARD_MID, 196, text, size, bold=True, fill=colour,
+                               width=366)
 
             # One dot per beat, filled as far as she has read. A pre-reader
             # cannot read "beat 4 of 10", but they can see four lit dots.
@@ -5157,6 +5369,8 @@ class HeadlessUI:
     def show_visual(self, path, steps=None):
         print(f"[UI] (headless) visual: {path} steps={steps or []}", flush=True)
     def show_graph(self, spec): print(f"[UI] (headless) graph: {spec['source']}", flush=True)
+    def enlarge_current(self): pass
+    def shrink_current(self): pass
     def clear_visual(self): pass
     def clear_transcript(self): pass
     def set_weather(self, reading): pass
