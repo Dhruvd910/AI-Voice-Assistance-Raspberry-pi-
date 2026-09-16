@@ -177,9 +177,10 @@ liza books ingest       # read everything into the index
 liza books status
 ```
 
-NCERT's server cuts large downloads short, and a cut-off PDF or zip cannot be
-read at all — so `repair` and `zips` come first. Both work from the NCERT file
-names, and replace a broken copy only once the new one opens.
+A PDF or zip that will not open is usually one still being copied in — check
+its size a minute apart first. One that really is cut off can be fetched again
+by `repair` or `zips`, which work from the NCERT file names and replace a broken
+copy only once the new one opens.
 
 **ICSE books cannot be fetched.** CISCE does not publish them; they are
 commercial books from Selina, Frank and others and there is no legal download.

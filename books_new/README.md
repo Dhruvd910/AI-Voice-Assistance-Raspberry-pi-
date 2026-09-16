@@ -26,14 +26,18 @@ even `pilotical_science` are all understood. Deeper folders are fine too. The
 The folder name decides the subject. Where it names none, an NCERT file name
 decides instead: `jess401.pdf` is Class 10 Civics wherever it is put.
 
-## When downloads went wrong
+## A book that will not read
 
-NCERT's server cuts large downloads short. A cut-off PDF has no ending, so not
-one word of it can be read, and a cut-off zip opens as nothing at all.
+First make sure it has finished arriving. A PDF or zip still being copied in
+looks exactly like a broken one -- no ending, so not a word of it can be read,
+and a zip opens as nothing -- and it is fine a few minutes later. Compare its
+size a minute apart before doing anything.
+
+A file that really was cut off can be fetched again from NCERT by its name:
 
 ```bash
-liza books repair       # re-fetch every NCERT PDF that was cut off
-liza books zips         # unpack zips, or fetch the book a broken zip was meant to hold
+liza books repair       # re-fetch every NCERT PDF that will not open
+liza books zips         # unpack zips, or fetch the book a broken zip names
 ```
 
 Both work from the NCERT file names, so they only help with NCERT books. A broken
