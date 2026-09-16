@@ -1054,6 +1054,73 @@ def fetch_book(entry, force=False):
     return got
 
 
+# A file NCERT named: five code characters and a two-digit chapter.
+RE_NCERT_FILE = re.compile(r'^([a-l][ehu][a-z]{2}\d)(\d{2})$', re.IGNORECASE)
+
+
+def tidy(root=None, dry_run=False):
+    """Move NCERT files into the folder the catalogue says, and drop the empties.
+
+    The subject a book is filed under is decided when it is FETCHED, from the
+    catalogue as it stood that day. Correct the catalogue -- and it has been
+    corrected, 203 books of 558 -- and everything already on the disk is still
+    filed under the old answer, so the same book appears under two subjects
+    depending on when it was downloaded. ingest reads the subject off the path,
+    so that drift goes straight into what she says.
+
+    Explicit rather than automatic, and keyed on the FILENAME being an NCERT
+    code: a book somebody filed by hand under a subject of their own choosing
+    is not something this may quietly move.
+    """
+    root = root or BOOKS_DIR
+    known = {entry["code"]: entry for entry in catalogue()}
+    if not known:
+        print("[BOOKS] No catalogue, so there is nothing to tidy against.",
+              flush=True)
+        return 0
+    moved = 0
+    for base, _dirs, files in os.walk(root):
+        for name in sorted(files):
+            stem, extension = os.path.splitext(name)
+            match = RE_NCERT_FILE.match(stem)
+            if not match or extension.lower() != ".pdf":
+                continue
+            entry = known.get(match.group(1).lower())
+            if entry is None:
+                continue
+            board, klass, subject, _chapter = describe(os.path.join(base, name))
+            if subject == entry["subject"] and klass == entry["class"]:
+                continue
+            target_dir = os.path.join(root, board, f"class-{entry['class']}",
+                                      entry["subject"])
+            print(f"[BOOKS] {os.path.relpath(os.path.join(base, name), root)}"
+                  f"  ->  {os.path.relpath(os.path.join(target_dir, name), root)}",
+                  flush=True)
+            moved += 1
+            if dry_run:
+                continue
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+                os.replace(os.path.join(base, name),
+                           os.path.join(target_dir, name))
+            except OSError as exc:
+                print(f"[BOOKS] Could not move {name} ({exc}).", flush=True)
+    # Folders left behind by a book that turned out to be withdrawn: the fetch
+    # makes the directory before it discovers there is nothing to put in it.
+    emptied = 0
+    for base, dirs, files in os.walk(root, topdown=False):
+        if base == root or files or dirs:
+            continue
+        try:
+            os.rmdir(base)
+            emptied += 1
+        except OSError:
+            pass
+    print(f"[BOOKS] {moved} file(s) refiled, {emptied} empty folder(s) removed."
+          + (" (dry run, nothing changed)" if dry_run else ""), flush=True)
+    return moved
+
+
 def fetch(classes=None, medium="en", subjects=None, force=False):
     """Download NCERT books for these classes. Returns (books, chapters).
 
@@ -1101,6 +1168,9 @@ USAGE = """Liza's textbooks.
   books.py catalogue [--refresh]        list the NCERT books that can be fetched
   books.py fetch --class 6 [--class 10] [--medium en|hi] [--subject science]
                                         download those NCERT books
+  books.py tidy [--dry-run]             refile NCERT books under the subject the
+                                        catalogue now gives them, and remove the
+                                        folders left empty by withdrawn books
   books.py ingest [folder]              read every PDF under books/ into the index
   books.py search "why do leaves look green" [--class 6]
   books.py forget [--class 6] [--board ICSE]
@@ -1164,6 +1234,10 @@ def main(argv):
             print("Which class? e.g. books.py fetch --class 6")
             return 2
         fetch(classes=classes, medium=(mediums or ["en"])[0], subjects=subjects)
+        return 0
+
+    if command == "tidy":
+        tidy(dry_run="--dry-run" in rest)
         return 0
 
     if command == "ingest":
