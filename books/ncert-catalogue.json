@@ -179,7 +179,7 @@
   "class": 3,
   "medium": "en",
   "title": "Bansuri - I",
-  "subject": "Bansuri - I"
+  "subject": "Arts"
  },
  {
   "code": "chev1",
@@ -200,7 +200,7 @@
   "class": 3,
   "medium": "hi",
   "title": "Bansuri - I (Hindi)",
-  "subject": "Hindi"
+  "subject": "Arts"
  },
  {
   "code": "chky1",
@@ -340,7 +340,7 @@
   "class": 4,
   "medium": "en",
   "title": "Bansuri",
-  "subject": "Bansuri"
+  "subject": "Arts"
  },
  {
   "code": "dhev1",
@@ -361,7 +361,7 @@
   "class": 4,
   "medium": "hi",
   "title": "Bansuri (Hindi)",
-  "subject": "Hindi"
+  "subject": "Arts"
  },
  {
   "code": "dhky1",
@@ -473,7 +473,7 @@
   "class": 4,
   "medium": "ur",
   "title": "Bansuri (Urdu)",
-  "subject": "Urdu"
+  "subject": "Arts"
  },
  {
   "code": "dulb1",
@@ -501,7 +501,7 @@
   "class": 5,
   "medium": "en",
   "title": "Bansuri",
-  "subject": "Bansuri"
+  "subject": "Arts"
  },
  {
   "code": "ehev1",
@@ -515,7 +515,7 @@
   "class": 5,
   "medium": "hi",
   "title": "Bansuri (Hindi)",
-  "subject": "Hindi"
+  "subject": "Arts"
  },
  {
   "code": "eeky1",
@@ -613,7 +613,7 @@
   "class": 5,
   "medium": "ur",
   "title": "Bansuri (Urdu)",
-  "subject": "Urdu"
+  "subject": "Arts"
  },
  {
   "code": "euev1",
@@ -641,7 +641,7 @@
   "class": 6,
   "medium": "en",
   "title": "A Pact with the Sun",
-  "subject": "A Pact With"
+  "subject": "English"
  },
  {
   "code": "fuaz1",
@@ -655,7 +655,7 @@
   "class": 6,
   "medium": "hi",
   "title": "Bal Ram Katha",
-  "subject": "Bal Ram Katha"
+  "subject": "Hindi"
  },
  {
   "code": "fess3",
@@ -669,7 +669,7 @@
   "class": 6,
   "medium": "hi",
   "title": "Durva",
-  "subject": "Durva"
+  "subject": "Hindi"
  },
  {
   "code": "feep1",
@@ -725,7 +725,7 @@
   "class": 6,
   "medium": "hi",
   "title": "Kriti-I (Hindi)",
-  "subject": "Hindi"
+  "subject": "Arts"
  },
  {
   "code": "fhky1",
@@ -760,7 +760,7 @@
   "class": 6,
   "medium": "en",
   "title": "Honeysuckle",
-  "subject": "Honeysuckle"
+  "subject": "English"
  },
  {
   "code": "fujp1",
@@ -809,14 +809,14 @@
   "class": 6,
   "medium": "en",
   "title": "Kriti-I",
-  "subject": "Kriti-I"
+  "subject": "Arts"
  },
  {
   "code": "fhml1",
   "class": 6,
   "medium": "hi",
   "title": "Malhar",
-  "subject": "Malhar"
+  "subject": "Hindi"
  },
  {
   "code": "fegp1",
@@ -872,7 +872,7 @@
   "class": 6,
   "medium": "en",
   "title": "Poorvi",
-  "subject": "Poorvi"
+  "subject": "English"
  },
  {
   "code": "fhsk1",
@@ -949,7 +949,7 @@
   "class": 6,
   "medium": "hi",
   "title": "Vasant",
-  "subject": "Vasant"
+  "subject": "Hindi"
  },
  {
   "code": "fuzm1",
@@ -998,14 +998,14 @@
   "class": 7,
   "medium": "hi",
   "title": "Durva Bhag-2",
-  "subject": "Durva Bhag-2"
+  "subject": "Hindi"
  },
  {
   "code": "gemp1",
   "class": 7,
   "medium": "en",
   "title": "Exemplar Problems (English)",
-  "subject": "English"
+  "subject": "Exemplar Problems (English)"
  },
  {
   "code": "gees1",
@@ -1054,7 +1054,7 @@
   "class": 7,
   "medium": "hi",
   "title": "Kriti-I (Hindi)",
-  "subject": "Hindi"
+  "subject": "Arts"
  },
  {
   "code": "ghky1",
@@ -1138,14 +1138,14 @@
   "class": 7,
   "medium": "en",
   "title": "Kriti",
-  "subject": "Kriti"
+  "subject": "Arts"
  },
  {
   "code": "ghml1",
   "class": 7,
   "medium": "hi",
   "title": "Malhar",
-  "subject": "Malhar"
+  "subject": "Hindi"
  },
  {
   "code": "gegp1",
@@ -1222,7 +1222,7 @@
   "class": 7,
   "medium": "en",
   "title": "Poorvi",
-  "subject": "Poorvi"
+  "subject": "English"
  },
  {
   "code": "ghsk1",
@@ -1306,14 +1306,14 @@
   "class": 7,
   "medium": "ur",
   "title": "Khel Yatra(Urdu)",
-  "subject": "Urdu"
+  "subject": "Khel Yatra(Urdu)"
  },
  {
   "code": "ghvs1",
   "class": 7,
   "medium": "hi",
   "title": "Vasant",
-  "subject": "Vasant"
+  "subject": "Hindi"
  },
  {
   "code": "huaz1",
@@ -1348,7 +1348,7 @@
   "class": 8,
   "medium": "hi",
   "title": "Durva",
-  "subject": "Durva"
+  "subject": "Hindi"
  },
  {
   "code": "heep2",
@@ -1404,7 +1404,7 @@
   "class": 8,
   "medium": "hi",
   "title": "Kriti (Hindi)",
-  "subject": "Hindi"
+  "subject": "Arts"
  },
  {
   "code": "hhky1",
@@ -1502,14 +1502,14 @@
   "class": 8,
   "medium": "en",
   "title": "Kriti",
-  "subject": "Kriti"
+  "subject": "Arts"
  },
  {
   "code": "hhml1",
   "class": 8,
   "medium": "hi",
   "title": "Malhar",
-  "subject": "Malhar"
+  "subject": "Hindi"
  },
  {
   "code": "hegp1",
@@ -1572,7 +1572,7 @@
   "class": 8,
   "medium": "en",
   "title": "Poorvi",
-  "subject": "Poorvi"
+  "subject": "English"
  },
  {
   "code": "hhsk1",
@@ -1656,7 +1656,7 @@
   "class": 8,
   "medium": "ur",
   "title": "Kriti (Urdu)",
-  "subject": "Urdu"
+  "subject": "Arts"
  },
  {
   "code": "huky1",
@@ -1677,7 +1677,7 @@
   "class": 8,
   "medium": "hi",
   "title": "Vasant",
-  "subject": "Vasant"
+  "subject": "Hindi"
  },
  {
   "code": "ihsc1",
@@ -1999,7 +1999,7 @@
   "class": 9,
   "medium": "ur",
   "title": "Geographia(Urdu)",
-  "subject": "Urdu"
+  "subject": "Geographia(Urdu)"
  },
  {
   "code": "iugu1",
@@ -2013,7 +2013,7 @@
   "class": 9,
   "medium": "ur",
   "title": "Hindustan Aur Asri Dunia-I(Urdu)",
-  "subject": "Urdu"
+  "subject": "Hindustan Aur Asri"
  },
  {
   "code": "iumh1",
@@ -2034,21 +2034,21 @@
   "class": 9,
   "medium": "ur",
   "title": "Aasri Hindustan (Urdu)",
-  "subject": "Urdu"
+  "subject": "Social Science"
  },
  {
   "code": "iuss2",
   "class": 9,
   "medium": "ur",
   "title": "Mashiyat (Urdu)",
-  "subject": "Urdu"
+  "subject": "Social Science"
  },
  {
   "code": "iuss4",
   "class": 9,
   "medium": "ur",
   "title": "Jamhuri Syasat(Urdu)",
-  "subject": "Urdu"
+  "subject": "Social Science"
  },
  {
   "code": "iewe1",
@@ -3084,7 +3084,7 @@
   "class": 11,
   "medium": "ur",
   "title": "Tabi'i Jughraiya Ka Mubadiyat (Urdu)",
-  "subject": "Urdu"
+  "subject": "Tabi'I Jughraiya Ka"
  },
  {
   "code": "kugy1",

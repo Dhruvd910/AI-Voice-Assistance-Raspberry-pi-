@@ -156,10 +156,71 @@ def pdf_pages(path):
     return raw.split("\f")
 
 
+# ---------------------------------------------------------------------------
+# text layers that came apart
+# ---------------------------------------------------------------------------
+# Some NCERT PDFs set their Sanskrit and Hindi verses in a pre-Unicode font, and
+# pdftotext hands those back as Latin mojibake -- "FmS2dk\u012b2 STkWp\u00c2^2" is
+# a line of the Arts book. It is not harmful to search, because nothing a child
+# says matches it, but it IS harmful to answer from: a passage retrieved for a
+# question about music would put that string in front of the model as "their own
+# textbook".
+#
+# CHARACTERS ARE REPAIRED FIRST, AND ONLY THEN ARE WORDS DROPPED. Measured over
+# the whole Class 6 shelf, dropping every word containing an odd character threw
+# away real content in six books: "110\u00ba" is how the maths book writes an
+# angle, "segment\u00ad" is a word with a soft hyphen, and the Hindi books carry
+# stray control bytes INSIDE otherwise perfect words. So those are mended, and
+# a word is removed only if something unrecognisable is still in it.
+TEXT_REPAIRS = {
+    "\u00ba": "\u00b0",       # masculine ordinal used as a degree sign
+    "\u02bc": "\u2019",       # modifier apostrophe
+    "\u00ad": "",             # soft hyphen
+}
+RE_C1_CONTROLS = re.compile("[\u0080-\u009f]")
+# And the C0 range, bar tab and newline. Some PDFs put one after every word of a
+# glyph-offset font -- "FKDQFH\\x03 WR\\x03" -- which is what let a garbled
+# title's final "D" pass as a two-character word. Stripped character by
+# character and NEVER used to drop the word it sits in: measured across the
+# shelf, the same bytes are inside good words in six books ("Draw", "कला").
+RE_C0_CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f]")
+RE_EXTENDED_LATIN = re.compile("[\u0080-\u02ff\u1e00-\u1eff]")
+# What a printed book legitimately uses from those ranges: its typography, and
+# IAST -- the transliteration the Health and PE book writes its yoga terms in.
+# Without IAST in here "Dhy\u0101na" and "\u015aithila Da\u1e47\u1e0d\u0101sana" were
+# the first words removed, from a book that has no mojibake in it at all.
+PRINTED_LATIN = set(
+    "\u00b0\u00b1\u00b2\u00b3\u00b7\u00bc\u00bd\u00be\u00d7\u00f7"
+    "\u00e0\u00e2\u00e7\u00e8\u00e9\u00ea\u00ee\u00f4\u00fb\u00fc"
+    "\u0101\u012b\u016b\u0100\u012a\u016a"
+    "\u1e5b\u1e5d\u1e37\u1e39\u1e45\u00f1\u1e6d\u1e0d\u1e47\u015b\u1e63\u1e25\u1e43\u1e41"
+    "\u015a\u1e62\u1e6c\u1e0c\u1e46\u1e44\u1e5a\u1e24\u1e42\u00d1")
+# Characters that never occur in a word in these books, and always do in the
+# mojibake.
+GARBAGE_MARKS = set("\\^\u00b8\u00aa")
+
+
+def repair_text(text):
+    """Mend what a text layer broke, and drop the words it cannot mend."""
+    for bad, good in TEXT_REPAIRS.items():
+        text = text.replace(bad, good)
+    text = RE_C1_CONTROLS.sub("", text)
+    text = RE_C0_CONTROLS.sub("", text)
+    kept = []
+    for word in text.split(" "):
+        if any(c in GARBAGE_MARKS for c in word) or any(
+                RE_EXTENDED_LATIN.match(c) and c not in PRINTED_LATIN
+                for c in word):
+            continue
+        kept.append(word)
+    return " ".join(kept)
+
+
 def clean_page(text):
     """One page of pdftotext output, as paragraphs worth indexing."""
     text = unicodedata.normalize("NFC", text)
     text = RE_HYPHEN_BREAK.sub(r'\1\2', text)
+    text = "\n".join(repair_text(line) for line in text.split("\n"))
     kept = []
     for line in text.split("\n"):
         line = line.rstrip()
@@ -272,6 +333,12 @@ def _title_fragment(line, hindi=False):
     verse NCERT prints below it, and under a Hindi heading the Latin line is
     the running header or a figure label.
     """
+    # A row of a diagram, not a line of a title: its words sit in separate
+    # columns with a wide gap between them. The social-science introduction
+    # prints "Landforms      Timeline" beside its heading, and once the gap was
+    # collapsed those two labels read as the end of the title.
+    if re.search(r'\S\s{6,}\S', (line or "").strip()):
+        return None
     text = re.sub(r'\s{2,}', " ", (line or "")).strip()
     if not text or RE_NOT_A_TITLE.search(text):
         return None
@@ -283,7 +350,14 @@ def _title_fragment(line, hindi=False):
                   "", text, flags=re.IGNORECASE).strip()
     if not text or is_hindi(text) != bool(hindi):
         return None
-    if not text[0].isalpha():
+    # A decorative initial from a side column -- the social-science book sets a
+    # large "T" beside "The Beginnings of Indian Civilisation" and it landed in
+    # the middle of the title. No chapter title has a one-letter line.
+    if len(text) < 2:
+        return None
+    # A title may open with a quotation mark -- "'Many in the One'" is the
+    # second line of one -- so the letter test looks past it.
+    if not text.lstrip("'\"\u2018\u201c").strip()[:1].isalpha():
         return None
     # A shredded text layer. Some of these PDFs extract as scattered single
     # characters -- "प ों के स ज", "Mउ नl ाs" -- which passes every other test
@@ -292,8 +366,9 @@ def _title_fragment(line, hindi=False):
     if sum(1 for t in tokens if len(t) == 1) > max(1, len(tokens) // 3):
         return None
     # The danda is Hindi's full stop, so a line ending in one is a sentence
-    # from the body and not a heading.
-    if re.search(r'[.?!;,।॥]$', text):
+    # from the body and not a heading. A question mark is NOT on this list:
+    # "Why Social Science?" is a chapter title.
+    if re.search(r'[.!;,।॥]$', text):
         return None
     return text if 1 <= len(text.split()) <= 8 else None
 
@@ -310,13 +385,16 @@ def chapter_heading(first_page):
     kind of wrong answer here, because it is exactly the kind a child cannot
     check.
     """
-    lines = [line.rstrip() for line in (first_page or "").split("\n")][:40]
+    # The same repair the body gets, so a heading is judged on its words and
+    # not on the bytes a broken font left between them.
+    lines = [repair_text(line).rstrip()
+             for line in (first_page or "").split("\n")][:40]
     for index, line in enumerate(lines):
         inline = RE_HEADING_INLINE.match(line)
         if inline:
-            title = _title_fragment(inline.group(2), is_hindi(line))
-            if title and not _looks_shredded(title):
-                return int(inline.group(1)), _tidy_case(title)
+            title = _finish_title(_title_fragment(inline.group(2), is_hindi(line)))
+            if title:
+                return int(inline.group(1)), title
             continue
         word = RE_HEADING_WORD.match(line)
         if not word:
@@ -351,9 +429,9 @@ def chapter_heading(first_page):
                 continue
             fragments.append(piece)
             started = True
-        title = re.sub(r'\s+', " ", " ".join(fragments)).strip(" .:-")
-        if number and 3 <= len(title) <= 90 and not _looks_shredded(title):
-            return number, _tidy_case(title)
+        title = _finish_title(_join_title(fragments))
+        if number and title:
+            return number, title
     return _headless_heading(lines)
 
 
@@ -363,6 +441,114 @@ RE_SECTION_NUMBER = re.compile(r'^\s*\d{1,2}\.\d')
 # "Unit 1", "इकाई 1". The readers number their parts this way instead.
 RE_UNIT = re.compile(r'^\s*(?:unit|इकाई|भाग)\s*[-–]?\s*(\d{1,2})\s*$',
                      re.IGNORECASE)
+
+
+def _is_capitals(text):
+    letters = [c for c in text if c.isascii() and c.isalpha()]
+    return bool(letters) and all(c.isupper() for c in letters)
+
+
+def _join_title(fragments):
+    """The fragments that belong to the title, joined.
+
+    A title set in capitals ends where the capitals end. Ganita Prakash prints
+    "THE OTHER SIDE OF / ZERO" and then "Integers" in ordinary case underneath
+    as a subtitle, and all three were being read as one title.
+    """
+    if fragments and _is_capitals(fragments[0]):
+        kept = []
+        for piece in fragments:
+            if not _is_capitals(piece):
+                break
+            kept.append(piece)
+        fragments = kept
+    return re.sub(r'\s+', " ", " ".join(fragments)).strip(" .:-")
+
+
+# Openings that belong to the body of a chapter, not its name. The Arts and PE
+# books print no heading this can find, so the first plausible line on the
+# page was taken instead -- "Objective: Listening and learning songs from
+# various genres", "Welcome to the world of Yoga for holistic health".
+RE_BODY_OPENING = re.compile(
+    r'^(?:objective|in this|let\W?s\b|let us|watch\b|imagine\b|all of us|'
+    r'this is\b|welcome\b|we\b|you\b|here\b|उद्देश्य|इस अध्याय)', re.IGNORECASE)
+# A title does not end on one of these. One that does was cut off mid-line:
+# "Watch a video to understand what", "Timeline and".
+# Not "us": "Materials Around Us" and "Economic Activities Around Us" are both
+# real chapter titles, and listing it took both off the shelf.
+RE_CUT_OFF = re.compile(r'\b(?:and|or|the|of|to|a|an|for|what|with|in|on|at|by|'
+                        r'from)$', re.IGNORECASE)
+# Where the body of a chapter starts, when it starts on the same line as the
+# heading. The title is cut there rather than thrown away.
+RE_BODY_STARTS = re.compile(r'\s(?:इस अध्याय|उद्देश्य|in this chapter|objective)',
+                            re.IGNORECASE)
+# The scripts a title on this shelf is written in, plus its punctuation. The
+# Arts book set a line in a font that extracts as Mandaic and Arabic Extended
+# letters, and it was read as the start of a chapter name.
+RE_OUTSIDE_SCRIPTS = re.compile("[^\u0000-\u024f\u1e00-\u1eff\u2000-\u206f"
+                                "\u0900-\u097f\u20b9]")
+RE_JOINERS = re.compile("[\u200c\u200d]")
+# अध्याय, with or without the invisible joiner some of these PDFs put inside
+# it, and with the chapter number if one follows.
+RE_CHAPTER_WORD_ANYWHERE = re.compile(r'(?:^|\s)(?:अध्याय|chapter)(?:\s+\d{1,2})?(?=\s|$)',
+                                      re.IGNORECASE)
+
+
+def _finish_title(title):
+    """The title cleaned up, or None when what was read is not a title at all.
+
+    Deliberately the harder test. A chapter with no name costs a line that
+    says "its names are not on this device"; a chapter with a WRONG name is
+    read out to a child as if it came from their book, which is the complaint
+    this whole feature exists to answer.
+    """
+    title = RE_JOINERS.sub("", title or "")
+    if RE_OUTSIDE_SCRIPTS.search(title):
+        return None
+    # Cut before the body opens, and BEFORE the word अध्याय is removed -- the
+    # opening is "इस अध्याय में", and once अध्याय is gone it no longer looks
+    # like one.
+    body = RE_BODY_STARTS.search(title)
+    if body:
+        title = title[:body.start()]
+    # A verse in double quotes, printed on the heading's own line.
+    if "\u201c" in title[1:]:
+        title = title[:title.index("\u201c", 1)]
+    title = RE_CHAPTER_WORD_ANYWHERE.sub(" ", title)
+    title = re.sub(r'\s+', " ", title).strip()
+    # A verse refrain printed under the heading: the same word several times
+    # running on the end. Removed whole, first copy included.
+    tokens = title.split()
+    while len(tokens) >= 3 and tokens[-1] == tokens[-2]:
+        repeated = tokens[-1]
+        while tokens and tokens[-1] == repeated:
+            tokens.pop()
+    title = " ".join(tokens)
+    # A question mark ends a title -- "Why Social Science?" -- so anything
+    # after one is whatever sat beside the heading.
+    if "?" in title[:-1]:
+        title = title[:title.index("?") + 1]
+    # The heading word, and then the body's first word built from it:
+    # "Assessment Assessments in art education play a crucial role".
+    tokens = title.split()
+    if (len(tokens) > 2 and len(tokens[0]) >= 6
+            and tokens[0][:6].lower() == tokens[1][:6].lower()):
+        title = tokens[0]
+    title = title.strip(" .:-\u2014\u2013")
+    if not 3 <= len(title) <= 90 or _looks_shredded(title):
+        return None
+    if len(title.split()) > 12:
+        return None
+    if RE_BODY_OPENING.match(title) or RE_CUT_OFF.search(title):
+        return None
+    if re.search(r'[.\u0964]\s', title):          # a sentence break inside it
+        return None
+    if title[:1].isascii() and title[:1].islower():
+        return None
+    last = title.split()[-1]
+    if len(last) == 1 and last.isascii():           # "...Paper As A"
+        return None
+    return _tidy_case(title)
 
 
 def _looks_shredded(title):
@@ -436,7 +622,9 @@ def _headless_heading(lines):
             continue
         piece = _title_fragment(line, is_hindi(line))
         if piece is None:
-            if fragments:
+            # A stray letter or two -- a decorative initial from a side column
+            # -- is stepped over rather than taken as the end of the title.
+            if fragments and len(line.strip()) > 2:
                 break
             continue
         fragments.append(piece)
@@ -444,9 +632,14 @@ def _headless_heading(lines):
         # is where the readers run into their own first activity.
         if len(fragments) >= 3:
             break
-    title = re.sub(r'\s+', " ", " ".join(fragments)).strip(" .:-")
-    if number and 3 <= len(title) <= 90 and not _looks_shredded(title):
-        return number, _tidy_case(title)
+    if len(fragments) > 1 and fragments[0].lower() in ("introduction", "प्रस्तावना"):
+        fragments = [f"{fragments[0]}: {' '.join(fragments[1:])}"]
+    title = _finish_title(_join_title(fragments))
+    if title:
+        # The number may be None -- some chapters print none on their opening
+        # page -- and for an NCERT file ingest takes it from the filename,
+        # which is where the authoritative one is anyway.
+        return number, title
     return None, None
 
 
@@ -524,10 +717,19 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
     # normal way this is used -- drop in the chapters that were missing and run
     # it again -- and without this every run doubles every book already in.
     _board, _class, _subject, from_name = describe(path)
-    number = heading_number
-    if number is None and from_name:
-        found = re.search(r'(\d{1,2})', from_name)
-        number = int(found.group(1)) if found else None
+    # WHICH NUMBER TO TRUST. For a file NCERT named, the two digits on the end
+    # ARE the chapter -- that is what the URL is built from -- so they beat
+    # anything read off the page. Observed disagreeing: fhkb105 opens with a
+    # figure "3" that the reader took for a chapter number. For anything else
+    # the heading is the better evidence, and the filename only the fallback.
+    ncert = RE_NCERT_FILE.match(os.path.splitext(os.path.basename(path))[0])
+    if ncert:
+        number = int(ncert.group(2))
+    else:
+        number = heading_number
+        if number is None and from_name:
+            found = re.search(r'(\d{1,2})', from_name)
+            number = int(found.group(1)) if found else None
 
     book = store.query(
         """INSERT INTO books (board, class, subject, title, chapter, language,
@@ -1062,6 +1264,9 @@ SUBJECT_WORDS = [
     ("samaj ka", "Social Science"), ("samaj", "Social Science"),
     ("environmental", "EVS"), ("paryavaran", "EVS"),
     ("employability", "Skill Education"), ("kaushal", "Skill Education"),
+    # Whole word, marked with $: "Kriti" is the Arts book and "Kritika" is a
+    # Class 9 Hindi reader, and they share the code kr.
+    ("kriti$", "Arts"), ("bansuri", "Arts"), ("vasant", "Hindi"),
     ("english", "English"), ("hindi", "Hindi"), ("sanskrit", "Sanskrit"),
     ("urdu", "Urdu"), ("health", "Health and Physical Education"),
 ]
@@ -1094,6 +1299,10 @@ CODE_SUBJECTS = {
     "py": "Psychology", "he": "Home Science", "fa": "Fine Art",
     "ev": "EVS", "ap": "EVS",
     "sk": "Sanskrit", "en": "English", "hn": "Hindi",
+    # The language readers, filed under the language, because "what's in my
+    # English book" is how a child asks for Poorvi.
+    "pr": "English", "hl": "English", "pw": "English",
+    "ml": "Hindi", "br": "Hindi", "dv": "Hindi",
     "ky": "Health and Physical Education",
     "ep": "Exemplar Problems", "lm": "Lab Manual",
 }
@@ -1116,11 +1325,24 @@ def _subject_for(code, title):
     return CODE_SUBJECTS.get(pair) or _subject_of(title)
 
 
+# "(Hindi)" on the end of a title names the EDITION, not the subject. Left in,
+# "Kriti-I (Hindi)" -- the Arts book, in Hindi -- was filed under Hindi, and so
+# was every other book whose Hindi edition says so in brackets.
+RE_EDITION_SUFFIX = re.compile(r'\s*\((?:hindi|english|urdu)\)\s*$', re.IGNORECASE)
+
+
 def _subject_from_title(title):
-    """A subject named in the title, or None when it names none."""
-    lowered = re.sub(r'[^\w\s]', " ", (title or "").lower())
+    """A subject named in the title, or None when it names none.
+
+    Keys match as a word PREFIX -- "ganit" has to find "Ganita" -- unless they
+    end in $, which asks for the whole word.
+    """
+    bare = RE_EDITION_SUFFIX.sub("", title or "")
+    lowered = re.sub(r'[^\w\s]', " ", bare.lower())
     for word, subject in SUBJECT_WORDS:
-        if re.search(r'\b' + re.escape(word), lowered):
+        whole = word.endswith("$")
+        pattern = r'\b' + re.escape(word.rstrip("$")) + (r'\b' if whole else "")
+        if re.search(pattern, lowered):
             return subject
     return None
 
