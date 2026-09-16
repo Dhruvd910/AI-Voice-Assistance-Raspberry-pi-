@@ -911,6 +911,31 @@ def catalogue(refresh=False):
 NCERT_MAX_CHAPTERS = 30
 NCERT_MISSES_ALLOWED = 2
 
+# Free space below which the fetcher stops, whatever is left to download.
+#
+# This is not tidiness. The whole NCERT shelf is several gigabytes and the same
+# SD card holds the operating system, the app, the database and every student's
+# history -- so "liza books fetch" for a few classes too many is a command that
+# fills the disk of a device a child is in the middle of using, and PostgreSQL
+# on a full disk stops accepting writes. A gigabyte is well past what the rest
+# of the device needs to keep running.
+DISK_FLOOR_BYTES = int(float(os.getenv("BOOK_DISK_FLOOR_GB", "1.0")) * 1024**3)
+
+
+def free_bytes(path=None):
+    """Space left on the disk the books live on."""
+    try:
+        stat = os.statvfs(path or BOOKS_DIR if os.path.isdir(path or BOOKS_DIR)
+                          else os.path.dirname(os.path.abspath(__file__)))
+        return stat.f_bavail * stat.f_frsize
+    except OSError:
+        return None
+
+
+class _OutOfRoom(Exception):
+    """The disk floor was reached. Raised so one check stops the whole fetch,
+    not just the book it happened to be on."""
+
 
 def fetch_book(entry, force=False):
     """Every chapter of one NCERT book onto the disk. Returns how many."""
@@ -926,6 +951,15 @@ def fetch_book(entry, force=False):
             got += 1
             misses = 0
             continue
+        # Checked per chapter rather than once at the start: a fetch of several
+        # classes runs for an hour, and the disk it has to fit in is the one the
+        # rest of the device is using while it does.
+        room = free_bytes()
+        if room is not None and room < DISK_FLOOR_BYTES:
+            print(f"[BOOKS] Stopping: only {room / 1024**3:.1f}GB free, and "
+                  f"{DISK_FLOOR_BYTES / 1024**3:.1f}GB is the floor. What is "
+                  f"already downloaded is fine to ingest.", flush=True)
+            raise _OutOfRoom()
         body = _get(f"{NCERT_BASE}/{name}")
         # A PDF, and not the 404 page the site serves with a 200 on some paths.
         if body is None or not body.startswith(b"%PDF"):
@@ -965,7 +999,13 @@ def fetch(classes=None, medium="en", subjects=None, force=False):
     print(f"[BOOKS] {len(wanted)} books to try.", flush=True)
     books = chapters = 0
     for index, entry in enumerate(wanted, start=1):
-        got = fetch_book(entry, force=force)
+        try:
+            got = fetch_book(entry, force=force)
+        except _OutOfRoom:
+            print(f"[BOOKS] Stopped after {books} books; the disk is full "
+                  f"enough. Run `liza books ingest` on what is there.",
+                  flush=True)
+            break
         if got:
             books += 1
             chapters += got
