@@ -34,3 +34,9 @@ history/
 pictures/*
 !pictures/README.md
 history/*.progress.json
+
+# Textbook PDFs are large, and they are somebody else's copyright. The
+# catalogue that says where to fetch them from is small and worth keeping.
+books/**/*.pdf
+books/**/*.txt
+!books/README.md

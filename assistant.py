@@ -84,7 +84,8 @@ from actions import (ACTION_DATA_PREFIX, CLOSED_FILE_ACKS, FILE_CANCEL_ACKS,
                      RE_CONFIRM_YES, action_failure_sentence, device_state_block,
                      execute_action, file_query_topic, find_files,
                      note_learning, open_file_action, parse_action,
-                     phrase_action_result, student_profile_block)
+                     phrase_action_result, student_profile_block,
+                     textbook_block)
 # Everything she is told to be, and every fixed line she says. A leaf: it
 # imports nothing but re, so this only goes one way.
 from prompts import (AGENTIC_ACTIONS, ASSISTANT_SCOPE, EMOTION_PERSONA,
@@ -2739,6 +2740,11 @@ def ai_loop(ui, headless=False):
             # keeps the whole fixed prefix cacheable across a mode change. See
             # the section-order note above UNIVERSAL_SYSTEM_PROMPT.
             grade_guidelines=student_profile_block(),
+            # What their own textbook says about THIS question, or "". Read on
+            # the turn and placed at the very bottom of the prompt: it is the
+            # most volatile section there is, so it must not sit in front of
+            # anything cacheable -- see the section-order note in prompts.py.
+            textbook_context=textbook_block(text),
             domain_guidelines=mode_instruction,
             language_guidelines=LANGUAGE_INSTRUCTIONS[user_language],
             # Volatile, so it sits at the very bottom with the clock -- see the

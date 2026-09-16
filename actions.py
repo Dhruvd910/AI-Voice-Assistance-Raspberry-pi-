@@ -25,6 +25,7 @@ import time
 
 import profiles
 import state
+import books
 import store
 import visuals
 from config import MPV_AUDIO_DEVICE
@@ -1309,6 +1310,20 @@ RE_STUCK = re.compile(
     r"\b(i don'?t (understand|get|know)|i'?m confused|makes no sense|"
     r"still don'?t|can'?t do|too hard|explain again|didn'?t understand)\b",
     re.IGNORECASE)
+
+
+def textbook_block(question):
+    """The passages from this student's own books for THIS question, or "".
+
+    Here rather than in ai_loop for the same reason student_profile_block is:
+    the active profile is read live, on the turn, so switching student changes
+    which shelf is searched without a restart.
+    """
+    try:
+        return books.book_context(question, profiles.get_active_profile())
+    except Exception as exc:
+        print(f"[BOOKS] Could not look in the books ({exc}).", flush=True)
+        return ""
 
 
 # The concept of the turn being answered right now. Set by note_learning, which

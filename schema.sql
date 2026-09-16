@@ -108,3 +108,48 @@ CREATE INDEX IF NOT EXISTS activities_user_idx
 -- The progress screen groups by kind and by topic, over one student.
 CREATE INDEX IF NOT EXISTS activities_user_kind_idx
     ON activities (user_id, kind, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- The textbooks
+-- ---------------------------------------------------------------------------
+-- WHY POSTGRES FULL TEXT AND NOT EMBEDDINGS. The obvious way to build this is
+-- a vector index, and on this device the obvious way is the wrong one: an
+-- embedding model has to run on every question AND over every one of the tens
+-- of thousands of chunks at ingest time, on a Pi, and then a second index has
+-- to be kept in step with the first. Postgres already has a GIN-indexed
+-- tsvector, it is already running, it answers in single-digit milliseconds
+-- over a whole shelf of books, and a child's question is full of exactly the
+-- rare nouns lexical search is best at -- "photosynthesis", "trigonometry",
+-- "Mughal". Semantic search earns its cost where the words differ and the
+-- meaning matches; a textbook and the question about it share the words.
+CREATE TABLE IF NOT EXISTS books (
+    id       SERIAL PRIMARY KEY,
+    board    TEXT NOT NULL,             -- 'CBSE', 'ICSE', or whatever was ingested
+    class    INT  NOT NULL CHECK (class BETWEEN 1 AND 12),
+    subject  TEXT NOT NULL,
+    title    TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'en',
+    -- The file it was read from. UNIQUE so re-running the ingest over a folder
+    -- replaces a book rather than doubling it, which is the normal way this is
+    -- used: drop in the missing chapters and run it again.
+    source   TEXT UNIQUE NOT NULL,
+    pages    INT,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS books_class_idx ON books (board, class, subject);
+
+CREATE TABLE IF NOT EXISTS book_chunks (
+    id       BIGSERIAL PRIMARY KEY,
+    book_id  INT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    chapter  TEXT,
+    page     INT,
+    content  TEXT NOT NULL,
+    -- Built at insert time with the configuration that matches the chunk's own
+    -- language: 'english' stems, and stemming Hindi with the English stemmer
+    -- produces lexemes that match nothing. The query is built the same way
+    -- from the question's own script, so same-language search works and
+    -- cross-language search correctly returns nothing.
+    tsv      tsvector NOT NULL
+);
+CREATE INDEX IF NOT EXISTS book_chunks_tsv_idx ON book_chunks USING GIN (tsv);
+CREATE INDEX IF NOT EXISTS book_chunks_book_idx ON book_chunks (book_id);

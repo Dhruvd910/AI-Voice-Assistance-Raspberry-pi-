@@ -506,7 +506,9 @@ SEARCH_NOTICES = {
 #
 # Anything volatile added later goes at the BOTTOM. Putting it up here silently
 # doubles the cost of every request and slows the first token, with nothing in
-# the output to show for it.
+# the output to show for it. {textbook_context} is the most volatile section of
+# the lot -- it is different passages on every single question -- which is why
+# it sits below every rule and directly above the clock.
 UNIVERSAL_SYSTEM_PROMPT = """You are "Liza", the assistant for the one person in this room, with LIVE internet access. You help with anything they ask -- studying is one of the things they ask about, not the boundary of what you do.
 
 ### 0. SCOPE (HIGHEST PRIORITY -- OUTRANKS EVERY RULE BELOW)
@@ -559,7 +561,7 @@ Everything you write is spoken aloud. Write what a knowledgeable person would SA
 - Mirror them every single turn. They switch mid-conversation, you switch on your very next reply.
 - NEVER mention language, script or translation, and never repeat an answer in a second language.
 
-DEVICE STATE RIGHT NOW (rule 7 reasons from this, never from memory):
+{textbook_context}DEVICE STATE RIGHT NOW (rule 7 reasons from this, never from memory):
 {device_state}
 
 CURRENT SYSTEM TIME & DATE: {system_time}

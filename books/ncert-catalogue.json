@@ -1,0 +1,3908 @@
+[
+ {
+  "code": "aeen1",
+  "class": 1,
+  "medium": "en",
+  "title": "Marigold",
+  "subject": "Marigold"
+ },
+ {
+  "code": "aejm1",
+  "class": 1,
+  "medium": "en",
+  "title": "Joyful-Mathematics (English)",
+  "subject": "Maths"
+ },
+ {
+  "code": "aemh1",
+  "class": 1,
+  "medium": "en",
+  "title": "Math-Magic",
+  "subject": "Maths"
+ },
+ {
+  "code": "ahjm1",
+  "class": 1,
+  "medium": "hi",
+  "title": "Joyful-Mathematics (Hindi)",
+  "subject": "Maths"
+ },
+ {
+  "code": "ahmh1",
+  "class": 1,
+  "medium": "hi",
+  "title": "Ganit ka Jadu",
+  "subject": "Maths"
+ },
+ {
+  "code": "aujm1",
+  "class": 1,
+  "medium": "ur",
+  "title": "Joyful-Mathematics (Urdu)",
+  "subject": "Maths"
+ },
+ {
+  "code": "auri1",
+  "class": 1,
+  "medium": "ur",
+  "title": "Riyazi",
+  "subject": "Maths"
+ },
+ {
+  "code": "aemr1",
+  "class": 1,
+  "medium": "en",
+  "title": "Mridang",
+  "subject": "Mridang"
+ },
+ {
+  "code": "ahhn1",
+  "class": 1,
+  "medium": "hi",
+  "title": "Rimjhim",
+  "subject": "Rimjhim"
+ },
+ {
+  "code": "ahsr1",
+  "class": 1,
+  "medium": "hi",
+  "title": "Sarangi",
+  "subject": "Sarangi"
+ },
+ {
+  "code": "aush1",
+  "class": 1,
+  "medium": "ur",
+  "title": "Shahnai",
+  "subject": "Shahnai"
+ },
+ {
+  "code": "aulb1",
+  "class": 1,
+  "medium": "ur",
+  "title": "Ibtedai Urdu-I",
+  "subject": "Urdu"
+ },
+ {
+  "code": "been1",
+  "class": 2,
+  "medium": "en",
+  "title": "Marigold",
+  "subject": "Marigold"
+ },
+ {
+  "code": "bejm1",
+  "class": 2,
+  "medium": "en",
+  "title": "Joyful-Mathematics (English)",
+  "subject": "Maths"
+ },
+ {
+  "code": "bemh1",
+  "class": 2,
+  "medium": "en",
+  "title": "Math-Magic",
+  "subject": "Maths"
+ },
+ {
+  "code": "bhjm1",
+  "class": 2,
+  "medium": "hi",
+  "title": "Joyful-Mathematics (Hindi)",
+  "subject": "Maths"
+ },
+ {
+  "code": "bhmh1",
+  "class": 2,
+  "medium": "hi",
+  "title": "Ganit ka Jadu",
+  "subject": "Maths"
+ },
+ {
+  "code": "bujm1",
+  "class": 2,
+  "medium": "ur",
+  "title": "Joyful-Mathematics (Urdu)",
+  "subject": "Maths"
+ },
+ {
+  "code": "buri1",
+  "class": 2,
+  "medium": "ur",
+  "title": "Riyazi ka Jadu",
+  "subject": "Maths"
+ },
+ {
+  "code": "bemr1",
+  "class": 2,
+  "medium": "en",
+  "title": "Mridang",
+  "subject": "Mridang"
+ },
+ {
+  "code": "bhhn1",
+  "class": 2,
+  "medium": "hi",
+  "title": "Rimjhim",
+  "subject": "Rimjhim"
+ },
+ {
+  "code": "bhsr1",
+  "class": 2,
+  "medium": "hi",
+  "title": "Sarangi",
+  "subject": "Sarangi"
+ },
+ {
+  "code": "bush1",
+  "class": 2,
+  "medium": "ur",
+  "title": "Shahnai",
+  "subject": "Shahnai"
+ },
+ {
+  "code": "buib1",
+  "class": 2,
+  "medium": "ur",
+  "title": "Ibtedai Urdu-II",
+  "subject": "Urdu"
+ },
+ {
+  "code": "chap1",
+  "class": 3,
+  "medium": "hi",
+  "title": "Ass-Pass",
+  "subject": "Ass-Pass"
+ },
+ {
+  "code": "cebu1",
+  "class": 3,
+  "medium": "en",
+  "title": "Bansuri - I",
+  "subject": "Bansuri - I"
+ },
+ {
+  "code": "chev1",
+  "class": 3,
+  "medium": "hi",
+  "title": "Hamara Adhbhut Sansar",
+  "subject": "Hamara Adhbhut Sansar"
+ },
+ {
+  "code": "cuev1",
+  "class": 3,
+  "medium": "ur",
+  "title": "Hamari Hairat Angez Duniya",
+  "subject": "Hamari Hairat Angez"
+ },
+ {
+  "code": "chbu1",
+  "class": 3,
+  "medium": "hi",
+  "title": "Bansuri - I (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "chky1",
+  "class": 3,
+  "medium": "hi",
+  "title": "Khel Yoga (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "ceky1",
+  "class": 3,
+  "medium": "en",
+  "title": "Khel Yoga",
+  "subject": "Khel Yoga"
+ },
+ {
+  "code": "ceap1",
+  "class": 3,
+  "medium": "en",
+  "title": "Looking Arround",
+  "subject": "Looking Arround"
+ },
+ {
+  "code": "ceen1",
+  "class": 3,
+  "medium": "en",
+  "title": "Marigold",
+  "subject": "Marigold"
+ },
+ {
+  "code": "cemh1",
+  "class": 3,
+  "medium": "en",
+  "title": "Math-Magic",
+  "subject": "Maths"
+ },
+ {
+  "code": "cemm1",
+  "class": 3,
+  "medium": "en",
+  "title": "Maths Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "chmh1",
+  "class": 3,
+  "medium": "hi",
+  "title": "Ganit ka Jadu",
+  "subject": "Maths"
+ },
+ {
+  "code": "chmm1",
+  "class": 3,
+  "medium": "hi",
+  "title": "Ganit Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "cumm1",
+  "class": 3,
+  "medium": "ur",
+  "title": "Riyazi Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "curi1",
+  "class": 3,
+  "medium": "ur",
+  "title": "Riyazi-III",
+  "subject": "Maths"
+ },
+ {
+  "code": "ceev1",
+  "class": 3,
+  "medium": "en",
+  "title": "Our Wondrous World",
+  "subject": "Our Wondrous World"
+ },
+ {
+  "code": "chhn1",
+  "class": 3,
+  "medium": "hi",
+  "title": "Rimjhim",
+  "subject": "Rimjhim"
+ },
+ {
+  "code": "cesa1",
+  "class": 3,
+  "medium": "en",
+  "title": "Santoor",
+  "subject": "Santoor"
+ },
+ {
+  "code": "cust1",
+  "class": 3,
+  "medium": "ur",
+  "title": "Sitar",
+  "subject": "Sitar"
+ },
+ {
+  "code": "cuap1",
+  "class": 3,
+  "medium": "ur",
+  "title": "Aas Pass (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "cuky1",
+  "class": 3,
+  "medium": "ur",
+  "title": "Khel Yoga (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "culb1",
+  "class": 3,
+  "medium": "ur",
+  "title": "Ibtedai Urdu",
+  "subject": "Urdu"
+ },
+ {
+  "code": "chve1",
+  "class": 3,
+  "medium": "hi",
+  "title": "Veena",
+  "subject": "Veena"
+ },
+ {
+  "code": "dhap1",
+  "class": 4,
+  "medium": "hi",
+  "title": "Ass-Pass",
+  "subject": "Ass-Pass"
+ },
+ {
+  "code": "debu1",
+  "class": 4,
+  "medium": "en",
+  "title": "Bansuri",
+  "subject": "Bansuri"
+ },
+ {
+  "code": "dhev1",
+  "class": 4,
+  "medium": "hi",
+  "title": "Hamara Adhbhut Sansar",
+  "subject": "Hamara Adhbhut Sansar"
+ },
+ {
+  "code": "duev1",
+  "class": 4,
+  "medium": "ur",
+  "title": "Hamari Hairatangez Duniya",
+  "subject": "Hamari Hairatangez Duniya"
+ },
+ {
+  "code": "dhbu1",
+  "class": 4,
+  "medium": "hi",
+  "title": "Bansuri (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "dhky1",
+  "class": 4,
+  "medium": "hi",
+  "title": "Khel Yoga(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "deky1",
+  "class": 4,
+  "medium": "en",
+  "title": "Khel Yoga",
+  "subject": "Khel Yoga"
+ },
+ {
+  "code": "deap1",
+  "class": 4,
+  "medium": "en",
+  "title": "Looking Arround",
+  "subject": "Looking Arround"
+ },
+ {
+  "code": "deen1",
+  "class": 4,
+  "medium": "en",
+  "title": "Marigold",
+  "subject": "Marigold"
+ },
+ {
+  "code": "demh1",
+  "class": 4,
+  "medium": "en",
+  "title": "Math-Magic",
+  "subject": "Maths"
+ },
+ {
+  "code": "demm1",
+  "class": 4,
+  "medium": "en",
+  "title": "Math-Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "dhmh1",
+  "class": 4,
+  "medium": "hi",
+  "title": "Ganit Ka Jadu",
+  "subject": "Maths"
+ },
+ {
+  "code": "dhmm1",
+  "class": 4,
+  "medium": "hi",
+  "title": "Ganit-Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "dumm1",
+  "class": 4,
+  "medium": "ur",
+  "title": "Riyazi Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "duri1",
+  "class": 4,
+  "medium": "ur",
+  "title": "Riyazi Ka Jadu",
+  "subject": "Maths"
+ },
+ {
+  "code": "deev1",
+  "class": 4,
+  "medium": "en",
+  "title": "Our Wonderous World",
+  "subject": "Our Wonderous World"
+ },
+ {
+  "code": "dhhn1",
+  "class": 4,
+  "medium": "hi",
+  "title": "Rimjhim",
+  "subject": "Rimjhim"
+ },
+ {
+  "code": "desa1",
+  "class": 4,
+  "medium": "en",
+  "title": "Santoor",
+  "subject": "Santoor"
+ },
+ {
+  "code": "dust1",
+  "class": 4,
+  "medium": "ur",
+  "title": "Sitaar",
+  "subject": "Sitaar"
+ },
+ {
+  "code": "duap1",
+  "class": 4,
+  "medium": "ur",
+  "title": "Aas-Paas Urdu",
+  "subject": "Urdu"
+ },
+ {
+  "code": "dubu1",
+  "class": 4,
+  "medium": "ur",
+  "title": "Bansuri (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "dulb1",
+  "class": 4,
+  "medium": "ur",
+  "title": "Ibtedai Urdu-IV",
+  "subject": "Urdu"
+ },
+ {
+  "code": "dhve1",
+  "class": 4,
+  "medium": "hi",
+  "title": "Veena",
+  "subject": "Veena"
+ },
+ {
+  "code": "ehap1",
+  "class": 5,
+  "medium": "hi",
+  "title": "Ass-Pass",
+  "subject": "Ass-Pass"
+ },
+ {
+  "code": "eebu1",
+  "class": 5,
+  "medium": "en",
+  "title": "Bansuri",
+  "subject": "Bansuri"
+ },
+ {
+  "code": "ehev1",
+  "class": 5,
+  "medium": "hi",
+  "title": "Hamara Adbhut Sansar",
+  "subject": "Hamara Adbhut Sansar"
+ },
+ {
+  "code": "ehbu1",
+  "class": 5,
+  "medium": "hi",
+  "title": "Bansuri (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "eeky1",
+  "class": 5,
+  "medium": "en",
+  "title": "Khel Yoga",
+  "subject": "Khel Yoga"
+ },
+ {
+  "code": "eeap1",
+  "class": 5,
+  "medium": "en",
+  "title": "Looking Arround",
+  "subject": "Looking Arround"
+ },
+ {
+  "code": "eeen1",
+  "class": 5,
+  "medium": "en",
+  "title": "Marigold",
+  "subject": "Marigold"
+ },
+ {
+  "code": "eemh1",
+  "class": 5,
+  "medium": "en",
+  "title": "Math-Magic",
+  "subject": "Maths"
+ },
+ {
+  "code": "eemm1",
+  "class": 5,
+  "medium": "en",
+  "title": "Math Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "ehmh1",
+  "class": 5,
+  "medium": "hi",
+  "title": "Ganit",
+  "subject": "Maths"
+ },
+ {
+  "code": "ehmm1",
+  "class": 5,
+  "medium": "hi",
+  "title": "Ganit Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "euma1",
+  "class": 5,
+  "medium": "ur",
+  "title": "math-magic-V",
+  "subject": "Maths"
+ },
+ {
+  "code": "eumm1",
+  "class": 5,
+  "medium": "ur",
+  "title": "Riyazi Mela",
+  "subject": "Maths"
+ },
+ {
+  "code": "eeev1",
+  "class": 5,
+  "medium": "en",
+  "title": "Our Wondrous World",
+  "subject": "Our Wondrous World"
+ },
+ {
+  "code": "ehhn1",
+  "class": 5,
+  "medium": "hi",
+  "title": "Rimjhim",
+  "subject": "Rimjhim"
+ },
+ {
+  "code": "eesa1",
+  "class": 5,
+  "medium": "en",
+  "title": "Santoor",
+  "subject": "Santoor"
+ },
+ {
+  "code": "eust1",
+  "class": 5,
+  "medium": "ur",
+  "title": "Sitaar",
+  "subject": "Sitaar"
+ },
+ {
+  "code": "eubu1",
+  "class": 5,
+  "medium": "ur",
+  "title": "Bansuri (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "euev1",
+  "class": 5,
+  "medium": "ur",
+  "title": "EVS-V (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "eulb1",
+  "class": 5,
+  "medium": "ur",
+  "title": "Ibtedai Urdu Class-V",
+  "subject": "Urdu"
+ },
+ {
+  "code": "ehve1",
+  "class": 5,
+  "medium": "hi",
+  "title": "Veena",
+  "subject": "Veena"
+ },
+ {
+  "code": "fepw1",
+  "class": 6,
+  "medium": "en",
+  "title": "A Pact with the Sun",
+  "subject": "A Pact With"
+ },
+ {
+  "code": "fuaz1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Apni Zuban-VI",
+  "subject": "Apni Zuban-Vi"
+ },
+ {
+  "code": "fhbr1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Bal Ram Katha",
+  "subject": "Bal Ram Katha"
+ },
+ {
+  "code": "fess3",
+  "class": 6,
+  "medium": "en",
+  "title": "Social and Political Life-I",
+  "subject": "Civics"
+ },
+ {
+  "code": "fhdv1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Durva",
+  "subject": "Durva"
+ },
+ {
+  "code": "feep1",
+  "class": 6,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "feep2",
+  "class": 6,
+  "medium": "en",
+  "title": "Exemplar Problem",
+  "subject": "Exemplar Problem"
+ },
+ {
+  "code": "fees1",
+  "class": 6,
+  "medium": "en",
+  "title": "Exploring Society India and Beyond",
+  "subject": "Exploring Society India"
+ },
+ {
+  "code": "fess2",
+  "class": 6,
+  "medium": "en",
+  "title": "The Earth: Our Habitat",
+  "subject": "Geography"
+ },
+ {
+  "code": "fhss2",
+  "class": 6,
+  "medium": "hi",
+  "title": "Prithvi: Hamara Avas",
+  "subject": "Geography"
+ },
+ {
+  "code": "fhep1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "fhkb1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Kaushal Bodh (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "fhkr1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Kriti-I (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "fhky1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Khel Yatra (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "fess1",
+  "class": 6,
+  "medium": "en",
+  "title": "History-Our Past I",
+  "subject": "History"
+ },
+ {
+  "code": "fhss1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Itihas-Hamare Atit I",
+  "subject": "History"
+ },
+ {
+  "code": "fuhm1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Hamare Mazi",
+  "subject": "History"
+ },
+ {
+  "code": "fehl1",
+  "class": 6,
+  "medium": "en",
+  "title": "Honeysuckle",
+  "subject": "Honeysuckle"
+ },
+ {
+  "code": "fujp1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Jaan Pahechan",
+  "subject": "Jaan Pahechan"
+ },
+ {
+  "code": "fhcu1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Jigyasa",
+  "subject": "Jigyasa"
+ },
+ {
+  "code": "fukl1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Jismani Taleem aur Tandurusti",
+  "subject": "Jismani Taleem Aur"
+ },
+ {
+  "code": "fekb1",
+  "class": 6,
+  "medium": "en",
+  "title": "Kaushal Bodh",
+  "subject": "Kaushal Bodh"
+ },
+ {
+  "code": "fuky1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Khayal",
+  "subject": "Khayal"
+ },
+ {
+  "code": "feky1",
+  "class": 6,
+  "medium": "en",
+  "title": "Khel Yatra",
+  "subject": "Khel Yatra"
+ },
+ {
+  "code": "fekr1",
+  "class": 6,
+  "medium": "en",
+  "title": "Kriti-I",
+  "subject": "Kriti-I"
+ },
+ {
+  "code": "fhml1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Malhar",
+  "subject": "Malhar"
+ },
+ {
+  "code": "fegp1",
+  "class": 6,
+  "medium": "en",
+  "title": "Ganita Prakash",
+  "subject": "Maths"
+ },
+ {
+  "code": "femh1",
+  "class": 6,
+  "medium": "en",
+  "title": "Mathematics",
+  "subject": "Maths"
+ },
+ {
+  "code": "fhgp1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Ganita Prakash (Hindi)",
+  "subject": "Maths"
+ },
+ {
+  "code": "fhmh1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Ganit",
+  "subject": "Maths"
+ },
+ {
+  "code": "fugp1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Ganita Prakash(Urdu)",
+  "subject": "Maths"
+ },
+ {
+  "code": "furi1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Riyazi-VI",
+  "subject": "Maths"
+ },
+ {
+  "code": "fues1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Muashre Ki Daryaft Hindustan Aur Us Se Aage",
+  "subject": "Muashre Ki Daryaft"
+ },
+ {
+  "code": "fepr1",
+  "class": 6,
+  "medium": "en",
+  "title": "Poorvi",
+  "subject": "Poorvi"
+ },
+ {
+  "code": "fhsk1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Ruchira",
+  "subject": "Ruchira"
+ },
+ {
+  "code": "fhes1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Samaj ka Aadhyan: Bharat or uske aage",
+  "subject": "Samaj Ka Aadhyan"
+ },
+ {
+  "code": "fuss1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Samazi Aur Siyasi Zindagi",
+  "subject": "Samazi Aur Siyasi"
+ },
+ {
+  "code": "fecu1",
+  "class": 6,
+  "medium": "en",
+  "title": "Curiosity",
+  "subject": "Science"
+ },
+ {
+  "code": "fesc1",
+  "class": 6,
+  "medium": "en",
+  "title": "Science",
+  "subject": "Science"
+ },
+ {
+  "code": "fhsc1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Vigyan",
+  "subject": "Science"
+ },
+ {
+  "code": "fuse1",
+  "class": 6,
+  "medium": "ur",
+  "title": "science-VI",
+  "subject": "Science"
+ },
+ {
+  "code": "fhss3",
+  "class": 6,
+  "medium": "hi",
+  "title": "Samajik Evam Rajnitik Jeevan",
+  "subject": "Social Science"
+ },
+ {
+  "code": "fucu1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Tajassus",
+  "subject": "Tajassus"
+ },
+ {
+  "code": "fuug1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Urdu Guldasta",
+  "subject": "Urdu"
+ },
+ {
+  "code": "fhvs1",
+  "class": 6,
+  "medium": "hi",
+  "title": "Vasant",
+  "subject": "Vasant"
+ },
+ {
+  "code": "fuzm1",
+  "class": 6,
+  "medium": "ur",
+  "title": "Zameen Hamara Maskan",
+  "subject": "Zameen Hamara Maskan"
+ },
+ {
+  "code": "guaz1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Apni Zaban",
+  "subject": "Apni Zaban"
+ },
+ {
+  "code": "ghmb1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Bal Mahabharat Katha",
+  "subject": "Bal Mahabharat Katha"
+ },
+ {
+  "code": "gess3",
+  "class": 7,
+  "medium": "en",
+  "title": "Social and Political Life-2",
+  "subject": "Civics"
+ },
+ {
+  "code": "ghss3",
+  "class": 7,
+  "medium": "hi",
+  "title": "Samkalin aur Rajniti Jeevan-2",
+  "subject": "Civics"
+ },
+ {
+  "code": "gudp1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Door-Pass",
+  "subject": "Door-Pass"
+ },
+ {
+  "code": "ghdv1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Durva Bhag-2",
+  "subject": "Durva Bhag-2"
+ },
+ {
+  "code": "gemp1",
+  "class": 7,
+  "medium": "en",
+  "title": "Exemplar Problems (English)",
+  "subject": "English"
+ },
+ {
+  "code": "gees1",
+  "class": 7,
+  "medium": "en",
+  "title": "Exploring Society India and Beyond",
+  "subject": "Exploring Society India"
+ },
+ {
+  "code": "gees2",
+  "class": 7,
+  "medium": "en",
+  "title": "Exploring Society India and Beyond Part 2",
+  "subject": "Exploring Society India"
+ },
+ {
+  "code": "gess2",
+  "class": 7,
+  "medium": "en",
+  "title": "Geography-Our Environment",
+  "subject": "Geography"
+ },
+ {
+  "code": "ghss2",
+  "class": 7,
+  "medium": "hi",
+  "title": "Bhugol-Hamare Paryavaran",
+  "subject": "Geography"
+ },
+ {
+  "code": "guha1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Hamare Mahol (Geography)",
+  "subject": "Geography"
+ },
+ {
+  "code": "ghkb1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Kaushal Bodh(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "ghkr1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Kriti-I (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "ghky1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Khel Yatra (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "gess1",
+  "class": 7,
+  "medium": "en",
+  "title": "History-Our Pasts II",
+  "subject": "History"
+ },
+ {
+  "code": "ghss1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Itihas-Hamare Atit II",
+  "subject": "History"
+ },
+ {
+  "code": "guhm1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Hamare Mazi (History)",
+  "subject": "History"
+ },
+ {
+  "code": "guhs1",
+  "class": 7,
+  "medium": "ur",
+  "title": "HISTORY-VIII PART-I (Urdu)",
+  "subject": "History"
+ },
+ {
+  "code": "guhs2",
+  "class": 7,
+  "medium": "ur",
+  "title": "HISTORY-VIII PART-II (Urdu)",
+  "subject": "History"
+ },
+ {
+  "code": "gehc1",
+  "class": 7,
+  "medium": "en",
+  "title": "Honeycomb",
+  "subject": "Honeycomb"
+ },
+ {
+  "code": "ghcu1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Jigyasa",
+  "subject": "Jigyasa"
+ },
+ {
+  "code": "gekb1",
+  "class": 7,
+  "medium": "en",
+  "title": "Kaushal Bodh",
+  "subject": "Kaushal Bodh"
+ },
+ {
+  "code": "guky1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Khayal",
+  "subject": "Khayal"
+ },
+ {
+  "code": "geky1",
+  "class": 7,
+  "medium": "en",
+  "title": "Khel Yatra",
+  "subject": "Khel Yatra"
+ },
+ {
+  "code": "gekr1",
+  "class": 7,
+  "medium": "en",
+  "title": "Kriti",
+  "subject": "Kriti"
+ },
+ {
+  "code": "ghml1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Malhar",
+  "subject": "Malhar"
+ },
+ {
+  "code": "gegp1",
+  "class": 7,
+  "medium": "en",
+  "title": "Ganita Prakash",
+  "subject": "Maths"
+ },
+ {
+  "code": "gegp2",
+  "class": 7,
+  "medium": "en",
+  "title": "Ganita Prakash II",
+  "subject": "Maths"
+ },
+ {
+  "code": "ghgp1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Ganita Prakash(Hindi)",
+  "subject": "Maths"
+ },
+ {
+  "code": "ghgp2",
+  "class": 7,
+  "medium": "hi",
+  "title": "Ganita Prakash II (Hindi)",
+  "subject": "Maths"
+ },
+ {
+  "code": "ghmh1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Ganit",
+  "subject": "Maths"
+ },
+ {
+  "code": "gugp1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Ganita Prakash(Urdu)",
+  "subject": "Maths"
+ },
+ {
+  "code": "guma1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Math (Urdu)",
+  "subject": "Maths"
+ },
+ {
+  "code": "gues1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Muashrey ki Daryaft - Hindustan aur Uske age",
+  "subject": "Muashrey Ki Daryaft"
+ },
+ {
+  "code": "gues2",
+  "class": 7,
+  "medium": "ur",
+  "title": "Muashrey ki Daryaft - Hindustan aur Uske age Part-II",
+  "subject": "Muashrey Ki Daryaft"
+ },
+ {
+  "code": "geof1",
+  "class": 7,
+  "medium": "en",
+  "title": "Organic Farming",
+  "subject": "Organic Farming"
+ },
+ {
+  "code": "gepr1",
+  "class": 7,
+  "medium": "en",
+  "title": "Poorvi",
+  "subject": "Poorvi"
+ },
+ {
+  "code": "ghsk1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Ruchira",
+  "subject": "Ruchira"
+ },
+ {
+  "code": "ghes1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Samaj ka Aadhyan: Bharat or uske aage",
+  "subject": "Samaj Ka Aadhyan"
+ },
+ {
+  "code": "ghes2",
+  "class": 7,
+  "medium": "hi",
+  "title": "Samaj Ka Aadhyan: Bharat or uske aage Part-II",
+  "subject": "Samaj Ka Aadhyan"
+ },
+ {
+  "code": "gecu1",
+  "class": 7,
+  "medium": "en",
+  "title": "Curiosity",
+  "subject": "Science"
+ },
+ {
+  "code": "gesc1",
+  "class": 7,
+  "medium": "en",
+  "title": "Science",
+  "subject": "Science"
+ },
+ {
+  "code": "ghsc1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Vigyan",
+  "subject": "Science"
+ },
+ {
+  "code": "guse1",
+  "class": 7,
+  "medium": "ur",
+  "title": "SCIENCE (Urdu)",
+  "subject": "Science"
+ },
+ {
+  "code": "guss3",
+  "class": 7,
+  "medium": "ur",
+  "title": "Samajik Aur Siyasi Zindagi",
+  "subject": "Social Science"
+ },
+ {
+  "code": "gucu1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Tazassus",
+  "subject": "Tazassus"
+ },
+ {
+  "code": "geah1",
+  "class": 7,
+  "medium": "en",
+  "title": "The Alien Hand Supplementry",
+  "subject": "The Alien Hand"
+ },
+ {
+  "code": "gugu1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Urdu Guldasta-Suppl",
+  "subject": "Urdu"
+ },
+ {
+  "code": "gukl1",
+  "class": 7,
+  "medium": "ur",
+  "title": "Khel Yatra(Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "ghvs1",
+  "class": 7,
+  "medium": "hi",
+  "title": "Vasant",
+  "subject": "Vasant"
+ },
+ {
+  "code": "huaz1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Apni Zaban",
+  "subject": "Apni Zaban"
+ },
+ {
+  "code": "hhbk1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Bharat ki Khoj",
+  "subject": "Bharat Ki Khoj"
+ },
+ {
+  "code": "hess3",
+  "class": 8,
+  "medium": "en",
+  "title": "Social and Political Life",
+  "subject": "Civics"
+ },
+ {
+  "code": "hudp1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Door Pass",
+  "subject": "Door Pass"
+ },
+ {
+  "code": "hhdv1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Durva",
+  "subject": "Durva"
+ },
+ {
+  "code": "heep2",
+  "class": 8,
+  "medium": "en",
+  "title": "Exemplar Problems",
+  "subject": "Exemplar Problems"
+ },
+ {
+  "code": "hhep2",
+  "class": 8,
+  "medium": "hi",
+  "title": "Exemplar Problems",
+  "subject": "Exemplar Problems"
+ },
+ {
+  "code": "hees1",
+  "class": 8,
+  "medium": "en",
+  "title": "Exploring Society India and Beyond Part-I",
+  "subject": "Exploring Society India"
+ },
+ {
+  "code": "hees2",
+  "class": 8,
+  "medium": "en",
+  "title": "Exploring Society India and Beyond Part-II",
+  "subject": "Exploring Society India"
+ },
+ {
+  "code": "hess4",
+  "class": 8,
+  "medium": "en",
+  "title": "Resourse and Developement (Geography)",
+  "subject": "Geography"
+ },
+ {
+  "code": "hhss4",
+  "class": 8,
+  "medium": "hi",
+  "title": "Sansadhan aur Vikas (Bhugol)",
+  "subject": "Geography"
+ },
+ {
+  "code": "hhkb1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Kaushal Bodh (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "hhkr1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Kriti (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "hhky1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Khel Yatra (Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "hess1",
+  "class": 8,
+  "medium": "en",
+  "title": "Our Past III (Part I)",
+  "subject": "History"
+ },
+ {
+  "code": "hess2",
+  "class": 8,
+  "medium": "en",
+  "title": "Our Past III",
+  "subject": "History"
+ },
+ {
+  "code": "hhss1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Hamare Atit III (Itihas)",
+  "subject": "History"
+ },
+ {
+  "code": "hhss2",
+  "class": 8,
+  "medium": "hi",
+  "title": "Hamare Atit III (Bhag-II)",
+  "subject": "History"
+ },
+ {
+  "code": "huhm1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Hamare Mazi-III",
+  "subject": "History"
+ },
+ {
+  "code": "hehd1",
+  "class": 8,
+  "medium": "en",
+  "title": "Honeydew",
+  "subject": "Honeydew"
+ },
+ {
+  "code": "heih1",
+  "class": 8,
+  "medium": "en",
+  "title": "It So Happened",
+  "subject": "It So Happened"
+ },
+ {
+  "code": "hujp1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Jaan Pahechan",
+  "subject": "Jaan Pahechan"
+ },
+ {
+  "code": "hhcu1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Jigyasa",
+  "subject": "Jigyasa"
+ },
+ {
+  "code": "hekb1",
+  "class": 8,
+  "medium": "en",
+  "title": "Kaushal Bodh",
+  "subject": "Kaushal Bodh"
+ },
+ {
+  "code": "hukl1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Khayal",
+  "subject": "Khayal"
+ },
+ {
+  "code": "heky1",
+  "class": 8,
+  "medium": "en",
+  "title": "Khel Yatra",
+  "subject": "Khel Yatra"
+ },
+ {
+  "code": "hekr1",
+  "class": 8,
+  "medium": "en",
+  "title": "Kriti",
+  "subject": "Kriti"
+ },
+ {
+  "code": "hhml1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Malhar",
+  "subject": "Malhar"
+ },
+ {
+  "code": "hegp1",
+  "class": 8,
+  "medium": "en",
+  "title": "Ganita Prakash",
+  "subject": "Maths"
+ },
+ {
+  "code": "hegp2",
+  "class": 8,
+  "medium": "en",
+  "title": "Ganita Prakash II",
+  "subject": "Maths"
+ },
+ {
+  "code": "hemh1",
+  "class": 8,
+  "medium": "en",
+  "title": "Mathematics",
+  "subject": "Maths"
+ },
+ {
+  "code": "hhgp1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Ganita Prakash (Hindi)",
+  "subject": "Maths"
+ },
+ {
+  "code": "hhmh1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Ganit",
+  "subject": "Maths"
+ },
+ {
+  "code": "hugp1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Ganita Prakash (Urdu)",
+  "subject": "Maths"
+ },
+ {
+  "code": "huhi1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Riyazi",
+  "subject": "Maths"
+ },
+ {
+  "code": "hues1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Muashrey ki Daryaft - Hindustan Aur Uske Age Part-I",
+  "subject": "Muashrey Ki Daryaft"
+ },
+ {
+  "code": "hepr1",
+  "class": 8,
+  "medium": "en",
+  "title": "Poorvi",
+  "subject": "Poorvi"
+ },
+ {
+  "code": "hhsk1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Ruchira",
+  "subject": "Ruchira"
+ },
+ {
+  "code": "hhes1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Samaj Ka Aadhyan: Bharat or uske aage Part-I",
+  "subject": "Samaj Ka Aadhyan"
+ },
+ {
+  "code": "huss1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Samaji Aur Siyasi Zindagi",
+  "subject": "Samaji Aur Siyasi"
+ },
+ {
+  "code": "hhsb1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Sanshipt Budhcharit",
+  "subject": "Sanshipt Budhcharit"
+ },
+ {
+  "code": "hecu1",
+  "class": 8,
+  "medium": "en",
+  "title": "Curiosity",
+  "subject": "Science"
+ },
+ {
+  "code": "hesc1",
+  "class": 8,
+  "medium": "en",
+  "title": "Science",
+  "subject": "Science"
+ },
+ {
+  "code": "hhsc1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Vigyan",
+  "subject": "Science"
+ },
+ {
+  "code": "huse1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Science",
+  "subject": "Science"
+ },
+ {
+  "code": "hhss3",
+  "class": 8,
+  "medium": "hi",
+  "title": "Samajik avam Rajnitik Jeevan",
+  "subject": "Social Science"
+ },
+ {
+  "code": "hucu1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Tajassus",
+  "subject": "Tajassus"
+ },
+ {
+  "code": "hugy1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Wasayel aur Taraqqui(Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "hukr1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Kriti (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "huky1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Khel Yatra (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "huug1",
+  "class": 8,
+  "medium": "ur",
+  "title": "Urdu Guldasta (Supl)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "hhvs1",
+  "class": 8,
+  "medium": "hi",
+  "title": "Vasant",
+  "subject": "Vasant"
+ },
+ {
+  "code": "ihsc1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Anveshan",
+  "subject": "Anveshan"
+ },
+ {
+  "code": "ievt1",
+  "class": 9,
+  "medium": "en",
+  "title": "Assistant Beauty Therapist",
+  "subject": "Assistant Beauty Therapist"
+ },
+ {
+  "code": "ihss3",
+  "class": 9,
+  "medium": "hi",
+  "title": "Bharat Aur Samkalin Vishwa-I",
+  "subject": "Bharat Aur Samkalin"
+ },
+ {
+  "code": "ievc1",
+  "class": 9,
+  "medium": "en",
+  "title": "Cashier",
+  "subject": "Cashier"
+ },
+ {
+  "code": "ihss4",
+  "class": 9,
+  "medium": "hi",
+  "title": "Loktantrik Rajniti",
+  "subject": "Civics"
+ },
+ {
+  "code": "iess1",
+  "class": 9,
+  "medium": "en",
+  "title": "Contemporary India",
+  "subject": "Contemporary India"
+ },
+ {
+  "code": "iess4",
+  "class": 9,
+  "medium": "en",
+  "title": "Democratic Politics",
+  "subject": "Democratic Politics"
+ },
+ {
+  "code": "iudp1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Door Pass",
+  "subject": "Door Pass"
+ },
+ {
+  "code": "iess2",
+  "class": 9,
+  "medium": "en",
+  "title": "Economics",
+  "subject": "Economics"
+ },
+ {
+  "code": "ihss2",
+  "class": 9,
+  "medium": "hi",
+  "title": "Arthashastra",
+  "subject": "Economics"
+ },
+ {
+  "code": "iees1",
+  "class": 9,
+  "medium": "en",
+  "title": "Employability Skill",
+  "subject": "Employability Skill"
+ },
+ {
+  "code": "ieep1",
+  "class": 9,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "ieep2",
+  "class": 9,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "ielm1",
+  "class": 9,
+  "medium": "en",
+  "title": "Lab Manual(English)",
+  "subject": "English"
+ },
+ {
+  "code": "iesc1",
+  "class": 9,
+  "medium": "en",
+  "title": "Exploration",
+  "subject": "Exploration"
+ },
+ {
+  "code": "ihga1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Ganga",
+  "subject": "Ganga"
+ },
+ {
+  "code": "ieve1",
+  "class": 9,
+  "medium": "en",
+  "title": "Health Embroiderer (Addawala)",
+  "subject": "Health and Physical Education"
+ },
+ {
+  "code": "ievh1",
+  "class": 9,
+  "medium": "en",
+  "title": "Health Embroiderer",
+  "subject": "Health and Physical Education"
+ },
+ {
+  "code": "ievw1",
+  "class": 9,
+  "medium": "en",
+  "title": "Animal Health Worker (Agriculture)",
+  "subject": "Health and Physical Education"
+ },
+ {
+  "code": "ihep1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "ihep2",
+  "class": 9,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "ihlm1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Lab Manual(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "iess3",
+  "class": 9,
+  "medium": "en",
+  "title": "India and the Contemporary World-I",
+  "subject": "India And The"
+ },
+ {
+  "code": "ieeo1",
+  "class": 9,
+  "medium": "en",
+  "title": "IT Domestic Data Entry Operator",
+  "subject": "It Domestic Data"
+ },
+ {
+  "code": "iujp1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Jaan Pahechan",
+  "subject": "Jaan Pahechan"
+ },
+ {
+  "code": "iuju1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Jamuna",
+  "subject": "Jamuna"
+ },
+ {
+  "code": "iebe1",
+  "class": 9,
+  "medium": "en",
+  "title": "Kaveri",
+  "subject": "Kaveri"
+ },
+ {
+  "code": "iehp1",
+  "class": 9,
+  "medium": "en",
+  "title": "Khel Praveen",
+  "subject": "Khel Praveen"
+ },
+ {
+  "code": "ihkr1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Kritika",
+  "subject": "Kritika"
+ },
+ {
+  "code": "ihks1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Kshitij",
+  "subject": "Kshitij"
+ },
+ {
+  "code": "iemr1",
+  "class": 9,
+  "medium": "en",
+  "title": "Madhurima",
+  "subject": "Madhurima"
+ },
+ {
+  "code": "iemh1",
+  "class": 9,
+  "medium": "en",
+  "title": "Ganita Manjari",
+  "subject": "Maths"
+ },
+ {
+  "code": "ihmh1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Ganita Manjari (Hindi)",
+  "subject": "Maths"
+ },
+ {
+  "code": "iemo1",
+  "class": 9,
+  "medium": "en",
+  "title": "Moments Supplementary Reader",
+  "subject": "Moments Supplementary Reader"
+ },
+ {
+  "code": "iepg1",
+  "class": 9,
+  "medium": "en",
+  "title": "Plumber General",
+  "subject": "Plumber General"
+ },
+ {
+  "code": "iusr1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Sab Rang",
+  "subject": "Sab Rang"
+ },
+ {
+  "code": "ihss1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Samkalin Bharat",
+  "subject": "Samkalin Bharat"
+ },
+ {
+  "code": "ihsa1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Sanchayan",
+  "subject": "Sanchayan"
+ },
+ {
+  "code": "iusc1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Science (Urdu)",
+  "subject": "Science"
+ },
+ {
+  "code": "ihsh1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Sharada",
+  "subject": "Sharada"
+ },
+ {
+  "code": "ievs1",
+  "class": 9,
+  "medium": "en",
+  "title": "Solanceous Crop Cultivator",
+  "subject": "Solanceous Crop Cultivator"
+ },
+ {
+  "code": "ihsp1",
+  "class": 9,
+  "medium": "hi",
+  "title": "Sprash",
+  "subject": "Sprash"
+ },
+ {
+  "code": "ieva1",
+  "class": 9,
+  "medium": "en",
+  "title": "Store Operations Assistant",
+  "subject": "Store Operations Assistant"
+ },
+ {
+  "code": "iest1",
+  "class": 9,
+  "medium": "en",
+  "title": "Understanding Society India and Beyond PART-I",
+  "subject": "Understanding Society India"
+ },
+ {
+  "code": "iuau1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Urdu ki Adabi Asnaf",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iuge1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Geographia(Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iugu1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Gulzare-e-urdu",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iuhi1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Hindustan Aur Asri Dunia-I(Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iumh1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Reyazi (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iuna1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Nawa-e-urdu",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iuss1",
+  "class": 9,
+  "medium": "ur",
+  "title": "Aasri Hindustan (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iuss2",
+  "class": 9,
+  "medium": "ur",
+  "title": "Mashiyat (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iuss4",
+  "class": 9,
+  "medium": "ur",
+  "title": "Jamhuri Syasat(Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "iewe1",
+  "class": 9,
+  "medium": "en",
+  "title": "Words and Expressions",
+  "subject": "Words And Expressions"
+ },
+ {
+  "code": "juss1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Aasri Hindustan-II",
+  "subject": "Aasri Hindustan-Ii"
+ },
+ {
+  "code": "jhss2",
+  "class": 10,
+  "medium": "hi",
+  "title": "Arthik Vikas ki Samajh",
+  "subject": "Arthik Vikas Ki"
+ },
+ {
+  "code": "jhss3",
+  "class": 10,
+  "medium": "hi",
+  "title": "Bharat Aur Samakalin Vishav-2",
+  "subject": "Bharat Aur Samakalin"
+ },
+ {
+  "code": "jhss4",
+  "class": 10,
+  "medium": "hi",
+  "title": "Loktantrik Rajniti",
+  "subject": "Civics"
+ },
+ {
+  "code": "jess1",
+  "class": 10,
+  "medium": "en",
+  "title": "Contemporary India",
+  "subject": "Contemporary India"
+ },
+ {
+  "code": "jess4",
+  "class": 10,
+  "medium": "en",
+  "title": "Democratic Politics",
+  "subject": "Democratic Politics"
+ },
+ {
+  "code": "judp1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Door-Paas",
+  "subject": "Door-Paas"
+ },
+ {
+  "code": "jeep1",
+  "class": 10,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "jeep2",
+  "class": 10,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "jelm1",
+  "class": 10,
+  "medium": "en",
+  "title": "Lab Manual(English)",
+  "subject": "English"
+ },
+ {
+  "code": "jeff1",
+  "class": 10,
+  "medium": "en",
+  "title": "First Flight",
+  "subject": "First Flight"
+ },
+ {
+  "code": "jefp1",
+  "class": 10,
+  "medium": "en",
+  "title": "Footprints without Feet",
+  "subject": "Footprints Without Feet"
+ },
+ {
+  "code": "jehp1",
+  "class": 10,
+  "medium": "en",
+  "title": "Health and Physical Education",
+  "subject": "Health and Physical Education"
+ },
+ {
+  "code": "jhep1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "jhep2",
+  "class": 10,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "jhlm1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Lab Manual(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "juss3",
+  "class": 10,
+  "medium": "ur",
+  "title": "Hindustan Aur Asri Duniya",
+  "subject": "Hindustan Aur Asri"
+ },
+ {
+  "code": "jess3",
+  "class": 10,
+  "medium": "en",
+  "title": "India and the Contemporary World-II",
+  "subject": "India And The"
+ },
+ {
+  "code": "jujp1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Jaan Pahechan",
+  "subject": "Jaan Pahechan"
+ },
+ {
+  "code": "juss4",
+  "class": 10,
+  "medium": "ur",
+  "title": "Jamhuri Siyasat-II",
+  "subject": "Jamhuri Siyasat-Ii"
+ },
+ {
+  "code": "jhkr1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Kritika",
+  "subject": "Kritika"
+ },
+ {
+  "code": "jhks1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Kshitij-2",
+  "subject": "Kshitij-2"
+ },
+ {
+  "code": "juss2",
+  "class": 10,
+  "medium": "ur",
+  "title": "Maashi Taraqqui Ki Samajh",
+  "subject": "Maashi Taraqqui Ki"
+ },
+ {
+  "code": "jemh1",
+  "class": 10,
+  "medium": "en",
+  "title": "Mathematics",
+  "subject": "Maths"
+ },
+ {
+  "code": "jhmh1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Ganit",
+  "subject": "Maths"
+ },
+ {
+  "code": "jumh1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Riyazi",
+  "subject": "Maths"
+ },
+ {
+  "code": "jusr1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Sab Rang",
+  "subject": "Sab Rang"
+ },
+ {
+  "code": "jhss1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Samkalin Bharat",
+  "subject": "Samkalin Bharat"
+ },
+ {
+  "code": "jhsy1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Sanchayan Bhag-2",
+  "subject": "Sanchayan Bhag-2"
+ },
+ {
+  "code": "jesc1",
+  "class": 10,
+  "medium": "en",
+  "title": "Science",
+  "subject": "Science"
+ },
+ {
+  "code": "jhsc1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Vigyan",
+  "subject": "Science"
+ },
+ {
+  "code": "jusc1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Science (Urdu)",
+  "subject": "Science"
+ },
+ {
+  "code": "jhsk1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Shemushi",
+  "subject": "Shemushi"
+ },
+ {
+  "code": "jhsp1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Sparsh",
+  "subject": "Sparsh"
+ },
+ {
+  "code": "jess2",
+  "class": 10,
+  "medium": "en",
+  "title": "Understanding Economic Development",
+  "subject": "Understanding Economic Development"
+ },
+ {
+  "code": "juge1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Gulzar-e-Urdu",
+  "subject": "Urdu"
+ },
+ {
+  "code": "june1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Nawa-e-Urdu",
+  "subject": "Urdu"
+ },
+ {
+  "code": "juuq1",
+  "class": 10,
+  "medium": "ur",
+  "title": "Urdu Qwaid aur Insha",
+  "subject": "Urdu"
+ },
+ {
+  "code": "jhva1",
+  "class": 10,
+  "medium": "hi",
+  "title": "Vyakaranavithi",
+  "subject": "Vyakaranavithi"
+ },
+ {
+  "code": "jewe2",
+  "class": 10,
+  "medium": "en",
+  "title": "Words and Expressions -II",
+  "subject": "Words And Expressions"
+ },
+ {
+  "code": "kham1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Abhivyakti Aur Madhyam",
+  "subject": "Abhivyakti Aur Madhyam"
+ },
+ {
+  "code": "keac2",
+  "class": 11,
+  "medium": "en",
+  "title": "Accountancy-II",
+  "subject": "Accountancy"
+ },
+ {
+  "code": "kefa1",
+  "class": 11,
+  "medium": "en",
+  "title": "An Introduction to Indian Art Part-I",
+  "subject": "An Introduction To"
+ },
+ {
+  "code": "khat1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Antra",
+  "subject": "Antra"
+ },
+ {
+  "code": "khan1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Antral",
+  "subject": "Antral"
+ },
+ {
+  "code": "khar1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Aroh",
+  "subject": "Aroh"
+ },
+ {
+  "code": "khps2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bharat ka Samvidhan Sidhant aur Vavhar",
+  "subject": "Bharat Ka Samvidhan"
+ },
+ {
+  "code": "khgy1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhart Bhautik Paryabaran",
+  "subject": "Bhart Bhautik Paryabaran"
+ },
+ {
+  "code": "khec1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhartiya Airthvavstha Ka Vikash",
+  "subject": "Bhartiya Airthvavstha Ka"
+ },
+ {
+  "code": "khhc1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhartiya Hastkala Parmparaon ki Khoj",
+  "subject": "Bhartiya Hastkala Parmparaon"
+ },
+ {
+  "code": "khfa1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhartiya kala ek parichay",
+  "subject": "Bhartiya Kala Ek"
+ },
+ {
+  "code": "khsk1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhaswati",
+  "subject": "Bhaswati"
+ },
+ {
+  "code": "kebo1",
+  "class": 11,
+  "medium": "en",
+  "title": "Biology",
+  "subject": "Biology"
+ },
+ {
+  "code": "khbo1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Jeev Vigyan",
+  "subject": "Biology"
+ },
+ {
+  "code": "kebt1",
+  "class": 11,
+  "medium": "en",
+  "title": "Biotechnology",
+  "subject": "Biotechnology"
+ },
+ {
+  "code": "kebs1",
+  "class": 11,
+  "medium": "en",
+  "title": "Business Studies",
+  "subject": "Business Studies"
+ },
+ {
+  "code": "kech2",
+  "class": 11,
+  "medium": "en",
+  "title": "Chemistry Part II",
+  "subject": "Chemistry"
+ },
+ {
+  "code": "khch1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Rasayan Vigyan bhag-I",
+  "subject": "Chemistry"
+ },
+ {
+  "code": "khch2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Rasayan Vigyan bhag-II",
+  "subject": "Chemistry"
+ },
+ {
+  "code": "keps1",
+  "class": 11,
+  "medium": "en",
+  "title": "Political Theory",
+  "subject": "Civics"
+ },
+ {
+  "code": "kect1",
+  "class": 11,
+  "medium": "en",
+  "title": "Computers and Communication Technology",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "kect2",
+  "class": 11,
+  "medium": "en",
+  "title": "Computers and Communication Technology",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "keip1",
+  "class": 11,
+  "medium": "en",
+  "title": "Informatics Practices",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "khct1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Computer Aur Sanchaar Prodhogiki -I",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "khct2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Computer Aur Sanchaar Prodhogiki -II",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "kuct1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Computer Aur Muwaslati Technology I",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "kuct2",
+  "class": 11,
+  "medium": "ur",
+  "title": "Computer Aur Muwaslati Technology II",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "kedf1",
+  "class": 11,
+  "medium": "en",
+  "title": "Dair Farmer Enterpreneur",
+  "subject": "Dair Farmer Enterpreneur"
+ },
+ {
+  "code": "kuhc2",
+  "class": 11,
+  "medium": "ur",
+  "title": "Dastakari",
+  "subject": "Dastakari"
+ },
+ {
+  "code": "kudh1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Dhanak",
+  "subject": "Dhanak"
+ },
+ {
+  "code": "kest1",
+  "class": 11,
+  "medium": "en",
+  "title": "Statistics for Economics",
+  "subject": "Economics"
+ },
+ {
+  "code": "keep2",
+  "class": 11,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "keep3",
+  "class": 11,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "keep4",
+  "class": 11,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "keep5",
+  "class": 11,
+  "medium": "en",
+  "title": "Exemplar Problem(English)",
+  "subject": "English"
+ },
+ {
+  "code": "kelm1",
+  "class": 11,
+  "medium": "en",
+  "title": "Lab Manual(English)",
+  "subject": "English"
+ },
+ {
+  "code": "kelm2",
+  "class": 11,
+  "medium": "en",
+  "title": "Lab Manual(English)",
+  "subject": "English"
+ },
+ {
+  "code": "kelm3",
+  "class": 11,
+  "medium": "en",
+  "title": "Lab Manual(English)",
+  "subject": "English"
+ },
+ {
+  "code": "kesp1",
+  "class": 11,
+  "medium": "en",
+  "title": "Snapshots Suppl.Reader English",
+  "subject": "English"
+ },
+ {
+  "code": "keac1",
+  "class": 11,
+  "medium": "en",
+  "title": "Financial Accounting-I",
+  "subject": "Financial Accounting-I"
+ },
+ {
+  "code": "kefc1",
+  "class": 11,
+  "medium": "en",
+  "title": "Floriculturist",
+  "subject": "Floriculturist"
+ },
+ {
+  "code": "keoc1",
+  "class": 11,
+  "medium": "en",
+  "title": "Floriculturist",
+  "subject": "Floriculturist"
+ },
+ {
+  "code": "keda1",
+  "class": 11,
+  "medium": "en",
+  "title": "General Duty Assistant",
+  "subject": "General Duty Assistant"
+ },
+ {
+  "code": "kegy2",
+  "class": 11,
+  "medium": "en",
+  "title": "Fundamental of Physical Geography",
+  "subject": "Geography"
+ },
+ {
+  "code": "kegy3",
+  "class": 11,
+  "medium": "en",
+  "title": "Pratical Work in Geography",
+  "subject": "Geography"
+ },
+ {
+  "code": "khgy2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhutiq Bhugol ke Mul Sidhant",
+  "subject": "Geography"
+ },
+ {
+  "code": "khgy3",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhugol Main Prayogatmak Karya",
+  "subject": "Geography"
+ },
+ {
+  "code": "khgd1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Graphics Design ek Kahani",
+  "subject": "Graphics Design Ek"
+ },
+ {
+  "code": "kuga1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Gulzar-e-Adab",
+  "subject": "Gulzar-E-Adab"
+ },
+ {
+  "code": "kubo1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Hayatiyaat",
+  "subject": "Hayatiyaat"
+ },
+ {
+  "code": "kehp1",
+  "class": 11,
+  "medium": "en",
+  "title": "Health and Physical Education",
+  "subject": "Health and Physical Education"
+ },
+ {
+  "code": "khep2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "khep3",
+  "class": 11,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "khep4",
+  "class": 11,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "khep5",
+  "class": 11,
+  "medium": "hi",
+  "title": "Exemplar Problem(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "khlm2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Lab Manual(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "kups1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Hindustan Aain Aur Kam",
+  "subject": "Hindustan Aain Aur"
+ },
+ {
+  "code": "kuec1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Hindustan ki Masshi Tarraqiu",
+  "subject": "Hindustan Ki Masshi"
+ },
+ {
+  "code": "kuhc1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Hindustan me Dastkari Ki Riwayat",
+  "subject": "Hindustan Me Dastkari"
+ },
+ {
+  "code": "khgv1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Hindustani Sangeet Gayan Evam Vadan",
+  "subject": "Hindustani Sangeet Gayan"
+ },
+ {
+  "code": "kehb1",
+  "class": 11,
+  "medium": "en",
+  "title": "Hornbill",
+  "subject": "Hornbill"
+ },
+ {
+  "code": "keps2",
+  "class": 11,
+  "medium": "en",
+  "title": "India Constitution at Work",
+  "subject": "India Constitution At"
+ },
+ {
+  "code": "kegy1",
+  "class": 11,
+  "medium": "en",
+  "title": "India Physical Environment",
+  "subject": "India Physical Environment"
+ },
+ {
+  "code": "kuic1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Indian Constitution at Work",
+  "subject": "Indian Constitution At"
+ },
+ {
+  "code": "keec1",
+  "class": 11,
+  "medium": "en",
+  "title": "Indian Economic Development",
+  "subject": "Indian Economic Development"
+ },
+ {
+  "code": "kuiz1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Izhar Aur Zara-e-Izhar",
+  "subject": "Izhar Aur Zara-E-Izhar"
+ },
+ {
+  "code": "kubs1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Karobari Mutalah I",
+  "subject": "Karobari Mutalah I"
+ },
+ {
+  "code": "kuch2",
+  "class": 11,
+  "medium": "ur",
+  "title": "Keemiya II",
+  "subject": "Keemiya Ii"
+ },
+ {
+  "code": "kuac1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Khatadari-I",
+  "subject": "Khatadari-I"
+ },
+ {
+  "code": "kuac2",
+  "class": 11,
+  "medium": "ur",
+  "title": "Khatadari-II",
+  "subject": "Khatadari-Ii"
+ },
+ {
+  "code": "keks1",
+  "class": 11,
+  "medium": "en",
+  "title": "Knowledge Traditions and Practices of India",
+  "subject": "Knowledge Traditions And"
+ },
+ {
+  "code": "khac1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Lekhashastra-I",
+  "subject": "Lekhashastra-I"
+ },
+ {
+  "code": "khac2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Lekhashastra-II",
+  "subject": "Lekhashastra-Ii"
+ },
+ {
+  "code": "kehc1",
+  "class": 11,
+  "medium": "en",
+  "title": "Living Craft Tradition of India",
+  "subject": "Living Craft Tradition"
+ },
+ {
+  "code": "khpy1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Manovigyan",
+  "subject": "Manovigyan"
+ },
+ {
+  "code": "kemh1",
+  "class": 11,
+  "medium": "en",
+  "title": "Mathematics",
+  "subject": "Maths"
+ },
+ {
+  "code": "khmh1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Ganit",
+  "subject": "Maths"
+ },
+ {
+  "code": "kumh1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Riyazi I",
+  "subject": "Maths"
+ },
+ {
+  "code": "kusy2",
+  "class": 11,
+  "medium": "ur",
+  "title": "Mutala-e-Muashira",
+  "subject": "Mutala-E-Muashira"
+ },
+ {
+  "code": "kupy1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Nafsiyaat",
+  "subject": "Nafsiyaat"
+ },
+ {
+  "code": "kuna1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Nai Awaz",
+  "subject": "Nai Awaz"
+ },
+ {
+  "code": "keph1",
+  "class": 11,
+  "medium": "en",
+  "title": "Physics Part-I",
+  "subject": "Physics"
+ },
+ {
+  "code": "keph2",
+  "class": 11,
+  "medium": "en",
+  "title": "Physics Part-II",
+  "subject": "Physics"
+ },
+ {
+  "code": "khph1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhautiki-I",
+  "subject": "Physics"
+ },
+ {
+  "code": "khph2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Bhautiki-II",
+  "subject": "Physics"
+ },
+ {
+  "code": "kepy1",
+  "class": 11,
+  "medium": "en",
+  "title": "Psychology",
+  "subject": "Psychology"
+ },
+ {
+  "code": "khps1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Raajneeti Sidhant",
+  "subject": "Raajneeti Sidhant"
+ },
+ {
+  "code": "khsy2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Samaj ka Bodh",
+  "subject": "Samaj Ka Bodh"
+ },
+ {
+  "code": "khsy1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Samaj Shastra Parichay-I",
+  "subject": "Samaj Shastra Parichay-I"
+ },
+ {
+  "code": "kusy1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Samajiyaat Ka Tarf",
+  "subject": "Samajiyaat Ka Tarf"
+ },
+ {
+  "code": "khst1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Sankhyiki",
+  "subject": "Sankhyiki"
+ },
+ {
+  "code": "kehe1",
+  "class": 11,
+  "medium": "en",
+  "title": "Human Ecology and Family Sciences Part I",
+  "subject": "Science"
+ },
+ {
+  "code": "kehe2",
+  "class": 11,
+  "medium": "en",
+  "title": "Human Ecology and Family Sciences Part II",
+  "subject": "Science"
+ },
+ {
+  "code": "khsk2",
+  "class": 11,
+  "medium": "hi",
+  "title": "Shashwati",
+  "subject": "Shashwati"
+ },
+ {
+  "code": "kusc1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Shumariyaat bar-e-Mushiyat",
+  "subject": "Shumariyaat Bar-E-Mushiyat"
+ },
+ {
+  "code": "kups2",
+  "class": 11,
+  "medium": "ur",
+  "title": "Siyasi Nazaria",
+  "subject": "Siyasi Nazaria"
+ },
+ {
+  "code": "kesy1",
+  "class": 11,
+  "medium": "en",
+  "title": "Introducing Sociology",
+  "subject": "Sociology"
+ },
+ {
+  "code": "khsr1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Srijan",
+  "subject": "Srijan"
+ },
+ {
+  "code": "kugy2",
+  "class": 11,
+  "medium": "ur",
+  "title": "Tabai Gugraphiya ke Mubadiyat",
+  "subject": "Tabai Gugraphiya Ke"
+ },
+ {
+  "code": "kuph1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Tabiyaat-I",
+  "subject": "Tabiyaat-I"
+ },
+ {
+  "code": "kuph2",
+  "class": 11,
+  "medium": "ur",
+  "title": "Tabiyaat-II",
+  "subject": "Tabiyaat-Ii"
+ },
+ {
+  "code": "khtp1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Tabla evam Pakhawaj",
+  "subject": "Tabla Evam Pakhawaj"
+ },
+ {
+  "code": "kucw1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Takhleequi Jauhar",
+  "subject": "Takhleequi Jauhar"
+ },
+ {
+  "code": "kuta1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Tareekh-e-Alam per Mabni Mauzuaat Part I",
+  "subject": "Tareekh-E-Alam Per Mabni"
+ },
+ {
+  "code": "kegd1",
+  "class": 11,
+  "medium": "en",
+  "title": "The Story of Graphic Design",
+  "subject": "The Story Of"
+ },
+ {
+  "code": "kesy2",
+  "class": 11,
+  "medium": "en",
+  "title": "Understanding Society",
+  "subject": "Understanding Society"
+ },
+ {
+  "code": "kugm1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Tabi'i Jughraiya Ka Mubadiyat (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "kugy1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Hindustan Tabi'i Mahaul (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "kugy3",
+  "class": 11,
+  "medium": "ur",
+  "title": "Jughrafia Mein Aamli Kam (Urdu)",
+  "subject": "Urdu"
+ },
+ {
+  "code": "kuku1",
+  "class": 11,
+  "medium": "ur",
+  "title": "Khyabane Urdu",
+  "subject": "Urdu"
+ },
+ {
+  "code": "khvt1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Vitan",
+  "subject": "Vitan"
+ },
+ {
+  "code": "khbs1",
+  "class": 11,
+  "medium": "hi",
+  "title": "Vyavsay Adhyanan",
+  "subject": "Vyavsay Adhyanan"
+ },
+ {
+  "code": "keww1",
+  "class": 11,
+  "medium": "en",
+  "title": "Woven Words",
+  "subject": "Woven Words"
+ },
+ {
+  "code": "lups1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Aasri Alami Siyasat",
+  "subject": "Aasri Alami Siyasat"
+ },
+ {
+  "code": "lham1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Abhivyakti Aur Madhyam",
+  "subject": "Abhivyakti Aur Madhyam"
+ },
+ {
+  "code": "leac1",
+  "class": 12,
+  "medium": "en",
+  "title": "Accountancy Part I",
+  "subject": "Accountancy"
+ },
+ {
+  "code": "leac2",
+  "class": 12,
+  "medium": "en",
+  "title": "Accountancy Part II",
+  "subject": "Accountancy"
+ },
+ {
+  "code": "lefa1",
+  "class": 12,
+  "medium": "en",
+  "title": "An Introduction to Indian Art Part-II",
+  "subject": "An Introduction To"
+ },
+ {
+  "code": "lhat1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Antra",
+  "subject": "Antra"
+ },
+ {
+  "code": "lhan1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Antral Bhag 2",
+  "subject": "Antral Bhag 2"
+ },
+ {
+  "code": "lhar1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Aroh",
+  "subject": "Aroh"
+ },
+ {
+  "code": "luab1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Azadi Ke Baad Hindustan Ki Siyasat",
+  "subject": "Azadi Ke Baad"
+ },
+ {
+  "code": "lhhc1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bharatiya Hastkla Ki Paramparayen",
+  "subject": "Bharatiya Hastkla Ki"
+ },
+ {
+  "code": "lhfa1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bhartiya Kala ka Itihaas Bhag 2",
+  "subject": "Bhartiya Kala Ka"
+ },
+ {
+  "code": "lhsy1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bhartiya Samaj",
+  "subject": "Bhartiya Samaj"
+ },
+ {
+  "code": "lhsk1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bhaswati",
+  "subject": "Bhaswati"
+ },
+ {
+  "code": "lebo1",
+  "class": 12,
+  "medium": "en",
+  "title": "Biology",
+  "subject": "Biology"
+ },
+ {
+  "code": "lhbo1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Jeev Vigyan",
+  "subject": "Biology"
+ },
+ {
+  "code": "lebs1",
+  "class": 12,
+  "medium": "en",
+  "title": "Business Studies I",
+  "subject": "Business Studies"
+ },
+ {
+  "code": "lebs2",
+  "class": 12,
+  "medium": "en",
+  "title": "Business Studies II",
+  "subject": "Business Studies"
+ },
+ {
+  "code": "lech1",
+  "class": 12,
+  "medium": "en",
+  "title": "chemistry I",
+  "subject": "Chemistry"
+ },
+ {
+  "code": "lech2",
+  "class": 12,
+  "medium": "en",
+  "title": "chemistry II",
+  "subject": "Chemistry"
+ },
+ {
+  "code": "lhch1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Rasayan Vigyan I",
+  "subject": "Chemistry"
+ },
+ {
+  "code": "lhch2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Rasayan Vigyan II",
+  "subject": "Chemistry"
+ },
+ {
+  "code": "lhps1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Samkalin Vishwa Rajniti",
+  "subject": "Civics"
+ },
+ {
+  "code": "lhps2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Swatantra Bharat Mein Rajniti-II",
+  "subject": "Civics"
+ },
+ {
+  "code": "leca1",
+  "class": 12,
+  "medium": "en",
+  "title": "Computerised Accounting System",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "lecs1",
+  "class": 12,
+  "medium": "en",
+  "title": "Computer Science",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "leip1",
+  "class": 12,
+  "medium": "en",
+  "title": "Informatics Practices",
+  "subject": "Computer Science"
+ },
+ {
+  "code": "leps1",
+  "class": 12,
+  "medium": "en",
+  "title": "Contemporary World Politics",
+  "subject": "Contemporary World Politics"
+ },
+ {
+  "code": "lehc1",
+  "class": 12,
+  "medium": "en",
+  "title": "Craft Tradition of India",
+  "subject": "Craft Tradition Of"
+ },
+ {
+  "code": "ludh1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Dhanak",
+  "subject": "Dhanak"
+ },
+ {
+  "code": "lhec2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Vyashthi Arthashastra- Ek Parichay",
+  "subject": "Economics"
+ },
+ {
+  "code": "leep2",
+  "class": 12,
+  "medium": "en",
+  "title": "Exemplar Problems(English)",
+  "subject": "English"
+ },
+ {
+  "code": "leep6",
+  "class": 12,
+  "medium": "en",
+  "title": "Exemplar Problems(English)",
+  "subject": "English"
+ },
+ {
+  "code": "lelm1",
+  "class": 12,
+  "medium": "en",
+  "title": "Lab Manual(English)",
+  "subject": "English"
+ },
+ {
+  "code": "lelm2",
+  "class": 12,
+  "medium": "en",
+  "title": "Lab Manual(English)",
+  "subject": "English"
+ },
+ {
+  "code": "lelm3",
+  "class": 12,
+  "medium": "en",
+  "title": "Lab Manual(English)",
+  "subject": "English"
+ },
+ {
+  "code": "leep4",
+  "class": 12,
+  "medium": "en",
+  "title": "Exemplar Problems",
+  "subject": "Exemplar Problems"
+ },
+ {
+  "code": "leep5",
+  "class": 12,
+  "medium": "en",
+  "title": "Exemplar Problems",
+  "subject": "Exemplar Problems"
+ },
+ {
+  "code": "lefl1",
+  "class": 12,
+  "medium": "en",
+  "title": "Flamingo",
+  "subject": "Flamingo"
+ },
+ {
+  "code": "legy1",
+  "class": 12,
+  "medium": "en",
+  "title": "Fundamentals of Human Geography",
+  "subject": "Geography"
+ },
+ {
+  "code": "legy3",
+  "class": 12,
+  "medium": "en",
+  "title": "Practical Work in Geography Part II",
+  "subject": "Geography"
+ },
+ {
+  "code": "lhgy1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Manav Bhugol Ke Mool Sidhant",
+  "subject": "Geography"
+ },
+ {
+  "code": "lhgy2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bharat log aur arthvyasastha(Bhugol)",
+  "subject": "Geography"
+ },
+ {
+  "code": "lhgy3",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bhugol main pryogatmak karye",
+  "subject": "Geography"
+ },
+ {
+  "code": "luga1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Gulistan-e- Adab",
+  "subject": "Gulistan-E- Adab"
+ },
+ {
+  "code": "lubo1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Hayatiyaat",
+  "subject": "Hayatiyaat"
+ },
+ {
+  "code": "lhep2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Exemplar Problems(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "lhep4",
+  "class": 12,
+  "medium": "hi",
+  "title": "Exemplar Problems(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "lhep6",
+  "class": 12,
+  "medium": "hi",
+  "title": "Exemplar Problems(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "lhlm1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Lab Manual(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "lhlm3",
+  "class": 12,
+  "medium": "hi",
+  "title": "Lab Manual(Hindi)",
+  "subject": "Hindi"
+ },
+ {
+  "code": "lugy1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Hindustan Awam Aur Maishat",
+  "subject": "Hindustan Awam Aur"
+ },
+ {
+  "code": "luhc1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Hindustan me Dastkari Ki Riwayat",
+  "subject": "Hindustan Me Dastkari"
+ },
+ {
+  "code": "lusy2",
+  "class": 12,
+  "medium": "ur",
+  "title": "Hindustan Mein Samaji Tabdili Aur Taraqqi",
+  "subject": "Hindustan Mein Samaji"
+ },
+ {
+  "code": "luis1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Hindustani Samaj",
+  "subject": "Hindustani Samaj"
+ },
+ {
+  "code": "lehs1",
+  "class": 12,
+  "medium": "en",
+  "title": "Themes in Indian History-I",
+  "subject": "History"
+ },
+ {
+  "code": "lehs2",
+  "class": 12,
+  "medium": "en",
+  "title": "Themes in Indian History-II",
+  "subject": "History"
+ },
+ {
+  "code": "lehs3",
+  "class": 12,
+  "medium": "en",
+  "title": "Themes in Indian History-III",
+  "subject": "History"
+ },
+ {
+  "code": "lhhs1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bharatiya Itihas ke kuchh Vishay-I",
+  "subject": "History"
+ },
+ {
+  "code": "lhhs2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bharatiya Itihas ke kuchh Vishay-II",
+  "subject": "History"
+ },
+ {
+  "code": "lhhs3",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bharatiya Itihas ke kuchh Vishay-III",
+  "subject": "History"
+ },
+ {
+  "code": "legy2",
+  "class": 12,
+  "medium": "en",
+  "title": "India -People And Economy",
+  "subject": "India -People And"
+ },
+ {
+  "code": "lesy1",
+  "class": 12,
+  "medium": "en",
+  "title": "Indian Society",
+  "subject": "Indian Society"
+ },
+ {
+  "code": "lufh1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Insani Geographia ke Mubadiyaat",
+  "subject": "Insani Geographia Ke"
+ },
+ {
+  "code": "leec1",
+  "class": 12,
+  "medium": "en",
+  "title": "Introductory Macroeconomics",
+  "subject": "Introductory Macroeconomics"
+ },
+ {
+  "code": "leec2",
+  "class": 12,
+  "medium": "en",
+  "title": "Introductory Microeconomics",
+  "subject": "Introductory Microeconomics"
+ },
+ {
+  "code": "lugy3",
+  "class": 12,
+  "medium": "ur",
+  "title": "Jughrafia Mein Aamli Kam",
+  "subject": "Jughrafia Mein Aamli"
+ },
+ {
+  "code": "lume1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Juzvi Maashiyat Ka Taruf",
+  "subject": "Juzvi Maashiyat Ka"
+ },
+ {
+  "code": "lekl1",
+  "class": 12,
+  "medium": "en",
+  "title": "Kaliedoscope",
+  "subject": "Kaliedoscope"
+ },
+ {
+  "code": "lubs1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Karobari Uloom I",
+  "subject": "Karobari Uloom I"
+ },
+ {
+  "code": "lubs2",
+  "class": 12,
+  "medium": "ur",
+  "title": "Karobari Uloom II",
+  "subject": "Karobari Uloom Ii"
+ },
+ {
+  "code": "luch1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Keemiya I",
+  "subject": "Keemiya I"
+ },
+ {
+  "code": "luch2",
+  "class": 12,
+  "medium": "ur",
+  "title": "Keemiya II",
+  "subject": "Keemiya Ii"
+ },
+ {
+  "code": "luac1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Khatadari-I",
+  "subject": "Khatadari-I"
+ },
+ {
+  "code": "luac2",
+  "class": 12,
+  "medium": "ur",
+  "title": "Khatadari-II",
+  "subject": "Khatadari-Ii"
+ },
+ {
+  "code": "lume2",
+  "class": 12,
+  "medium": "ur",
+  "title": "Kulli Maashiyat Ka Taruf",
+  "subject": "Kulli Maashiyat Ka"
+ },
+ {
+  "code": "lhac1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Lekhashastra Part I",
+  "subject": "Lekhashastra Part I"
+ },
+ {
+  "code": "lhac2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Lekhashastra Part II",
+  "subject": "Lekhashastra Part Ii"
+ },
+ {
+  "code": "lhpy1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Manovigyan",
+  "subject": "Manovigyan"
+ },
+ {
+  "code": "lemh1",
+  "class": 12,
+  "medium": "en",
+  "title": "Mathematics Part-I",
+  "subject": "Maths"
+ },
+ {
+  "code": "lemh2",
+  "class": 12,
+  "medium": "en",
+  "title": "Mathematics Part-II",
+  "subject": "Maths"
+ },
+ {
+  "code": "lhmh1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Ganit-I",
+  "subject": "Maths"
+ },
+ {
+  "code": "lhmh2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Ganit-II",
+  "subject": "Maths"
+ },
+ {
+  "code": "lumh1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Riyazi-I",
+  "subject": "Maths"
+ },
+ {
+  "code": "lumh2",
+  "class": 12,
+  "medium": "ur",
+  "title": "Riyazi-II",
+  "subject": "Maths"
+ },
+ {
+  "code": "luna1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Nai Awaz",
+  "subject": "Nai Awaz"
+ },
+ {
+  "code": "legd1",
+  "class": 12,
+  "medium": "en",
+  "title": "New Age Graphics Design",
+  "subject": "New Age Graphics"
+ },
+ {
+  "code": "leph1",
+  "class": 12,
+  "medium": "en",
+  "title": "Physics Part-I",
+  "subject": "Physics"
+ },
+ {
+  "code": "leph2",
+  "class": 12,
+  "medium": "en",
+  "title": "Physics Part-II",
+  "subject": "Physics"
+ },
+ {
+  "code": "lhph1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bhautiki-I",
+  "subject": "Physics"
+ },
+ {
+  "code": "lhph2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bhautiki-II",
+  "subject": "Physics"
+ },
+ {
+  "code": "leps2",
+  "class": 12,
+  "medium": "en",
+  "title": "Politics in India Since Independence",
+  "subject": "Politics In India"
+ },
+ {
+  "code": "lepy1",
+  "class": 12,
+  "medium": "en",
+  "title": "Psychology",
+  "subject": "Psychology"
+ },
+ {
+  "code": "lupy1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Nafsiat(Psychology)",
+  "subject": "Psychology"
+ },
+ {
+  "code": "lhec1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Samashty Arthshastra Ek Parichay",
+  "subject": "Samashty Arthshastra Ek"
+ },
+ {
+  "code": "lehe1",
+  "class": 12,
+  "medium": "en",
+  "title": "Human Ecology and Family Sciences Part I",
+  "subject": "Science"
+ },
+ {
+  "code": "lehe2",
+  "class": 12,
+  "medium": "en",
+  "title": "Human Ecology and Family Sciences Part II",
+  "subject": "Science"
+ },
+ {
+  "code": "lehh1",
+  "class": 12,
+  "medium": "en",
+  "title": "Manav Paristhitiki avam Parivar Vigyan Bhag - I",
+  "subject": "Science"
+ },
+ {
+  "code": "lehh2",
+  "class": 12,
+  "medium": "en",
+  "title": "Manav Paristhitiki avam Parivar Vigyan Bhag - II",
+  "subject": "Science"
+ },
+ {
+  "code": "lhsk2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Shaswati",
+  "subject": "Shaswati"
+ },
+ {
+  "code": "lesy2",
+  "class": 12,
+  "medium": "en",
+  "title": "Social Change and Development in India",
+  "subject": "Social Change And"
+ },
+ {
+  "code": "lhsy2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Bharat main Samajik Parivartan aur Vikas",
+  "subject": "Social Science"
+ },
+ {
+  "code": "luph1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Tabiyaat-I",
+  "subject": "Tabiyaat-I"
+ },
+ {
+  "code": "luph2",
+  "class": 12,
+  "medium": "ur",
+  "title": "Tabiyaat-II",
+  "subject": "Tabiyaat-Ii"
+ },
+ {
+  "code": "luth1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Tareekh-e-Hind ke Mauzuaat-I",
+  "subject": "Tareekh-E-Hind Ke Mauzuaat-I"
+ },
+ {
+  "code": "luth2",
+  "class": 12,
+  "medium": "ur",
+  "title": "Tareekh-e-Hind ke Mauzuaat-II",
+  "subject": "Tareekh-E-Hind Ke Mauzuaat-Ii"
+ },
+ {
+  "code": "luth3",
+  "class": 12,
+  "medium": "ur",
+  "title": "Tareekh-e-Hind ke Mauzuaat-III",
+  "subject": "Tareekh-E-Hind Ke Mauzuaat-Iii"
+ },
+ {
+  "code": "luku1",
+  "class": 12,
+  "medium": "ur",
+  "title": "Khayaban-e-Urdu",
+  "subject": "Urdu"
+ },
+ {
+  "code": "levt1",
+  "class": 12,
+  "medium": "en",
+  "title": "Vistas",
+  "subject": "Vistas"
+ },
+ {
+  "code": "lhvt1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Vitan",
+  "subject": "Vitan"
+ },
+ {
+  "code": "lhbs1",
+  "class": 12,
+  "medium": "hi",
+  "title": "Vyavasai Adhyan I",
+  "subject": "Vyavasai Adhyan I"
+ },
+ {
+  "code": "lhbs2",
+  "class": 12,
+  "medium": "hi",
+  "title": "Vyavasai Adhyan II",
+  "subject": "Vyavasai Adhyan Ii"
+ }
+]
