@@ -35,8 +35,8 @@ pictures/*
 !pictures/README.md
 history/*.progress.json
 
-# Textbook PDFs are large, and they are somebody else's copyright. The
-# catalogue that says where to fetch them from is small and worth keeping.
-books/**/*.pdf
-books/**/*.txt
-!books/README.md
+# Textbooks are large, and they are somebody else's copyright. Only the
+# catalogue that names every NCERT book, and the README, are kept in git.
+books_new/**
+!books_new/README.md
+!books_new/ncert-catalogue.json

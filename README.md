@@ -166,32 +166,36 @@ it out.
 
 ### Getting the books
 
+The books live in `books_new/`, one folder per class and one per subject inside
+it — `books_new/VI/science/`, `books_new/XII/physics/`. Classes 6 to 12 are kept;
+physical education, arts, Hindi-language and Sanskrit books are skipped for now.
+
 ```bash
-liza books fetch --class 6 --class 7 --medium en
-liza books ingest
+liza books repair       # re-fetch any NCERT PDF whose download was cut off
+liza books zips         # unpack zips, or fetch the book a broken zip was meant to hold
+liza books ingest       # read everything into the index
 liza books status
 ```
 
-`fetch` downloads the NCERT (CBSE) textbooks, which are published chapter by
-chapter and free. Ask for the classes the children on this device are actually
-in — the whole NCERT shelf is several gigabytes. `--medium hi` gets the Hindi
-editions.
+NCERT's server cuts large downloads short, and a cut-off PDF or zip cannot be
+read at all — so `repair` and `zips` come first. Both work from the NCERT file
+names, and replace a broken copy only once the new one opens.
 
 **ICSE books cannot be fetched.** CISCE does not publish them; they are
 commercial books from Selina, Frank and others and there is no legal download.
 Supply your own copies instead — drop the PDFs into
-`books/ICSE/class-9/Physics/` and run `liza books ingest`. That works for any
-book from any board, including a school's own notes.
+`books_new/ICSE/IX/Physics/` and run `liza books ingest`. Until then an ICSE
+student is answered from the NCERT passages for their class, and told plainly
+that it is not their own book.
 
 The folder layout **is** the manifest:
 
-    books/<board>/class-<n>/<subject>/<anything>.pdf
+    books_new/<class>/<subject>/<anything>.pdf
 
-Board, class and subject are read out of the path, so nothing has to be
-registered anywhere. Re-running `ingest` over the folder replaces what is
-already indexed rather than doubling it, so adding the chapters you were
-missing is drop-in-and-run-again. See `books/README.md` for the rest, including
-what to do with a scanned book.
+Class and subject are read out of the path — Roman numerals and hand-typed
+folder names like `Social_science_i` are understood — so nothing has to be
+registered anywhere. Re-running `ingest` replaces what is already indexed rather
+than doubling it. See `books_new/README.md` for the rest.
 
 ### Questions about the book itself
 

@@ -45,7 +45,14 @@ import unicodedata
 
 import store
 
-BOOKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "books")
+BOOKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "books_new")
+
+# WHICH BOOKS THIS DEVICE KEEPS. Classes 6 to 12, and not the physical-education,
+# arts, Hindi-language or Sanskrit books -- the ones the family asked for, for
+# now. Applied at ingest and at fetch, so a book in a skipped subject is neither
+# downloaded nor searched even if it is sitting in the folder.
+WANTED_CLASSES = range(6, 13)
+SKIPPED_SUBJECTS = {"health and physical education", "arts", "hindi", "sanskrit"}
 
 # How big a piece of a book is, in characters.
 #
@@ -310,6 +317,13 @@ def chunks_from_pages(pages):
 # what a path says about a book
 # ---------------------------------------------------------------------------
 RE_CLASS_DIR = re.compile(r'^(?:class|grade|std)[\s._-]*(\d{1,2})$', re.IGNORECASE)
+# books_new is laid out by Roman numeral -- VI/science, XII/physics -- the way
+# the classes are written on the books themselves.
+ROMAN_CLASSES = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7,
+                 "viii": 8, "ix": 9, "x": 10, "xi": 11, "xii": 12}
+# Folder names as they were typed, mapped to what they mean.
+FOLDER_TYPOS = {"pilotical science": "political science", "account": "accountancy",
+                "economic": "economics"}
 RE_CHAPTER = re.compile(r'(?:chapter|ch|lesson)[\s._-]*(\d{1,2})|(\d{2})\s*$',
                         re.IGNORECASE)
 
@@ -1009,23 +1023,48 @@ def _headless_heading(lines):
     return None, None
 
 
+def _class_of_folder(name):
+    number = RE_CLASS_DIR.match(name)
+    if number:
+        return int(number.group(1))
+    return ROMAN_CLASSES.get(name.strip().lower())
+
+
+def folder_subject(name):
+    """A folder's name as the subject it means, or None if it names none.
+
+    "Social_science_i", "english_VI", "pilotical_science", "Economic" -- the
+    folders are named by hand, so the suffixes, the underscores and the typos
+    come off before the name is looked up.
+    """
+    key = re.sub(r'[_\-\s]+', " ", name or "").strip().lower()
+    key = re.sub(r'\s+(?:[ivx]+|\d+)$', "", key)
+    key = FOLDER_TYPOS.get(key, key)
+    return _subject_from_title(key)
+
+
 def describe(path):
     """(board, class, subject, chapter) read out of the file's own path.
 
-    The path IS the manifest -- see the module docstring. None for the class
-    when the folder does not say, which is what makes a misfiled book visible
-    at ingest time instead of invisible at search time.
+    The path IS the manifest -- see the module docstring. Both layouts are
+    read: the fetcher's CBSE/class-6/Science/ and books_new's VI/science/. A
+    folder BEFORE the class folder is the board; the one after it is the
+    subject. books_new has no board folder, and every book in it is NCERT, so
+    the board is CBSE unless a folder says otherwise.
+
+    None for the class when no folder says, which is what makes a misfiled
+    book visible at ingest time instead of invisible at search time.
     """
     relative = os.path.relpath(os.path.abspath(path), BOOKS_DIR)
     parts = relative.split(os.sep)
     board, klass, subject = None, None, None
     for part in parts[:-1]:
-        number = RE_CLASS_DIR.match(part)
-        if number:
-            klass = int(number.group(1))
-        elif board is None:
+        number = _class_of_folder(part)
+        if number is not None and klass is None:
+            klass = number
+        elif klass is None:
             board = part
-        else:
+        elif subject is None:
             subject = part
     name = os.path.splitext(parts[-1])[0]
     chapter = None
@@ -1063,15 +1102,41 @@ def _chapter_number(from_filename, from_heading):
     return from_filename
 
 
+_CATALOGUE_BY_CODE = None
+
+
+def _catalogue_entry(code):
+    global _CATALOGUE_BY_CODE
+    if _CATALOGUE_BY_CODE is None:
+        _CATALOGUE_BY_CODE = {entry["code"]: entry for entry in catalogue()}
+    return _CATALOGUE_BY_CODE.get((code or "").lower())
+
+
 def ingest_file(path, board=None, klass=None, subject=None, title=None):
     """One book into the index. (chunks written, why not)."""
     board_from, class_from, subject_from, _chapter = describe(path)
     board = board or board_from
     klass = klass if klass is not None else class_from
-    subject = subject or subject_from
+    stem = os.path.splitext(os.path.basename(path))[0]
+    extra = RE_NCERT_EXTRA.match(stem)
+    if extra and extra.group(2).lower() in NCERT_SKIPPED_PARTS:
+        return 0, f"it is {NCERT_SKIPPED_PARTS[extra.group(2).lower()]}, not a chapter"
+    if not subject:
+        # The folder's own name first: whoever filed X/history/jess301.pdf
+        # meant History, where the catalogue only knows the whole social-
+        # science series. The catalogue next, for a folder that names nothing.
+        subject = folder_subject(subject_from)
+        if subject is None:
+            code = (RE_NCERT_FILE.match(stem) or extra)
+            entry = _catalogue_entry(code.group(1)) if code else None
+            subject = entry["subject"] if entry else subject_from.replace("_", " ").title()
     if klass is None:
         return 0, ("I cannot tell which class this book is for. Put it in a "
-                   "folder called class-6, or pass --class.")
+                   "folder called VI or class-6, or pass --class.")
+    if klass not in WANTED_CLASSES:
+        return 0, f"Class {klass} is not one of the classes this device keeps"
+    if subject.lower() in SKIPPED_SUBJECTS:
+        return 0, f"{subject} books are skipped for now"
     if not store.available():
         return 0, "the database is not available, so there is nowhere to put it"
 
@@ -1097,6 +1162,11 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
     # The chapter's real name off its own first page, and the number it gives
     # itself, which is better evidence than the one guessed from the filename.
     heading_number, heading_title = chapter_heading(pages[0] if pages else "")
+    if extra:
+        # A glossary or an answer key: searchable, but not a chapter, so it
+        # takes no chapter number and a plain name.
+        heading_number = None
+        heading_title = NCERT_EXTRA_TITLES.get(extra.group(2).lower(), heading_title)
     title = title or heading_title or os.path.splitext(os.path.basename(path))[0]
     language = "hi" if is_hindi(" ".join(text for _p, text in pieces)) else "en"
     source = os.path.relpath(os.path.abspath(path), BOOKS_DIR)
@@ -1170,11 +1240,19 @@ def ingest_folder(root=None, board=None, klass=None, subject=None):
     if not os.path.isdir(root):
         print(f"[BOOKS] There is no folder at {root}.", flush=True)
         return 0, 0
-    found = []
+    found, zips = [], []
     for base, _dirs, files in os.walk(root):
         for name in sorted(files):
-            if name.lower().endswith((".pdf", ".txt")) and not name.startswith("."):
+            if name.startswith("."):
+                continue
+            if name.lower().endswith((".pdf", ".txt")):
                 found.append(os.path.join(base, name))
+            elif name.lower().endswith(".zip"):
+                zips.append(os.path.relpath(os.path.join(base, name), root))
+    if zips:
+        # Not read from directly. See repair_zips, which turns them into PDFs.
+        print(f"[BOOKS] {len(zips)} zip file(s) are not read directly; "
+              f"run `books.py zips` first to unpack or re-fetch them.", flush=True)
     if not found:
         print(f"[BOOKS] No PDFs or text files under {root}.", flush=True)
         return 0, 0
@@ -1420,11 +1498,14 @@ def contents(klass=None, board=None, subject=None):
     if subject:
         where.append("subject ILIKE %s")
         params.append(f"%{subject}%")
-    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    # Chapters only. A glossary or an answer key is searchable but is not
+    # something a child means by "the third chapter".
+    where.append("chapter IS NOT NULL")
+    clause = " WHERE " + " AND ".join(where)
     return store.query(
         f"""SELECT board, class, subject, chapter, title, language
               FROM books{clause}
-             ORDER BY subject, language, chapter NULLS LAST, title""",
+             ORDER BY subject, language, chapter, title""",
         tuple(params)) or []
 
 
@@ -1725,7 +1806,10 @@ SUBJECT_WORDS = [
     ("mazi", "History"), ("past", "History"),
     ("geography", "Geography"), ("bhugol", "Geography"),
     ("habitat", "Geography"), ("prithvi", "Geography"), ("earth", "Geography"),
-    ("economics", "Economics"), ("arthashastra", "Economics"),
+    ("economics", "Economics"), ("economic", "Economics"),
+    ("arthashastra", "Economics"),
+    ("home science", "Home Science"), ("biotechnology", "Biotechnology"),
+    ("accountancy", "Accountancy"), ("statistics", "Statistics"),
     ("accountancy", "Accountancy"), ("business", "Business Studies"),
     ("computer", "Computer Science"), ("informatics", "Computer Science"),
     ("psychology", "Psychology"), ("sociology", "Sociology"),
@@ -1976,6 +2060,17 @@ def fetch_book(entry, force=False):
 
 # A file NCERT named: five code characters and a two-digit chapter.
 RE_NCERT_FILE = re.compile(r'^([a-l][ehu][a-z]{2}\d)(\d{2})$', re.IGNORECASE)
+# ...and the other files that come in the same download, named the same way
+# with two letters where the chapter number goes.
+RE_NCERT_EXTRA = re.compile(r'^([a-l][ehu][a-z]{2}\d)([a-z][a-z0-9])$', re.IGNORECASE)
+# Not indexed at all: the preliminary pages (foreword, preface, the committee
+# list) and the cover. Every page of them is about the book rather than the
+# subject, so they match every question and answer none.
+NCERT_SKIPPED_PARTS = {"ps": "the preliminary pages", "cc": "the cover"}
+# Indexed and searchable, but not chapters, so kept off the chapter list.
+NCERT_EXTRA_TITLES = {"gl": "Glossary", "a1": "Answers", "a2": "Answers",
+                      "an": "Answers", "ap": "Appendix", "rf": "References",
+                      "in": "Index", "bt": "Brain Teasers"}
 
 
 def tidy(root=None, dry_run=False):
@@ -1992,7 +2087,13 @@ def tidy(root=None, dry_run=False):
     code: a book somebody filed by hand under a subject of their own choosing
     is not something this may quietly move.
     """
-    root = root or BOOKS_DIR
+    # Only the fetcher's own CBSE/ tree. books_new is laid out by hand --
+    # VI/science, XII/physics -- and a tool that "refiles" it into CBSE/class-6/
+    # is rearranging somebody's shelf.
+    root = root or os.path.join(BOOKS_DIR, "CBSE")
+    if not os.path.isdir(root):
+        print("[BOOKS] There is no fetched CBSE/ folder to tidy.", flush=True)
+        return 0
     known = {entry["code"]: entry for entry in catalogue()}
     if not known:
         print("[BOOKS] No catalogue, so there is nothing to tidy against.",
@@ -2084,6 +2185,7 @@ def fetch_and_index(classes=None, mediums=("en", "hi"), subjects=None,
     wanted = [e for e in entries
               if (not classes or e["class"] in classes)
               and e["medium"] in mediums
+              and e["subject"].lower() not in SKIPPED_SUBJECTS
               and (not subjects or any(s.lower() in e["subject"].lower()
                                        for s in subjects))]
     # English first, then Hindi, then by class: if the run is stopped halfway,
@@ -2201,6 +2303,178 @@ def retitle():
     return changed
 
 
+def pdf_is_whole(path):
+    """True when poppler can open the PDF at all -- its trailer is there."""
+    try:
+        done = subprocess.run(["pdfinfo", path], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=60)
+        return done.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def repair_pdfs(root=None, dry_run=False):
+    """Download again every NCERT PDF on the shelf that was cut off.
+
+    books_new arrived with 72 of its 210 PDFs truncated -- every chapter
+    larger than about 5.5 MB stopped at a round 256 KiB boundary, the same
+    fault that emptied every zip. A cut-off PDF has no trailer, so nothing can
+    read a word of it: Class VI Science was one readable chapter out of twelve.
+
+    The file's own name says what it is (fecu102.pdf is Class 6 Science,
+    chapter 2), so the same file is fetched again from NCERT. The broken copy
+    is replaced only once the new one has been checked to open -- a failed
+    download must never cost the copy that was already there.
+    """
+    root = root or BOOKS_DIR
+    broken = []
+    for base, _dirs, files in os.walk(root):
+        for name in sorted(files):
+            if name.lower().endswith(".pdf"):
+                path = os.path.join(base, name)
+                if not pdf_is_whole(path):
+                    broken.append(path)
+    print(f"[BOOKS] {len(broken)} cut-off PDF(s) found.", flush=True)
+    fixed = 0
+    for index, path in enumerate(broken, start=1):
+        short = os.path.relpath(path, root)
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if not (RE_NCERT_FILE.match(stem) or RE_NCERT_EXTRA.match(stem)):
+            print(f"[BOOKS] {index}/{len(broken)}  {short}: cut off, and not an "
+                  f"NCERT file name, so there is nothing to fetch it from.",
+                  flush=True)
+            continue
+        if dry_run:
+            print(f"[BOOKS] {index}/{len(broken)}  {short}: would re-fetch", flush=True)
+            continue
+        room = free_bytes()
+        if room is not None and room < DISK_FLOOR_BYTES:
+            print(f"[BOOKS] Stopping: {room / 1024**3:.1f}GB free is below the floor.",
+                  flush=True)
+            break
+        body = _get(f"{NCERT_BASE}/{stem.lower()}.pdf")
+        if body is None or not body.startswith(b"%PDF"):
+            print(f"[BOOKS] {index}/{len(broken)}  {short}: NCERT did not send it.",
+                  flush=True)
+            continue
+        partial = path + ".part"
+        with open(partial, "wb") as handle:
+            handle.write(body)
+        if not pdf_is_whole(partial):
+            os.remove(partial)
+            print(f"[BOOKS] {index}/{len(broken)}  {short}: the new copy is cut off "
+                  f"too; kept the old one.", flush=True)
+            continue
+        os.replace(partial, path)
+        fixed += 1
+        print(f"[BOOKS] {index}/{len(broken)}  {short}: repaired "
+              f"({len(body) / 1048576:.1f} MB)", flush=True)
+    print(f"[BOOKS] {fixed} of {len(broken)} repaired.", flush=True)
+    return fixed
+
+
+RE_BOOK_CODE_IN_ZIP = re.compile(rb'([a-l][ehu][a-z]{2}\d)(?:\d{2}|[a-z]{2})\.pdf',
+                                 re.IGNORECASE)
+
+
+def repair_zips(root=None, dry_run=False):
+    """Turn every zip under the shelf into chapter PDFs beside it.
+
+    A zip that opens is unpacked. A zip that does NOT is almost always a
+    download that stopped part way -- every one in books_new was cut off at a
+    round 3.25, 3.5, 3.75 or 4 MiB, holding the first one to four files of a
+    book that has a dozen chapters. Its central directory is missing, but its
+    file headers are not, and those name the NCERT book it was meant to hold
+    ("keph1dd/keph101.pdf"). So that book is fetched again, chapter by
+    chapter, into the same folder, and the zip itself is left where it is.
+
+    A zip sitting loose in a class folder -- XI/Biology.zip -- unpacks into a
+    folder named after it, so its chapters still land under a subject.
+    """
+    import zipfile
+    root = root or BOOKS_DIR
+    done = 0
+    for base, _dirs, files in os.walk(root):
+        for name in sorted(files):
+            if not name.lower().endswith(".zip"):
+                continue
+            archive = os.path.join(base, name)
+            folder = base
+            if _class_of_folder(os.path.basename(base)) is not None:
+                folder = os.path.join(base, os.path.splitext(name)[0])
+            short = os.path.relpath(archive, root)
+            try:
+                with zipfile.ZipFile(archive) as bundle:
+                    members = [m for m in bundle.namelist()
+                               if m.lower().endswith(".pdf")]
+                    print(f"[BOOKS] {short}: unpacking {len(members)} PDFs.",
+                          flush=True)
+                    if not dry_run:
+                        os.makedirs(folder, exist_ok=True)
+                        for member in members:
+                            target = os.path.join(folder, os.path.basename(member))
+                            with bundle.open(member) as src_file, \
+                                    open(target, "wb") as out:
+                                out.write(src_file.read())
+                    done += 1
+                    continue
+            except zipfile.BadZipFile:
+                pass
+            with open(archive, "rb") as handle:
+                codes = sorted({m.group(1).decode().lower()
+                                for m in RE_BOOK_CODE_IN_ZIP.finditer(handle.read())})
+            if not codes:
+                print(f"[BOOKS] {short}: damaged, and it names no NCERT book "
+                      f"to fetch instead.", flush=True)
+                continue
+            print(f"[BOOKS] {short}: an incomplete download of "
+                  f"{', '.join(codes)}; fetching those chapter by chapter.",
+                  flush=True)
+            if dry_run:
+                continue
+            os.makedirs(folder, exist_ok=True)
+            for code in codes:
+                got = _fetch_chapters_into(code, folder)
+                print(f"[BOOKS]     {code}: {got} chapters", flush=True)
+                if got is None:
+                    return done
+            done += 1
+    return done
+
+
+def _fetch_chapters_into(code, folder):
+    """Every chapter of one NCERT book, as PDFs kept in `folder`. None if the
+    disk floor was reached."""
+    got = misses = 0
+    for chapter in range(1, NCERT_MAX_CHAPTERS + 1):
+        target = os.path.join(folder, f"{code}{chapter:02d}.pdf")
+        if os.path.exists(target):
+            got += 1
+            misses = 0
+            continue
+        room = free_bytes()
+        if room is not None and room < DISK_FLOOR_BYTES:
+            print(f"[BOOKS] Stopping: {room / 1024**3:.1f}GB free is below the floor.",
+                  flush=True)
+            return None
+        body = _get(f"{NCERT_BASE}/{code}{chapter:02d}.pdf")
+        if body is None or not body.startswith(b"%PDF"):
+            misses += 1
+            if misses > NCERT_MISSES_ALLOWED:
+                break
+            continue
+        misses = 0
+        # Written beside and renamed into place, so a download cut off by a
+        # power cut leaves no half a PDF that a resumed run would take as done
+        # -- the very failure that left every zip in books_new unreadable.
+        partial = target + ".part"
+        with open(partial, "wb") as handle:
+            handle.write(body)
+        os.replace(partial, target)
+        got += 1
+    return got
+
+
 def fetch(classes=None, medium="en", subjects=None, force=False):
     """Download NCERT books for these classes. Returns (books, chapters).
 
@@ -2257,7 +2531,10 @@ USAGE = """Liza's textbooks.
   books.py tidy [--dry-run]             refile NCERT books under the subject the
                                         catalogue now gives them, and remove the
                                         folders left empty by withdrawn books
-  books.py ingest [folder]              read every PDF under books/ into the index
+  books.py zips [--dry-run]             unpack every zip on the shelf, or fetch
+                                        the book an incomplete one was meant to hold
+  books.py repair [--dry-run]           re-fetch every NCERT PDF that was cut off
+  books.py ingest [folder]              read every PDF under books_new/ into the index
   books.py search "why do leaves look green" [--class 6]
   books.py forget [--class 6] [--board ICSE]
 
@@ -2316,7 +2593,7 @@ def main(argv):
         return 0
 
     if command == "fetch" and ("--index" in rest or "--all" in rest):
-        fetch_and_index(classes=classes or list(range(1, 13)),
+        fetch_and_index(classes=classes or list(WANTED_CLASSES),
                         mediums=tuple(mediums or ["en", "hi"]),
                         subjects=subjects,
                         discard="--keep-pdf" not in rest)
@@ -2331,6 +2608,14 @@ def main(argv):
             print("Which class? e.g. books.py fetch --class 6")
             return 2
         fetch(classes=classes, medium=(mediums or ["en"])[0], subjects=subjects)
+        return 0
+
+    if command == "zips":
+        repair_zips(dry_run="--dry-run" in rest)
+        return 0
+
+    if command == "repair":
+        repair_pdfs(dry_run="--dry-run" in rest)
         return 0
 
     if command == "tidy":
