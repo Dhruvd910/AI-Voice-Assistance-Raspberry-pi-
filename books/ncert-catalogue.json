@@ -4,7 +4,7 @@
   "class": 1,
   "medium": "en",
   "title": "Marigold",
-  "subject": "Marigold"
+  "subject": "English"
  },
  {
   "code": "aejm1",
@@ -60,7 +60,7 @@
   "class": 1,
   "medium": "hi",
   "title": "Rimjhim",
-  "subject": "Rimjhim"
+  "subject": "Hindi"
  },
  {
   "code": "ahsr1",
@@ -88,7 +88,7 @@
   "class": 2,
   "medium": "en",
   "title": "Marigold",
-  "subject": "Marigold"
+  "subject": "English"
  },
  {
   "code": "bejm1",
@@ -144,7 +144,7 @@
   "class": 2,
   "medium": "hi",
   "title": "Rimjhim",
-  "subject": "Rimjhim"
+  "subject": "Hindi"
  },
  {
   "code": "bhsr1",
@@ -172,7 +172,7 @@
   "class": 3,
   "medium": "hi",
   "title": "Ass-Pass",
-  "subject": "Ass-Pass"
+  "subject": "EVS"
  },
  {
   "code": "cebu1",
@@ -186,14 +186,14 @@
   "class": 3,
   "medium": "hi",
   "title": "Hamara Adhbhut Sansar",
-  "subject": "Hamara Adhbhut Sansar"
+  "subject": "EVS"
  },
  {
   "code": "cuev1",
   "class": 3,
   "medium": "ur",
   "title": "Hamari Hairat Angez Duniya",
-  "subject": "Hamari Hairat Angez"
+  "subject": "EVS"
  },
  {
   "code": "chbu1",
@@ -207,28 +207,28 @@
   "class": 3,
   "medium": "hi",
   "title": "Khel Yoga (Hindi)",
-  "subject": "Hindi"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "ceky1",
   "class": 3,
   "medium": "en",
   "title": "Khel Yoga",
-  "subject": "Khel Yoga"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "ceap1",
   "class": 3,
   "medium": "en",
   "title": "Looking Arround",
-  "subject": "Looking Arround"
+  "subject": "EVS"
  },
  {
   "code": "ceen1",
   "class": 3,
   "medium": "en",
   "title": "Marigold",
-  "subject": "Marigold"
+  "subject": "English"
  },
  {
   "code": "cemh1",
@@ -277,14 +277,14 @@
   "class": 3,
   "medium": "en",
   "title": "Our Wondrous World",
-  "subject": "Our Wondrous World"
+  "subject": "EVS"
  },
  {
   "code": "chhn1",
   "class": 3,
   "medium": "hi",
   "title": "Rimjhim",
-  "subject": "Rimjhim"
+  "subject": "Hindi"
  },
  {
   "code": "cesa1",
@@ -305,14 +305,14 @@
   "class": 3,
   "medium": "ur",
   "title": "Aas Pass (Urdu)",
-  "subject": "Urdu"
+  "subject": "EVS"
  },
  {
   "code": "cuky1",
   "class": 3,
   "medium": "ur",
   "title": "Khel Yoga (Urdu)",
-  "subject": "Urdu"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "culb1",
@@ -333,7 +333,7 @@
   "class": 4,
   "medium": "hi",
   "title": "Ass-Pass",
-  "subject": "Ass-Pass"
+  "subject": "EVS"
  },
  {
   "code": "debu1",
@@ -347,14 +347,14 @@
   "class": 4,
   "medium": "hi",
   "title": "Hamara Adhbhut Sansar",
-  "subject": "Hamara Adhbhut Sansar"
+  "subject": "EVS"
  },
  {
   "code": "duev1",
   "class": 4,
   "medium": "ur",
   "title": "Hamari Hairatangez Duniya",
-  "subject": "Hamari Hairatangez Duniya"
+  "subject": "EVS"
  },
  {
   "code": "dhbu1",
@@ -368,28 +368,28 @@
   "class": 4,
   "medium": "hi",
   "title": "Khel Yoga(Hindi)",
-  "subject": "Hindi"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "deky1",
   "class": 4,
   "medium": "en",
   "title": "Khel Yoga",
-  "subject": "Khel Yoga"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "deap1",
   "class": 4,
   "medium": "en",
   "title": "Looking Arround",
-  "subject": "Looking Arround"
+  "subject": "EVS"
  },
  {
   "code": "deen1",
   "class": 4,
   "medium": "en",
   "title": "Marigold",
-  "subject": "Marigold"
+  "subject": "English"
  },
  {
   "code": "demh1",
@@ -438,14 +438,14 @@
   "class": 4,
   "medium": "en",
   "title": "Our Wonderous World",
-  "subject": "Our Wonderous World"
+  "subject": "EVS"
  },
  {
   "code": "dhhn1",
   "class": 4,
   "medium": "hi",
   "title": "Rimjhim",
-  "subject": "Rimjhim"
+  "subject": "Hindi"
  },
  {
   "code": "desa1",
@@ -466,7 +466,7 @@
   "class": 4,
   "medium": "ur",
   "title": "Aas-Paas Urdu",
-  "subject": "Urdu"
+  "subject": "EVS"
  },
  {
   "code": "dubu1",
@@ -494,7 +494,7 @@
   "class": 5,
   "medium": "hi",
   "title": "Ass-Pass",
-  "subject": "Ass-Pass"
+  "subject": "EVS"
  },
  {
   "code": "eebu1",
@@ -508,7 +508,7 @@
   "class": 5,
   "medium": "hi",
   "title": "Hamara Adbhut Sansar",
-  "subject": "Hamara Adbhut Sansar"
+  "subject": "EVS"
  },
  {
   "code": "ehbu1",
@@ -522,21 +522,21 @@
   "class": 5,
   "medium": "en",
   "title": "Khel Yoga",
-  "subject": "Khel Yoga"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "eeap1",
   "class": 5,
   "medium": "en",
   "title": "Looking Arround",
-  "subject": "Looking Arround"
+  "subject": "EVS"
  },
  {
   "code": "eeen1",
   "class": 5,
   "medium": "en",
   "title": "Marigold",
-  "subject": "Marigold"
+  "subject": "English"
  },
  {
   "code": "eemh1",
@@ -585,14 +585,14 @@
   "class": 5,
   "medium": "en",
   "title": "Our Wondrous World",
-  "subject": "Our Wondrous World"
+  "subject": "EVS"
  },
  {
   "code": "ehhn1",
   "class": 5,
   "medium": "hi",
   "title": "Rimjhim",
-  "subject": "Rimjhim"
+  "subject": "Hindi"
  },
  {
   "code": "eesa1",
@@ -620,7 +620,7 @@
   "class": 5,
   "medium": "ur",
   "title": "EVS-V (Urdu)",
-  "subject": "Urdu"
+  "subject": "EVS"
  },
  {
   "code": "eulb1",
@@ -676,21 +676,21 @@
   "class": 6,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "feep2",
   "class": 6,
   "medium": "en",
   "title": "Exemplar Problem",
-  "subject": "Exemplar Problem"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "fees1",
   "class": 6,
   "medium": "en",
   "title": "Exploring Society India and Beyond",
-  "subject": "Exploring Society India"
+  "subject": "Social Science"
  },
  {
   "code": "fess2",
@@ -711,14 +711,14 @@
   "class": 6,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "fhkb1",
   "class": 6,
   "medium": "hi",
   "title": "Kaushal Bodh (Hindi)",
-  "subject": "Hindi"
+  "subject": "Skill Education"
  },
  {
   "code": "fhkr1",
@@ -732,7 +732,7 @@
   "class": 6,
   "medium": "hi",
   "title": "Khel Yatra (Hindi)",
-  "subject": "Hindi"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "fess1",
@@ -774,7 +774,7 @@
   "class": 6,
   "medium": "hi",
   "title": "Jigyasa",
-  "subject": "Jigyasa"
+  "subject": "Science"
  },
  {
   "code": "fukl1",
@@ -788,21 +788,21 @@
   "class": 6,
   "medium": "en",
   "title": "Kaushal Bodh",
-  "subject": "Kaushal Bodh"
+  "subject": "Skill Education"
  },
  {
   "code": "fuky1",
   "class": 6,
   "medium": "ur",
   "title": "Khayal",
-  "subject": "Khayal"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "feky1",
   "class": 6,
   "medium": "en",
   "title": "Khel Yatra",
-  "subject": "Khel Yatra"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "fekr1",
@@ -865,7 +865,7 @@
   "class": 6,
   "medium": "ur",
   "title": "Muashre Ki Daryaft Hindustan Aur Us Se Aage",
-  "subject": "Muashre Ki Daryaft"
+  "subject": "Social Science"
  },
  {
   "code": "fepr1",
@@ -879,21 +879,21 @@
   "class": 6,
   "medium": "hi",
   "title": "Ruchira",
-  "subject": "Ruchira"
+  "subject": "Sanskrit"
  },
  {
   "code": "fhes1",
   "class": 6,
   "medium": "hi",
   "title": "Samaj ka Aadhyan: Bharat or uske aage",
-  "subject": "Samaj Ka Aadhyan"
+  "subject": "Social Science"
  },
  {
   "code": "fuss1",
   "class": 6,
   "medium": "ur",
   "title": "Samazi Aur Siyasi Zindagi",
-  "subject": "Samazi Aur Siyasi"
+  "subject": "Social Science"
  },
  {
   "code": "fecu1",
@@ -928,14 +928,14 @@
   "class": 6,
   "medium": "hi",
   "title": "Samajik Evam Rajnitik Jeevan",
-  "subject": "Social Science"
+  "subject": "Civics"
  },
  {
   "code": "fucu1",
   "class": 6,
   "medium": "ur",
   "title": "Tajassus",
-  "subject": "Tajassus"
+  "subject": "Science"
  },
  {
   "code": "fuug1",
@@ -1012,14 +1012,14 @@
   "class": 7,
   "medium": "en",
   "title": "Exploring Society India and Beyond",
-  "subject": "Exploring Society India"
+  "subject": "Social Science"
  },
  {
   "code": "gees2",
   "class": 7,
   "medium": "en",
   "title": "Exploring Society India and Beyond Part 2",
-  "subject": "Exploring Society India"
+  "subject": "Social Science"
  },
  {
   "code": "gess2",
@@ -1047,7 +1047,7 @@
   "class": 7,
   "medium": "hi",
   "title": "Kaushal Bodh(Hindi)",
-  "subject": "Hindi"
+  "subject": "Skill Education"
  },
  {
   "code": "ghkr1",
@@ -1061,7 +1061,7 @@
   "class": 7,
   "medium": "hi",
   "title": "Khel Yatra (Hindi)",
-  "subject": "Hindi"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "gess1",
@@ -1110,28 +1110,28 @@
   "class": 7,
   "medium": "hi",
   "title": "Jigyasa",
-  "subject": "Jigyasa"
+  "subject": "Science"
  },
  {
   "code": "gekb1",
   "class": 7,
   "medium": "en",
   "title": "Kaushal Bodh",
-  "subject": "Kaushal Bodh"
+  "subject": "Skill Education"
  },
  {
   "code": "guky1",
   "class": 7,
   "medium": "ur",
   "title": "Khayal",
-  "subject": "Khayal"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "geky1",
   "class": 7,
   "medium": "en",
   "title": "Khel Yatra",
-  "subject": "Khel Yatra"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "gekr1",
@@ -1201,14 +1201,14 @@
   "class": 7,
   "medium": "ur",
   "title": "Muashrey ki Daryaft - Hindustan aur Uske age",
-  "subject": "Muashrey Ki Daryaft"
+  "subject": "Social Science"
  },
  {
   "code": "gues2",
   "class": 7,
   "medium": "ur",
   "title": "Muashrey ki Daryaft - Hindustan aur Uske age Part-II",
-  "subject": "Muashrey Ki Daryaft"
+  "subject": "Social Science"
  },
  {
   "code": "geof1",
@@ -1229,21 +1229,21 @@
   "class": 7,
   "medium": "hi",
   "title": "Ruchira",
-  "subject": "Ruchira"
+  "subject": "Sanskrit"
  },
  {
   "code": "ghes1",
   "class": 7,
   "medium": "hi",
   "title": "Samaj ka Aadhyan: Bharat or uske aage",
-  "subject": "Samaj Ka Aadhyan"
+  "subject": "Social Science"
  },
  {
   "code": "ghes2",
   "class": 7,
   "medium": "hi",
   "title": "Samaj Ka Aadhyan: Bharat or uske aage Part-II",
-  "subject": "Samaj Ka Aadhyan"
+  "subject": "Social Science"
  },
  {
   "code": "gecu1",
@@ -1285,7 +1285,7 @@
   "class": 7,
   "medium": "ur",
   "title": "Tazassus",
-  "subject": "Tazassus"
+  "subject": "Science"
  },
  {
   "code": "geah1",
@@ -1369,14 +1369,14 @@
   "class": 8,
   "medium": "en",
   "title": "Exploring Society India and Beyond Part-I",
-  "subject": "Exploring Society India"
+  "subject": "Social Science"
  },
  {
   "code": "hees2",
   "class": 8,
   "medium": "en",
   "title": "Exploring Society India and Beyond Part-II",
-  "subject": "Exploring Society India"
+  "subject": "Social Science"
  },
  {
   "code": "hess4",
@@ -1397,7 +1397,7 @@
   "class": 8,
   "medium": "hi",
   "title": "Kaushal Bodh (Hindi)",
-  "subject": "Hindi"
+  "subject": "Skill Education"
  },
  {
   "code": "hhkr1",
@@ -1411,7 +1411,7 @@
   "class": 8,
   "medium": "hi",
   "title": "Khel Yatra (Hindi)",
-  "subject": "Hindi"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "hess1",
@@ -1474,14 +1474,14 @@
   "class": 8,
   "medium": "hi",
   "title": "Jigyasa",
-  "subject": "Jigyasa"
+  "subject": "Science"
  },
  {
   "code": "hekb1",
   "class": 8,
   "medium": "en",
   "title": "Kaushal Bodh",
-  "subject": "Kaushal Bodh"
+  "subject": "Skill Education"
  },
  {
   "code": "hukl1",
@@ -1495,7 +1495,7 @@
   "class": 8,
   "medium": "en",
   "title": "Khel Yatra",
-  "subject": "Khel Yatra"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "hekr1",
@@ -1565,7 +1565,7 @@
   "class": 8,
   "medium": "ur",
   "title": "Muashrey ki Daryaft - Hindustan Aur Uske Age Part-I",
-  "subject": "Muashrey Ki Daryaft"
+  "subject": "Social Science"
  },
  {
   "code": "hepr1",
@@ -1579,21 +1579,21 @@
   "class": 8,
   "medium": "hi",
   "title": "Ruchira",
-  "subject": "Ruchira"
+  "subject": "Sanskrit"
  },
  {
   "code": "hhes1",
   "class": 8,
   "medium": "hi",
   "title": "Samaj Ka Aadhyan: Bharat or uske aage Part-I",
-  "subject": "Samaj Ka Aadhyan"
+  "subject": "Social Science"
  },
  {
   "code": "huss1",
   "class": 8,
   "medium": "ur",
   "title": "Samaji Aur Siyasi Zindagi",
-  "subject": "Samaji Aur Siyasi"
+  "subject": "Social Science"
  },
  {
   "code": "hhsb1",
@@ -1635,21 +1635,21 @@
   "class": 8,
   "medium": "hi",
   "title": "Samajik avam Rajnitik Jeevan",
-  "subject": "Social Science"
+  "subject": "Civics"
  },
  {
   "code": "hucu1",
   "class": 8,
   "medium": "ur",
   "title": "Tajassus",
-  "subject": "Tajassus"
+  "subject": "Science"
  },
  {
   "code": "hugy1",
   "class": 8,
   "medium": "ur",
   "title": "Wasayel aur Taraqqui(Urdu)",
-  "subject": "Urdu"
+  "subject": "Geography"
  },
  {
   "code": "hukr1",
@@ -1663,7 +1663,7 @@
   "class": 8,
   "medium": "ur",
   "title": "Khel Yatra (Urdu)",
-  "subject": "Urdu"
+  "subject": "Health and Physical Education"
  },
  {
   "code": "huug1",
@@ -1684,7 +1684,7 @@
   "class": 9,
   "medium": "hi",
   "title": "Anveshan",
-  "subject": "Anveshan"
+  "subject": "Science"
  },
  {
   "code": "ievt1",
@@ -1698,7 +1698,7 @@
   "class": 9,
   "medium": "hi",
   "title": "Bharat Aur Samkalin Vishwa-I",
-  "subject": "Bharat Aur Samkalin"
+  "subject": "Social Science"
  },
  {
   "code": "ievc1",
@@ -1719,14 +1719,14 @@
   "class": 9,
   "medium": "en",
   "title": "Contemporary India",
-  "subject": "Contemporary India"
+  "subject": "Social Science"
  },
  {
   "code": "iess4",
   "class": 9,
   "medium": "en",
   "title": "Democratic Politics",
-  "subject": "Democratic Politics"
+  "subject": "Social Science"
  },
  {
   "code": "iudp1",
@@ -1754,35 +1754,35 @@
   "class": 9,
   "medium": "en",
   "title": "Employability Skill",
-  "subject": "Employability Skill"
+  "subject": "Skill Education"
  },
  {
   "code": "ieep1",
   "class": 9,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "ieep2",
   "class": 9,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "ielm1",
   "class": 9,
   "medium": "en",
   "title": "Lab Manual(English)",
-  "subject": "English"
+  "subject": "Lab Manual"
  },
  {
   "code": "iesc1",
   "class": 9,
   "medium": "en",
   "title": "Exploration",
-  "subject": "Exploration"
+  "subject": "Science"
  },
  {
   "code": "ihga1",
@@ -1817,28 +1817,28 @@
   "class": 9,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "ihep2",
   "class": 9,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "ihlm1",
   "class": 9,
   "medium": "hi",
   "title": "Lab Manual(Hindi)",
-  "subject": "Hindi"
+  "subject": "Lab Manual"
  },
  {
   "code": "iess3",
   "class": 9,
   "medium": "en",
   "title": "India and the Contemporary World-I",
-  "subject": "India And The"
+  "subject": "Social Science"
  },
  {
   "code": "ieeo1",
@@ -1936,7 +1936,7 @@
   "class": 9,
   "medium": "hi",
   "title": "Samkalin Bharat",
-  "subject": "Samkalin Bharat"
+  "subject": "Social Science"
  },
  {
   "code": "ihsa1",
@@ -2020,7 +2020,7 @@
   "class": 9,
   "medium": "ur",
   "title": "Reyazi (Urdu)",
-  "subject": "Urdu"
+  "subject": "Maths"
  },
  {
   "code": "iuna1",
@@ -2062,21 +2062,21 @@
   "class": 10,
   "medium": "ur",
   "title": "Aasri Hindustan-II",
-  "subject": "Aasri Hindustan-Ii"
+  "subject": "Social Science"
  },
  {
   "code": "jhss2",
   "class": 10,
   "medium": "hi",
   "title": "Arthik Vikas ki Samajh",
-  "subject": "Arthik Vikas Ki"
+  "subject": "Social Science"
  },
  {
   "code": "jhss3",
   "class": 10,
   "medium": "hi",
   "title": "Bharat Aur Samakalin Vishav-2",
-  "subject": "Bharat Aur Samakalin"
+  "subject": "Social Science"
  },
  {
   "code": "jhss4",
@@ -2090,14 +2090,14 @@
   "class": 10,
   "medium": "en",
   "title": "Contemporary India",
-  "subject": "Contemporary India"
+  "subject": "Social Science"
  },
  {
   "code": "jess4",
   "class": 10,
   "medium": "en",
   "title": "Democratic Politics",
-  "subject": "Democratic Politics"
+  "subject": "Social Science"
  },
  {
   "code": "judp1",
@@ -2111,21 +2111,21 @@
   "class": 10,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "jeep2",
   "class": 10,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "jelm1",
   "class": 10,
   "medium": "en",
   "title": "Lab Manual(English)",
-  "subject": "English"
+  "subject": "Lab Manual"
  },
  {
   "code": "jeff1",
@@ -2153,35 +2153,35 @@
   "class": 10,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "jhep2",
   "class": 10,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "jhlm1",
   "class": 10,
   "medium": "hi",
   "title": "Lab Manual(Hindi)",
-  "subject": "Hindi"
+  "subject": "Lab Manual"
  },
  {
   "code": "juss3",
   "class": 10,
   "medium": "ur",
   "title": "Hindustan Aur Asri Duniya",
-  "subject": "Hindustan Aur Asri"
+  "subject": "Social Science"
  },
  {
   "code": "jess3",
   "class": 10,
   "medium": "en",
   "title": "India and the Contemporary World-II",
-  "subject": "India And The"
+  "subject": "Social Science"
  },
  {
   "code": "jujp1",
@@ -2195,7 +2195,7 @@
   "class": 10,
   "medium": "ur",
   "title": "Jamhuri Siyasat-II",
-  "subject": "Jamhuri Siyasat-Ii"
+  "subject": "Social Science"
  },
  {
   "code": "jhkr1",
@@ -2216,7 +2216,7 @@
   "class": 10,
   "medium": "ur",
   "title": "Maashi Taraqqui Ki Samajh",
-  "subject": "Maashi Taraqqui Ki"
+  "subject": "Social Science"
  },
  {
   "code": "jemh1",
@@ -2251,14 +2251,14 @@
   "class": 10,
   "medium": "hi",
   "title": "Samkalin Bharat",
-  "subject": "Samkalin Bharat"
+  "subject": "Social Science"
  },
  {
   "code": "jhsy1",
   "class": 10,
   "medium": "hi",
   "title": "Sanchayan Bhag-2",
-  "subject": "Sanchayan Bhag-2"
+  "subject": "Sociology"
  },
  {
   "code": "jesc1",
@@ -2286,7 +2286,7 @@
   "class": 10,
   "medium": "hi",
   "title": "Shemushi",
-  "subject": "Shemushi"
+  "subject": "Sanskrit"
  },
  {
   "code": "jhsp1",
@@ -2300,7 +2300,7 @@
   "class": 10,
   "medium": "en",
   "title": "Understanding Economic Development",
-  "subject": "Understanding Economic Development"
+  "subject": "Social Science"
  },
  {
   "code": "juge1",
@@ -2356,7 +2356,7 @@
   "class": 11,
   "medium": "en",
   "title": "An Introduction to Indian Art Part-I",
-  "subject": "An Introduction To"
+  "subject": "Fine Art"
  },
  {
   "code": "khat1",
@@ -2384,21 +2384,21 @@
   "class": 11,
   "medium": "hi",
   "title": "Bharat ka Samvidhan Sidhant aur Vavhar",
-  "subject": "Bharat Ka Samvidhan"
+  "subject": "Civics"
  },
  {
   "code": "khgy1",
   "class": 11,
   "medium": "hi",
   "title": "Bhart Bhautik Paryabaran",
-  "subject": "Bhart Bhautik Paryabaran"
+  "subject": "Geography"
  },
  {
   "code": "khec1",
   "class": 11,
   "medium": "hi",
   "title": "Bhartiya Airthvavstha Ka Vikash",
-  "subject": "Bhartiya Airthvavstha Ka"
+  "subject": "Economics"
  },
  {
   "code": "khhc1",
@@ -2412,14 +2412,14 @@
   "class": 11,
   "medium": "hi",
   "title": "Bhartiya kala ek parichay",
-  "subject": "Bhartiya Kala Ek"
+  "subject": "Fine Art"
  },
  {
   "code": "khsk1",
   "class": 11,
   "medium": "hi",
   "title": "Bhaswati",
-  "subject": "Bhaswati"
+  "subject": "Sanskrit"
  },
  {
   "code": "kebo1",
@@ -2559,49 +2559,49 @@
   "class": 11,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "keep3",
   "class": 11,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "keep4",
   "class": 11,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "keep5",
   "class": 11,
   "medium": "en",
   "title": "Exemplar Problem(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "kelm1",
   "class": 11,
   "medium": "en",
   "title": "Lab Manual(English)",
-  "subject": "English"
+  "subject": "Lab Manual"
  },
  {
   "code": "kelm2",
   "class": 11,
   "medium": "en",
   "title": "Lab Manual(English)",
-  "subject": "English"
+  "subject": "Lab Manual"
  },
  {
   "code": "kelm3",
   "class": 11,
   "medium": "en",
   "title": "Lab Manual(English)",
-  "subject": "English"
+  "subject": "Lab Manual"
  },
  {
   "code": "kesp1",
@@ -2615,7 +2615,7 @@
   "class": 11,
   "medium": "en",
   "title": "Financial Accounting-I",
-  "subject": "Financial Accounting-I"
+  "subject": "Accountancy"
  },
  {
   "code": "kefc1",
@@ -2685,7 +2685,7 @@
   "class": 11,
   "medium": "ur",
   "title": "Hayatiyaat",
-  "subject": "Hayatiyaat"
+  "subject": "Biology"
  },
  {
   "code": "kehp1",
@@ -2699,49 +2699,49 @@
   "class": 11,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "khep3",
   "class": 11,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "khep4",
   "class": 11,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "khep5",
   "class": 11,
   "medium": "hi",
   "title": "Exemplar Problem(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "khlm2",
   "class": 11,
   "medium": "hi",
   "title": "Lab Manual(Hindi)",
-  "subject": "Hindi"
+  "subject": "Lab Manual"
  },
  {
   "code": "kups1",
   "class": 11,
   "medium": "ur",
   "title": "Hindustan Aain Aur Kam",
-  "subject": "Hindustan Aain Aur"
+  "subject": "Civics"
  },
  {
   "code": "kuec1",
   "class": 11,
   "medium": "ur",
   "title": "Hindustan ki Masshi Tarraqiu",
-  "subject": "Hindustan Ki Masshi"
+  "subject": "Economics"
  },
  {
   "code": "kuhc1",
@@ -2769,14 +2769,14 @@
   "class": 11,
   "medium": "en",
   "title": "India Constitution at Work",
-  "subject": "India Constitution At"
+  "subject": "Civics"
  },
  {
   "code": "kegy1",
   "class": 11,
   "medium": "en",
   "title": "India Physical Environment",
-  "subject": "India Physical Environment"
+  "subject": "Geography"
  },
  {
   "code": "kuic1",
@@ -2790,7 +2790,7 @@
   "class": 11,
   "medium": "en",
   "title": "Indian Economic Development",
-  "subject": "Indian Economic Development"
+  "subject": "Economics"
  },
  {
   "code": "kuiz1",
@@ -2804,28 +2804,28 @@
   "class": 11,
   "medium": "ur",
   "title": "Karobari Mutalah I",
-  "subject": "Karobari Mutalah I"
+  "subject": "Business Studies"
  },
  {
   "code": "kuch2",
   "class": 11,
   "medium": "ur",
   "title": "Keemiya II",
-  "subject": "Keemiya Ii"
+  "subject": "Chemistry"
  },
  {
   "code": "kuac1",
   "class": 11,
   "medium": "ur",
   "title": "Khatadari-I",
-  "subject": "Khatadari-I"
+  "subject": "Accountancy"
  },
  {
   "code": "kuac2",
   "class": 11,
   "medium": "ur",
   "title": "Khatadari-II",
-  "subject": "Khatadari-Ii"
+  "subject": "Accountancy"
  },
  {
   "code": "keks1",
@@ -2839,14 +2839,14 @@
   "class": 11,
   "medium": "hi",
   "title": "Lekhashastra-I",
-  "subject": "Lekhashastra-I"
+  "subject": "Accountancy"
  },
  {
   "code": "khac2",
   "class": 11,
   "medium": "hi",
   "title": "Lekhashastra-II",
-  "subject": "Lekhashastra-Ii"
+  "subject": "Accountancy"
  },
  {
   "code": "kehc1",
@@ -2860,7 +2860,7 @@
   "class": 11,
   "medium": "hi",
   "title": "Manovigyan",
-  "subject": "Manovigyan"
+  "subject": "Psychology"
  },
  {
   "code": "kemh1",
@@ -2888,14 +2888,14 @@
   "class": 11,
   "medium": "ur",
   "title": "Mutala-e-Muashira",
-  "subject": "Mutala-E-Muashira"
+  "subject": "Sociology"
  },
  {
   "code": "kupy1",
   "class": 11,
   "medium": "ur",
   "title": "Nafsiyaat",
-  "subject": "Nafsiyaat"
+  "subject": "Psychology"
  },
  {
   "code": "kuna1",
@@ -2944,28 +2944,28 @@
   "class": 11,
   "medium": "hi",
   "title": "Raajneeti Sidhant",
-  "subject": "Raajneeti Sidhant"
+  "subject": "Civics"
  },
  {
   "code": "khsy2",
   "class": 11,
   "medium": "hi",
   "title": "Samaj ka Bodh",
-  "subject": "Samaj Ka Bodh"
+  "subject": "Sociology"
  },
  {
   "code": "khsy1",
   "class": 11,
   "medium": "hi",
   "title": "Samaj Shastra Parichay-I",
-  "subject": "Samaj Shastra Parichay-I"
+  "subject": "Sociology"
  },
  {
   "code": "kusy1",
   "class": 11,
   "medium": "ur",
   "title": "Samajiyaat Ka Tarf",
-  "subject": "Samajiyaat Ka Tarf"
+  "subject": "Sociology"
  },
  {
   "code": "khst1",
@@ -2979,35 +2979,35 @@
   "class": 11,
   "medium": "en",
   "title": "Human Ecology and Family Sciences Part I",
-  "subject": "Science"
+  "subject": "Home Science"
  },
  {
   "code": "kehe2",
   "class": 11,
   "medium": "en",
   "title": "Human Ecology and Family Sciences Part II",
-  "subject": "Science"
+  "subject": "Home Science"
  },
  {
   "code": "khsk2",
   "class": 11,
   "medium": "hi",
   "title": "Shashwati",
-  "subject": "Shashwati"
+  "subject": "Sanskrit"
  },
  {
   "code": "kusc1",
   "class": 11,
   "medium": "ur",
   "title": "Shumariyaat bar-e-Mushiyat",
-  "subject": "Shumariyaat Bar-E-Mushiyat"
+  "subject": "Science"
  },
  {
   "code": "kups2",
   "class": 11,
   "medium": "ur",
   "title": "Siyasi Nazaria",
-  "subject": "Siyasi Nazaria"
+  "subject": "Civics"
  },
  {
   "code": "kesy1",
@@ -3028,21 +3028,21 @@
   "class": 11,
   "medium": "ur",
   "title": "Tabai Gugraphiya ke Mubadiyat",
-  "subject": "Tabai Gugraphiya Ke"
+  "subject": "Geography"
  },
  {
   "code": "kuph1",
   "class": 11,
   "medium": "ur",
   "title": "Tabiyaat-I",
-  "subject": "Tabiyaat-I"
+  "subject": "Physics"
  },
  {
   "code": "kuph2",
   "class": 11,
   "medium": "ur",
   "title": "Tabiyaat-II",
-  "subject": "Tabiyaat-Ii"
+  "subject": "Physics"
  },
  {
   "code": "khtp1",
@@ -3077,7 +3077,7 @@
   "class": 11,
   "medium": "en",
   "title": "Understanding Society",
-  "subject": "Understanding Society"
+  "subject": "Sociology"
  },
  {
   "code": "kugm1",
@@ -3091,14 +3091,14 @@
   "class": 11,
   "medium": "ur",
   "title": "Hindustan Tabi'i Mahaul (Urdu)",
-  "subject": "Urdu"
+  "subject": "Geography"
  },
  {
   "code": "kugy3",
   "class": 11,
   "medium": "ur",
   "title": "Jughrafia Mein Aamli Kam (Urdu)",
-  "subject": "Urdu"
+  "subject": "Geography"
  },
  {
   "code": "kuku1",
@@ -3119,7 +3119,7 @@
   "class": 11,
   "medium": "hi",
   "title": "Vyavsay Adhyanan",
-  "subject": "Vyavsay Adhyanan"
+  "subject": "Business Studies"
  },
  {
   "code": "keww1",
@@ -3133,7 +3133,7 @@
   "class": 12,
   "medium": "ur",
   "title": "Aasri Alami Siyasat",
-  "subject": "Aasri Alami Siyasat"
+  "subject": "Civics"
  },
  {
   "code": "lham1",
@@ -3161,7 +3161,7 @@
   "class": 12,
   "medium": "en",
   "title": "An Introduction to Indian Art Part-II",
-  "subject": "An Introduction To"
+  "subject": "Fine Art"
  },
  {
   "code": "lhat1",
@@ -3203,21 +3203,21 @@
   "class": 12,
   "medium": "hi",
   "title": "Bhartiya Kala ka Itihaas Bhag 2",
-  "subject": "Bhartiya Kala Ka"
+  "subject": "Fine Art"
  },
  {
   "code": "lhsy1",
   "class": 12,
   "medium": "hi",
   "title": "Bhartiya Samaj",
-  "subject": "Bhartiya Samaj"
+  "subject": "Sociology"
  },
  {
   "code": "lhsk1",
   "class": 12,
   "medium": "hi",
   "title": "Bhaswati",
-  "subject": "Bhaswati"
+  "subject": "Sanskrit"
  },
  {
   "code": "lebo1",
@@ -3315,7 +3315,7 @@
   "class": 12,
   "medium": "en",
   "title": "Contemporary World Politics",
-  "subject": "Contemporary World Politics"
+  "subject": "Civics"
  },
  {
   "code": "lehc1",
@@ -3343,35 +3343,35 @@
   "class": 12,
   "medium": "en",
   "title": "Exemplar Problems(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "leep6",
   "class": 12,
   "medium": "en",
   "title": "Exemplar Problems(English)",
-  "subject": "English"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "lelm1",
   "class": 12,
   "medium": "en",
   "title": "Lab Manual(English)",
-  "subject": "English"
+  "subject": "Lab Manual"
  },
  {
   "code": "lelm2",
   "class": 12,
   "medium": "en",
   "title": "Lab Manual(English)",
-  "subject": "English"
+  "subject": "Lab Manual"
  },
  {
   "code": "lelm3",
   "class": 12,
   "medium": "en",
   "title": "Lab Manual(English)",
-  "subject": "English"
+  "subject": "Lab Manual"
  },
  {
   "code": "leep4",
@@ -3441,49 +3441,49 @@
   "class": 12,
   "medium": "ur",
   "title": "Hayatiyaat",
-  "subject": "Hayatiyaat"
+  "subject": "Biology"
  },
  {
   "code": "lhep2",
   "class": 12,
   "medium": "hi",
   "title": "Exemplar Problems(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "lhep4",
   "class": 12,
   "medium": "hi",
   "title": "Exemplar Problems(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "lhep6",
   "class": 12,
   "medium": "hi",
   "title": "Exemplar Problems(Hindi)",
-  "subject": "Hindi"
+  "subject": "Exemplar Problems"
  },
  {
   "code": "lhlm1",
   "class": 12,
   "medium": "hi",
   "title": "Lab Manual(Hindi)",
-  "subject": "Hindi"
+  "subject": "Lab Manual"
  },
  {
   "code": "lhlm3",
   "class": 12,
   "medium": "hi",
   "title": "Lab Manual(Hindi)",
-  "subject": "Hindi"
+  "subject": "Lab Manual"
  },
  {
   "code": "lugy1",
   "class": 12,
   "medium": "ur",
   "title": "Hindustan Awam Aur Maishat",
-  "subject": "Hindustan Awam Aur"
+  "subject": "Geography"
  },
  {
   "code": "luhc1",
@@ -3497,14 +3497,14 @@
   "class": 12,
   "medium": "ur",
   "title": "Hindustan Mein Samaji Tabdili Aur Taraqqi",
-  "subject": "Hindustan Mein Samaji"
+  "subject": "Sociology"
  },
  {
   "code": "luis1",
   "class": 12,
   "medium": "ur",
   "title": "Hindustani Samaj",
-  "subject": "Hindustani Samaj"
+  "subject": "Social Science"
  },
  {
   "code": "lehs1",
@@ -3553,14 +3553,14 @@
   "class": 12,
   "medium": "en",
   "title": "India -People And Economy",
-  "subject": "India -People And"
+  "subject": "Geography"
  },
  {
   "code": "lesy1",
   "class": 12,
   "medium": "en",
   "title": "Indian Society",
-  "subject": "Indian Society"
+  "subject": "Sociology"
  },
  {
   "code": "lufh1",
@@ -3574,21 +3574,21 @@
   "class": 12,
   "medium": "en",
   "title": "Introductory Macroeconomics",
-  "subject": "Introductory Macroeconomics"
+  "subject": "Economics"
  },
  {
   "code": "leec2",
   "class": 12,
   "medium": "en",
   "title": "Introductory Microeconomics",
-  "subject": "Introductory Microeconomics"
+  "subject": "Economics"
  },
  {
   "code": "lugy3",
   "class": 12,
   "medium": "ur",
   "title": "Jughrafia Mein Aamli Kam",
-  "subject": "Jughrafia Mein Aamli"
+  "subject": "Geography"
  },
  {
   "code": "lume1",
@@ -3609,42 +3609,42 @@
   "class": 12,
   "medium": "ur",
   "title": "Karobari Uloom I",
-  "subject": "Karobari Uloom I"
+  "subject": "Business Studies"
  },
  {
   "code": "lubs2",
   "class": 12,
   "medium": "ur",
   "title": "Karobari Uloom II",
-  "subject": "Karobari Uloom Ii"
+  "subject": "Business Studies"
  },
  {
   "code": "luch1",
   "class": 12,
   "medium": "ur",
   "title": "Keemiya I",
-  "subject": "Keemiya I"
+  "subject": "Chemistry"
  },
  {
   "code": "luch2",
   "class": 12,
   "medium": "ur",
   "title": "Keemiya II",
-  "subject": "Keemiya Ii"
+  "subject": "Chemistry"
  },
  {
   "code": "luac1",
   "class": 12,
   "medium": "ur",
   "title": "Khatadari-I",
-  "subject": "Khatadari-I"
+  "subject": "Accountancy"
  },
  {
   "code": "luac2",
   "class": 12,
   "medium": "ur",
   "title": "Khatadari-II",
-  "subject": "Khatadari-Ii"
+  "subject": "Accountancy"
  },
  {
   "code": "lume2",
@@ -3658,21 +3658,21 @@
   "class": 12,
   "medium": "hi",
   "title": "Lekhashastra Part I",
-  "subject": "Lekhashastra Part I"
+  "subject": "Accountancy"
  },
  {
   "code": "lhac2",
   "class": 12,
   "medium": "hi",
   "title": "Lekhashastra Part II",
-  "subject": "Lekhashastra Part Ii"
+  "subject": "Accountancy"
  },
  {
   "code": "lhpy1",
   "class": 12,
   "medium": "hi",
   "title": "Manovigyan",
-  "subject": "Manovigyan"
+  "subject": "Psychology"
  },
  {
   "code": "lemh1",
@@ -3763,7 +3763,7 @@
   "class": 12,
   "medium": "en",
   "title": "Politics in India Since Independence",
-  "subject": "Politics In India"
+  "subject": "Civics"
  },
  {
   "code": "lepy1",
@@ -3784,21 +3784,21 @@
   "class": 12,
   "medium": "hi",
   "title": "Samashty Arthshastra Ek Parichay",
-  "subject": "Samashty Arthshastra Ek"
+  "subject": "Economics"
  },
  {
   "code": "lehe1",
   "class": 12,
   "medium": "en",
   "title": "Human Ecology and Family Sciences Part I",
-  "subject": "Science"
+  "subject": "Home Science"
  },
  {
   "code": "lehe2",
   "class": 12,
   "medium": "en",
   "title": "Human Ecology and Family Sciences Part II",
-  "subject": "Science"
+  "subject": "Home Science"
  },
  {
   "code": "lehh1",
@@ -3819,35 +3819,35 @@
   "class": 12,
   "medium": "hi",
   "title": "Shaswati",
-  "subject": "Shaswati"
+  "subject": "Sanskrit"
  },
  {
   "code": "lesy2",
   "class": 12,
   "medium": "en",
   "title": "Social Change and Development in India",
-  "subject": "Social Change And"
+  "subject": "Sociology"
  },
  {
   "code": "lhsy2",
   "class": 12,
   "medium": "hi",
   "title": "Bharat main Samajik Parivartan aur Vikas",
-  "subject": "Social Science"
+  "subject": "Sociology"
  },
  {
   "code": "luph1",
   "class": 12,
   "medium": "ur",
   "title": "Tabiyaat-I",
-  "subject": "Tabiyaat-I"
+  "subject": "Physics"
  },
  {
   "code": "luph2",
   "class": 12,
   "medium": "ur",
   "title": "Tabiyaat-II",
-  "subject": "Tabiyaat-Ii"
+  "subject": "Physics"
  },
  {
   "code": "luth1",
@@ -3896,13 +3896,13 @@
   "class": 12,
   "medium": "hi",
   "title": "Vyavasai Adhyan I",
-  "subject": "Vyavasai Adhyan I"
+  "subject": "Business Studies"
  },
  {
   "code": "lhbs2",
   "class": 12,
   "medium": "hi",
   "title": "Vyavasai Adhyan II",
-  "subject": "Vyavasai Adhyan Ii"
+  "subject": "Business Studies"
  }
 ]

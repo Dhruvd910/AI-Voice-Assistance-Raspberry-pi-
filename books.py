@@ -239,12 +239,15 @@ RE_CHAPTER = re.compile(r'(?:chapter|ch|lesson)[\s._-]*(\d{1,2})|(\d{2})\s*$',
 #       Chapter
 #                 9     Methods of Separation
 #                       in Everyday Life
-RE_HEADING_WORD = re.compile(r'^\s*chapter\s*$', re.IGNORECASE)
+# The word that introduces a chapter, in either language. The Hindi editions
+# say अध्याय where the English ones say Chapter, and some readers say पाठ.
+RE_HEADING_WORD = re.compile(r'^\s*(chapter|अध्याय|पाठ)\s*$', re.IGNORECASE)
 # "Chapter 9   Methods of Separation", all on one line. WHITESPACE after the
 # number, not any punctuation: NCERT's page footer is "Chapter 10.indd 183
 # 10/4/2024 3:09:33 PM", and a looser separator read that as chapter 10 titled
 # ".indd 183 10/4/2024".
-RE_HEADING_INLINE = re.compile(r'^\s*chapter\s+(\d{1,2})\s+(\S.*)$', re.IGNORECASE)
+RE_HEADING_INLINE = re.compile(r'^\s*(?:chapter|अध्याय|पाठ)\s+(\d{1,2})\s+(\S.*)$',
+                               re.IGNORECASE)
 RE_HEADING_NUMBERED = re.compile(r'^\s*(\d{1,2})\s{2,}(\S.*)$')
 RE_HEADING_NUMBER_ONLY = re.compile(r'^\s*(\d{1,2})\s*$')
 # Typesetting leftovers that survive into the text layer.
@@ -254,21 +257,31 @@ RE_NOT_A_TITLE = re.compile(r'\.indd|\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}:\d{2}|'
 HEADING_WINDOW = (2, 4)
 
 
-def _title_fragment(line):
+def _title_fragment(line, hindi=False):
     """`line` as a piece of a chapter title, or None.
 
     Judged on SHAPE, because the position differs from chapter to chapter --
     NCERT sets the number above the word "Chapter" in some and below it in
     others, and runs a long title onto a second line in several. A fragment is
-    short, starts with a letter, is not a sentence, and is not the Sanskrit
-    verse that follows most of these headings.
+    short, starts with a letter, and is not a sentence.
+
+    `hindi` says which script the heading is in, taken from the word that
+    introduced it -- अध्याय or Chapter. It has to be told rather than guess,
+    because the reason to reject the wrong script is opposite in each
+    direction: under an English heading the Devanagari line is the Sanskrit
+    verse NCERT prints below it, and under a Hindi heading the Latin line is
+    the running header or a figure label.
     """
     text = re.sub(r'\s{2,}', " ", (line or "")).strip()
-    if not text or is_hindi(text) or RE_NOT_A_TITLE.search(text):
+    if not text or RE_NOT_A_TITLE.search(text):
+        return None
+    if is_hindi(text) != bool(hindi):
         return None
     if not text[0].isalpha():
         return None
-    if re.search(r'[.?!;,]$', text):
+    # The danda is Hindi's full stop, so a line ending in one is a sentence
+    # from the body and not a heading.
+    if re.search(r'[.?!;,।॥]$', text):
         return None
     return text if 1 <= len(text.split()) <= 8 else None
 
@@ -289,12 +302,14 @@ def chapter_heading(first_page):
     for index, line in enumerate(lines):
         inline = RE_HEADING_INLINE.match(line)
         if inline:
-            title = _title_fragment(inline.group(2))
+            title = _title_fragment(inline.group(2), is_hindi(line))
             if title:
                 return int(inline.group(1)), title
             continue
-        if not RE_HEADING_WORD.match(line):
+        word = RE_HEADING_WORD.match(line)
+        if not word:
             continue
+        hindi = is_hindi(word.group(1))
         # The word "Chapter" on its own. The number and the title are somewhere
         # in the few lines around it, in an order that varies by chapter.
         before, after = HEADING_WINDOW
@@ -306,7 +321,7 @@ def chapter_heading(first_page):
             numbered = RE_HEADING_NUMBERED.match(candidate)
             if numbered:
                 number = int(numbered.group(1))
-                piece = _title_fragment(numbered.group(2))
+                piece = _title_fragment(numbered.group(2), hindi)
                 if piece:
                     fragments.append(piece)
                     started = True
@@ -315,7 +330,7 @@ def chapter_heading(first_page):
             if only:
                 number = int(only.group(1))
                 continue
-            piece = _title_fragment(candidate)
+            piece = _title_fragment(candidate, hindi)
             if piece is None:
                 # Body text, or the verse. Everything after it belongs to the
                 # page, not to the heading.
@@ -793,7 +808,13 @@ MEDIUM_LETTERS = {"e": "en", "h": "hi", "u": "ur"}
 # Longest first, so "social science" wins over "science" and "political
 # science" over both.
 SUBJECT_WORDS = [
-    ("social science", "Social Science"), ("political science", "Civics"),
+    # Civics BEFORE Social Science, because these are matched in order and the
+    # Hindi title "Samajik Evam Rajnitik Jeevan" contains both words. Its
+    # English twin is "Social and Political Life", which lands on Civics -- the
+    # same book in two languages must not end up on two different shelves.
+    ("political science", "Civics"), ("political", "Civics"),
+    ("rajniti", "Civics"), ("nagrik", "Civics"), ("civics", "Civics"),
+    ("social science", "Social Science"),
     ("samajik", "Social Science"), ("social studies", "Social Science"),
     ("mathematics", "Maths"), ("ganit", "Maths"), ("riyazi", "Maths"),
     ("maths", "Maths"), ("math", "Maths"),
@@ -804,20 +825,76 @@ SUBJECT_WORDS = [
     ("mazi", "History"), ("past", "History"),
     ("geography", "Geography"), ("bhugol", "Geography"),
     ("habitat", "Geography"), ("prithvi", "Geography"), ("earth", "Geography"),
-    ("civics", "Civics"), ("nagrik", "Civics"), ("rajniti", "Civics"),
-    ("political", "Civics"),
     ("economics", "Economics"), ("arthashastra", "Economics"),
     ("accountancy", "Accountancy"), ("business", "Business Studies"),
     ("computer", "Computer Science"), ("informatics", "Computer Science"),
     ("psychology", "Psychology"), ("sociology", "Sociology"),
     ("science", "Science"), ("vigyan", "Science"), ("curiosity", "Science"),
+    ("jigyasa", "Science"),
+    ("samaj ka", "Social Science"), ("samaj", "Social Science"),
     ("environmental", "EVS"), ("paryavaran", "EVS"),
+    ("employability", "Skill Education"), ("kaushal", "Skill Education"),
     ("english", "English"), ("hindi", "Hindi"), ("sanskrit", "Sanskrit"),
     ("urdu", "Urdu"), ("health", "Health and Physical Education"),
 ]
 RE_NCERT_ENTRY = re.compile(
     r'pm\s*==\s*"([a-l][ehu][a-z]{2}\d)"\s*\)\s*\{\s*document\.write\('
     r'[^)]*?<strong>\s*([^<]{1,80}?)\s*</strong>', re.DOTALL)
+
+
+# THE SUBJECT, FROM THE CODE RATHER THAN FROM THE TITLE.
+#
+# Characters 3 and 4 of an NCERT code are the book series, and they are far
+# better evidence than the name on the cover -- the name is in three languages
+# and often says nothing about the subject at all. "Samaj Shastra Parichay"
+# guessed from its title lands on Social Science because it contains the word
+# समाज; its code says `sy`, and `sy` is Sociology in every class. Likewise
+# Ruchira and Shaswati are Sanskrit readers whose titles say so nowhere, and
+# Jigyasa, Curiosity and Tajassus are one science book in three languages.
+#
+# Only the pairs whose meaning is unambiguous across every class are listed.
+# Anything else falls through to the title, which for a reader -- Honeysuckle,
+# Vasant, Bansuri -- is the right answer anyway: the book IS the subject.
+CODE_SUBJECTS = {
+    "mh": "Maths", "gp": "Maths", "mm": "Maths", "jm": "Maths", "ri": "Maths",
+    "sc": "Science", "cu": "Science",
+    "ph": "Physics", "ch": "Chemistry", "bo": "Biology",
+    "ss": "Social Science", "es": "Social Science",
+    "hs": "History", "gy": "Geography",
+    "ps": "Civics", "sy": "Sociology", "ec": "Economics",
+    "ac": "Accountancy", "bs": "Business Studies", "ct": "Computer Science",
+    "py": "Psychology", "he": "Home Science", "fa": "Fine Art",
+    "ev": "EVS", "ap": "EVS",
+    "sk": "Sanskrit", "en": "English", "hn": "Hindi",
+    "ky": "Health and Physical Education",
+    "ep": "Exemplar Problems", "lm": "Lab Manual",
+}
+
+
+# Codes that name a SET of books rather than one subject. In Classes 6 to 8 the
+# social-science series is three separate books -- Our Pasts, Our Environment,
+# Social and Political Life -- and each one's title says which it is, so for
+# these the title is the MORE specific evidence and wins. Everywhere else the
+# code wins; see CODE_SUBJECTS.
+SERIES_CODES = {"ss", "es"}
+
+
+def _subject_for(code, title):
+    """The subject of an NCERT book, from its code where the code is certain."""
+    pair = (code or "")[2:4].lower()
+    if pair in SERIES_CODES:
+        return (_subject_from_title(title) or CODE_SUBJECTS.get(pair)
+                or _subject_of(title))
+    return CODE_SUBJECTS.get(pair) or _subject_of(title)
+
+
+def _subject_from_title(title):
+    """A subject named in the title, or None when it names none."""
+    lowered = re.sub(r'[^\w\s]', " ", (title or "").lower())
+    for word, subject in SUBJECT_WORDS:
+        if re.search(r'\b' + re.escape(word), lowered):
+            return subject
+    return None
 
 
 def _subject_of(title):
@@ -827,10 +904,9 @@ def _subject_of(title):
     where the book IS the subject, so falling back to the title keeps those
     apart instead of piling them into one folder called General.
     """
-    lowered = re.sub(r'[^\w\s]', " ", (title or "").lower())
-    for word, subject in SUBJECT_WORDS:
-        if re.search(r'\b' + re.escape(word), lowered):
-            return subject
+    named = _subject_from_title(title)
+    if named:
+        return named
     # Trimmed, because it becomes a folder name and "Exploring Society India
     # And Beyond" is a path, not a subject.
     name = " ".join((title or "General").split()[:3]).strip(" -:")
@@ -891,9 +967,9 @@ def catalogue(refresh=False):
         medium = MEDIUM_LETTERS.get(code[1])
         if not klass or not medium:
             continue
+        title = re.sub(r'\s+', " ", title).strip()
         out.append({"code": code, "class": klass, "medium": medium,
-                    "title": re.sub(r'\s+', " ", title).strip(),
-                    "subject": _subject_of(title)})
+                    "title": title, "subject": _subject_for(code, title)})
     out.sort(key=lambda entry: (entry["class"], entry["subject"], entry["code"]))
     if out:
         try:
