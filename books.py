@@ -275,9 +275,21 @@ def _title_fragment(line, hindi=False):
     text = re.sub(r'\s{2,}', " ", (line or "")).strip()
     if not text or RE_NOT_A_TITLE.search(text):
         return None
-    if is_hindi(text) != bool(hindi):
+    # The word "CHAPTER" set as decoration beside the title rather than above
+    # it, which is how the social-science book does it -- it was being taken as
+    # the first word of every title there ("CHAPTER Oceans and Continents") and
+    # it also used up the room the real second line needed.
+    text = re.sub(r'^\s*(?:chapter|अध्याय|पाठ)\b\s*|\s*\b(?:chapter|अध्याय|पाठ)\s*$',
+                  "", text, flags=re.IGNORECASE).strip()
+    if not text or is_hindi(text) != bool(hindi):
         return None
     if not text[0].isalpha():
+        return None
+    # A shredded text layer. Some of these PDFs extract as scattered single
+    # characters -- "प ों के स ज", "Mउ नl ाs" -- which passes every other test
+    # here and then goes on the board as a chapter name.
+    tokens = text.split()
+    if sum(1 for t in tokens if len(t) == 1) > max(1, len(tokens) // 3):
         return None
     # The danda is Hindi's full stop, so a line ending in one is a sentence
     # from the body and not a heading.
@@ -303,8 +315,8 @@ def chapter_heading(first_page):
         inline = RE_HEADING_INLINE.match(line)
         if inline:
             title = _title_fragment(inline.group(2), is_hindi(line))
-            if title:
-                return int(inline.group(1)), title
+            if title and not _looks_shredded(title):
+                return int(inline.group(1)), _tidy_case(title)
             continue
         word = RE_HEADING_WORD.match(line)
         if not word:
@@ -340,8 +352,101 @@ def chapter_heading(first_page):
             fragments.append(piece)
             started = True
         title = re.sub(r'\s+', " ", " ".join(fragments)).strip(" .:-")
-        if number and 3 <= len(title) <= 90:
-            return number, title
+        if number and 3 <= len(title) <= 90 and not _looks_shredded(title):
+            return number, _tidy_case(title)
+    return _headless_heading(lines)
+
+
+# A section number inside a chapter -- "1.1 What is Mathematics?" -- which sits
+# a line or two under the title and must never be mistaken for it.
+RE_SECTION_NUMBER = re.compile(r'^\s*\d{1,2}\.\d')
+# "Unit 1", "इकाई 1". The readers number their parts this way instead.
+RE_UNIT = re.compile(r'^\s*(?:unit|इकाई|भाग)\s*[-–]?\s*(\d{1,2})\s*$',
+                     re.IGNORECASE)
+
+
+def _looks_shredded(title):
+    """True when the text layer came apart and this is not a chapter name.
+
+    Checked on the ASSEMBLED title and not only on each fragment, because that
+    is where it hides: "ज रू" and "क ार्य करना" each look survivable on their
+    own and join into "ज रू क ार्य करना", which is nothing. A token carrying
+    both scripts at once -- "Mउ नl ाs" -- is the same damage in one word.
+    """
+    tokens = title.split()
+    if not tokens:
+        return True
+    if sum(1 for t in tokens if len(t) == 1) > max(1, len(tokens) // 3):
+        return True
+    for token in tokens:
+        latin = any(("a" <= c <= "z") or ("A" <= c <= "Z") for c in token)
+        devanagari = any("ऀ" <= c <= "ॿ" for c in token)
+        if latin and devanagari:
+            return True
+    return False
+
+
+def _tidy_case(title):
+    """"PATTERNS IN MATHEMATICS" -> "Patterns in Mathematics".
+
+    Half the books set their chapter titles in capitals, and a contents list
+    that SHOUTS four of its twelve entries reads as if those four matter more.
+    Only touched when the title is entirely upper case, so an ordinary title
+    keeps whatever capitals its author chose.
+    """
+    letters = [c for c in title if c.isalpha()]
+    if not letters or not all(c.isupper() for c in letters if c.isascii()):
+        return title
+    small = {"in", "of", "and", "the", "a", "an", "to", "for", "with", "on",
+             "at", "from", "by", "or", "is", "our"}
+    words = title.lower().split()
+    return " ".join(word if index and word in small else word.capitalize()
+                    for index, word in enumerate(words))
+
+
+def _headless_heading(lines):
+    """(number, title) for a book that never writes the word "Chapter".
+
+    Ganita Prakash opens "1     PATTERNS IN / MATHEMATICS"; Poorvi opens
+    "Unit 1 / Fables And Folk Tales". Neither reaches the reader above, and
+    between them they are most of what a Class 6 student actually carries -- so
+    without this the maths book and both English readers keep their filenames
+    as chapter names, which is 62 of the 74 chapters on this device.
+    """
+    number, fragments = None, []
+    for index, line in enumerate(lines[:16]):
+        if not line.strip():
+            continue
+        if RE_SECTION_NUMBER.match(line):
+            break                      # into the body of the chapter
+        unit = RE_UNIT.match(line)
+        if unit:
+            number = int(unit.group(1))
+            continue
+        numbered = RE_HEADING_NUMBERED.match(line)
+        if numbered and not fragments:
+            number = int(numbered.group(1))
+            piece = _title_fragment(numbered.group(2), is_hindi(line))
+            if piece:
+                fragments.append(piece)
+            continue
+        only = RE_HEADING_NUMBER_ONLY.match(line)
+        if only and not fragments:
+            number = int(only.group(1))
+            continue
+        piece = _title_fragment(line, is_hindi(line))
+        if piece is None:
+            if fragments:
+                break
+            continue
+        fragments.append(piece)
+        # A title that is one line is the common case, two is a wrap, and three
+        # is where the readers run into their own first activity.
+        if len(fragments) >= 3:
+            break
+    title = re.sub(r'\s+', " ", " ".join(fragments)).strip(" .:-")
+    if number and 3 <= len(title) <= 90 and not _looks_shredded(title):
+        return number, _tidy_case(title)
     return None, None
 
 
@@ -723,7 +828,7 @@ def contents(klass=None, board=None, subject=None):
 # CACHEABLE part of the prompt -- it is the same for every question this
 # student asks -- so it is billed once per student rather than once per turn,
 # which is what makes a list this size affordable at all.
-CONTENTS_MAX_CHARS = int(os.getenv("BOOK_CONTENTS_CHARS", "1600"))
+CONTENTS_MAX_CHARS = int(os.getenv("BOOK_CONTENTS_CHARS", "3000"))
 
 
 # WHICH SUBJECT GETS THE ROOM WHEN THERE IS NOT ENOUGH.
@@ -739,6 +844,14 @@ SUBJECT_ORDER = [
     "Social Science", "History", "Geography", "Civics", "Economics",
     "English", "Hindi", "Sanskrit", "Computer Science",
 ]
+
+
+def _is_placeholder_title(title):
+    """True when `title` is the filename standing in for a name we never read."""
+    stem = os.path.splitext(title or "")[0]
+    return bool(RE_NCERT_FILE.match(stem)) or bool(
+        re.match(r'^\s*(?:chapter|अध्याय)\s*\d*\s*$', title or "",
+                 re.IGNORECASE))
 
 
 def _subject_order(subject):
@@ -775,13 +888,35 @@ def contents_block(profile=None):
     if not rows:
         return ""
 
-    lines, used = [], 0
+    # Grouped by subject AND language. The same book exists in both mediums
+    # with the same chapter numbers, so grouping by subject alone interleaved
+    # "1. The Wonderful World of Science, 1. विज्ञान का अनूठा संसार" into one
+    # unreadable run. Both are needed -- a child asking in Hindi wants the
+    # Hindi chapter name back -- so they get a line each.
+    groups = []
     for subject in sorted({row["subject"] for row in rows}, key=_subject_order):
-        chapters = [row for row in rows if row["subject"] == subject]
-        listed = ", ".join(
-            f"{row['chapter']}. {row['title']}" if row["chapter"]
-            else row["title"] for row in chapters)
-        line = f"Class {klass} {subject}: {listed}."
+        for language in sorted({row["language"] for row in rows
+                                if row["subject"] == subject}):
+            groups.append((subject, language))
+
+    lines, used = [], 0
+    for subject, language in groups:
+        chapters = [row for row in rows if row["subject"] == subject
+                    and row["language"] == language]
+        named_as = f"{subject} in Hindi" if language == "hi" else subject
+        named = [row for row in chapters if not _is_placeholder_title(row["title"])]
+        if len(named) < max(1, len(chapters) // 2):
+            # A book whose first pages carry no heading this can read -- most
+            # of the language readers. Saying how many chapters it has is
+            # honest and stops her doing the two wrong things: denying she has
+            # the book, and reading "fhkr101" out as a chapter name.
+            line = (f"Class {klass} {named_as}: {len(chapters)} chapters, but "
+                    f"their names are not on this device -- say so if asked.")
+        else:
+            listed = ", ".join(
+                f"{row['chapter']}. {row['title']}" if row["chapter"]
+                else row["title"] for row in named)
+            line = f"Class {klass} {named_as}: {listed}."
         if used + len(line) > CONTENTS_MAX_CHARS:
             break
         used += len(line)
