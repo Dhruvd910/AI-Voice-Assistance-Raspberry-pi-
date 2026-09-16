@@ -347,6 +347,153 @@ RE_NOT_A_TITLE = re.compile(r'\.indd|\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}:\d{2}|'
 HEADING_WINDOW = (2, 4)
 
 
+# Classes 9 to 12 write the chapter number in words -- "CHAPTER EIGHT",
+# "Chapter Nine" -- and the History book numbers its themes the same way.
+NUMBER_WORDS = {word: value for value, word in enumerate(
+    "one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split(), start=1)}
+_NUMBER = (r'(?:\d{1,2}|'
+           + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True)) + r')')
+
+# The line that introduces a chapter, in every form seen across the shelf:
+#   "Chapter"             the word alone, number and title nearby   (Class 6)
+#   "CHAPTER EIGHT"       number in words, title underneath          (Class 11)
+#   "CHAPTER        1"    number far to the right, title underneath  (Class 10)
+#   "Unit"                then "1" and the title a line or two down   (Class 12)
+#   "THEME   Bricks, ..."  the title in the next column               (History)
+#   "Chapter 1     Biology in essence..."  the next column is BODY    (Biology)
+# The lookahead after the word keeps "Units", "Unity" and "Themes" out.
+RE_HEADING_LINE = re.compile(
+    r'^\s*(?P<word>chapter|unit|theme|lesson|अध्याय|इकाई|पाठ)(?![A-Za-z])\.?'
+    r'(?:\s*[-:]?\s*(?P<num>' + _NUMBER + r')(?![A-Za-z0-9]))?'
+    r'(?:\s+(?P<rest>\S.*?))?\s*$', re.IGNORECASE)
+RE_NUMBERED_ANY = re.compile(
+    r'^\s*(?P<num>' + _NUMBER + r')(?![A-Za-z0-9.])\s{2,}(?P<rest>\S.*)$',
+    re.IGNORECASE)
+RE_NUMBER_ONLY_ANY = re.compile(r'^\s*(?P<num>' + _NUMBER + r')\s*$', re.IGNORECASE)
+# "REAL NUMBERS          1", "Introduction to Accounting          1": the title
+# and the chapter number at the far right of the same line.
+RE_TITLE_THEN_NUMBER = re.compile(r'^\s*(?P<title>\S.*?\S)\s{6,}(?P<num>\d{1,2})\s*$')
+# Headings of a section of the opening page, never a chapter's name.
+NOISE_FRAGMENTS = {"objectives", "learning objectives", "learning outcomes",
+                   "contents", "about the unit", "about this unit",
+                   "about the chapter", "picture reading", "note to the teacher"}
+# Words an English title line can be left hanging on. Wider than RE_CUT_OFF,
+# which REJECTS a title ending on one: nothing is called "... through", but
+# "A Journey through" is the first line of "A Journey through States of Water".
+HANGING_WORDS = {
+    "and", "or", "the", "of", "to", "a", "an", "for", "with", "in", "on", "at",
+    "by", "from", "through", "about", "into", "onto", "over", "under",
+    "between", "within", "without", "towards", "around", "across", "beyond",
+    "like", "after", "before", "their", "its", "our", "my", "your", "his", "her",
+    "this", "that", "these", "those", "some", "more", "how", "why", "where",
+    "when", "who", "which", "what", "is", "are"}
+# Words a Hindi title line can be left hanging on, for the next line to finish.
+HINDI_CONNECTORS = {"की", "का", "के", "एवं", "और", "में", "से", "या", "को", "पर",
+                    "तथा", "व"}
+
+
+def _continues_title(previous, piece, gap_lines=0, indent_shift=0):
+    """True when `piece` is the next line of the SAME title as `previous`.
+
+    TWO SIGNALS, AND IT TAKES BOTH TO STOP. Each was tried alone and measured
+    against every chapter on the shelf, and each alone got core titles wrong:
+
+    Layout alone -- stop at a run of blank lines -- cut Class 6 titles in half:
+    "The Beginnings of" and "Indian Civilisation" are set four blank lines
+    apart.
+
+    Grammar alone -- continue only when the next line starts in lower case or
+    the previous one was left hanging -- cut them the other way: "A Journey
+    through / States of Water" and "Economic Activities / Around Us" wrap with
+    nothing hanging at all.
+
+    So a line ENDS the title only when it is grammatically fresh AND set apart
+    on the page: two or more blank lines above it, or an indent that has moved.
+    That is exactly the shape of Class 3 EVS's first section heading -- "Going
+    to the Mela", two blank lines, "Preparing for the Mela" nine columns in.
+    """
+    if _is_capitals(previous) and _is_capitals(piece):
+        return True                       # "RAY OPTICS" / "AND OPTICAL"
+    first = piece.lstrip("'\"\u2018\u201c")[:1]
+    if first.isascii() and first.isalpha() and first.islower():
+        return True                       # "their Characteristics"
+    words = piece.split()
+    if words and words[0] in HINDI_CONNECTORS:
+        return True                       # "और प्रस्तुतिकरण"
+    tail = previous.rstrip()
+    if tail[-1:] in (":", ",", "\u2014", "\u2013", "-"):
+        return True                       # "भाग 1:" / "शासन"
+    last = tail.split()[-1].strip("'\"\u2019") if tail.split() else ""
+    if (last.lower() in HANGING_WORDS or RE_CUT_OFF.search(last)
+            or last in HINDI_CONNECTORS):
+        return True                       # "The Beginnings of", "A Journey through"
+    # One word on its own is a title set with its words spread out -- "Motor /
+    # Fitness" -- or a heading over the title: "Introduction / Why Social
+    # Science?".
+    if len(tail.split()) == 1:
+        return True
+    # Grammatically fresh. It is still the same title unless the page sets it
+    # apart.
+    return gap_lines < 2 and abs(indent_shift) < 6
+
+
+RE_RUNNING_HEADER = re.compile(r'\bclass\s+\d{1,2}\b|[\s\u2013-](?:\d{1,2}|[IVX]{1,4})$',
+                               re.IGNORECASE)
+
+# Words that a Title Case heading leaves in lower case.
+NEUTRAL_WORDS = {"the", "and", "for", "with", "from", "into", "onto", "upon",
+                 "that", "this", "their", "through", "about", "over", "under",
+                 "between", "within", "without", "its", "our", "your", "his",
+                 "her", "not", "but", "nor", "yet", "via", "per", "than"}
+
+
+def _number_value(text):
+    if not text:
+        return None
+    return int(text) if text.isdigit() else NUMBER_WORDS.get(text.lower())
+
+
+def _title_cased(text):
+    """True for a heading's shape, False for a sentence's.
+
+    The single most useful test in here. A title is set in capitals or in
+    Title Case; the body underneath it is in sentence case. "Chemical
+    Reactions / and Equations" passes, and so does "flowering Plants"; "The
+    Harappan seal (Fig.1.1) is possibly the most" does not, and neither does
+    "As human beings, we have always been curious about our". Only Latin text
+    is judged -- Devanagari has no case to read.
+    """
+    if _is_capitals(text):
+        return True
+    counted = capital = 0
+    for raw in text.split():
+        word = raw.strip("'\"()[]:;,.!?\u2018\u2019\u201c\u201d\u2014\u2013-")
+        if len(word) <= 2 or not word[:1].isascii() or not word[:1].isalpha():
+            continue
+        if word.lower() in NEUTRAL_WORDS:
+            continue
+        counted += 1
+        capital += word[0].isupper()
+    return counted == 0 or capital / counted >= 0.5
+
+
+def _left_column(line, column_start):
+    """The part of `line` in the left-hand column, or "" if it has none.
+
+    For an opening page laid out in two columns -- chapter names down the
+    left, the unit's introduction running down the right -- where every line
+    of the page is half title and half body.
+    """
+    indent = len(line) - len(line.lstrip())
+    if indent >= column_start - 2:
+        return ""
+    # Cut at the column's POSITION. Splitting on a wide gap failed on the very
+    # page this exists for: Class 12 Biology leaves three spaces between
+    # "Sexual Reproduction in" and the body text beside it.
+    return line[:column_start].strip()
+
+
 def _title_fragment(line, hindi=False):
     """`line` as a piece of a chapter title, or None.
 
@@ -395,9 +542,20 @@ def _title_fragment(line, hindi=False):
     if sum(1 for t in tokens if len(t) == 1) > max(1, len(tokens) // 3):
         return None
     # The danda is Hindi's full stop, so a line ending in one is a sentence
-    # from the body and not a heading. A question mark is NOT on this list:
-    # "Why Social Science?" is a chapter title.
-    if re.search(r'[.!;,।॥]$', text):
+    # from the body and not a heading. Neither a question mark nor an
+    # exclamation mark is on this list: "Why Social Science?" and "Finding the
+    # Furry Cat!" are both chapter titles.
+    if re.search(r'[.;,।॥]$', text):
+        return None
+    if not hindi and not _title_cased(text):
+        return None
+    # A word three times over is a song or a verse -- "Looking, looking,
+    # looking", "कोऽरुक्? कोऽरुक्? कोऽरुक्?" -- and no chapter is called that.
+    counts = {}
+    for word in text.split():
+        key = word.strip("'\",.!?;:\u2018\u2019").lower()
+        counts[key] = counts.get(key, 0) + 1
+    if counts and max(counts.values()) >= 3:
         return None
     return text if 1 <= len(text.split()) <= 8 else None
 
@@ -409,56 +567,132 @@ def chapter_heading(first_page):
     so "what is the first chapter of my science book?" had nothing to answer
     from and was answered out of the model's memory instead -- which said
     "Food: Where Does It Come From?", the first chapter of the book NCERT
-    WITHDREW. The book on this device is Curiosity and its first chapter is The
-    Wonderful World of Science. A confidently wrong chapter name is the worst
-    kind of wrong answer here, because it is exactly the kind a child cannot
-    check.
+    WITHDREW. A confidently wrong chapter name is the worst kind of wrong
+    answer here, because it is exactly the kind a child cannot check.
+
+    See RE_HEADING_LINE for the layouts. Every one of them is the same idea: a
+    heading word, a number somewhere near it, and a title in the few lines
+    that follow, which ends where the text stops looking like a heading.
     """
     # The same repair the body gets, so a heading is judged on its words and
     # not on the bytes a broken font left between them.
-    lines = [repair_text(line).rstrip()
+    lines = [RE_JOINERS.sub("", repair_text(line)).rstrip()
              for line in (first_page or "").split("\n")][:40]
     for index, line in enumerate(lines):
-        inline = RE_HEADING_INLINE.match(line)
-        if inline:
-            title = _finish_title(_title_fragment(inline.group(2), is_hindi(line)))
-            if title:
-                return int(inline.group(1)), title
+        heading = RE_HEADING_LINE.match(line)
+        if not heading:
             continue
-        word = RE_HEADING_WORD.match(line)
-        if not word:
-            continue
-        hindi = is_hindi(word.group(1))
-        # The word "Chapter" on its own. The number and the title are somewhere
-        # in the few lines around it, in an order that varies by chapter.
-        before, after = HEADING_WINDOW
-        window = [(at, lines[at]) for at in
-                  range(max(0, index - before), min(len(lines), index + after + 1))
-                  if at != index and lines[at].strip()]
-        number, fragments, started = None, [], False
-        for _at, candidate in window:
-            numbered = RE_HEADING_NUMBERED.match(candidate)
+        hindi = is_hindi(heading.group("word"))
+        number = _number_value(heading.group("num"))
+        fragments, column = [], None
+        last_at = index
+        last_indent = len(line) - len(line.lstrip())
+        if heading.group("rest"):
+            piece = _title_fragment(heading.group("rest"), hindi)
+            if piece:
+                fragments.append(piece)
+                last_indent = heading.start("rest")
+            else:
+                # What stands beside the heading word is the next column's
+                # body text, so from here on only the left column is read.
+                column = heading.start("rest")
+
+        # Above the heading word, only ever a number -- or a numbered title
+        # line, which is how Class 6 Science sets "10  Living Creatures:
+        # Exploring" above "Chapter". Plain lines above it are the epigraph and
+        # its author, and "Martin H. Fischer" is nobody's chapter.
+        looked_back = None
+        if number is None:
+            # Two NON-EMPTY lines back. Counting blank lines, the Hindi
+            # social-science book's number sat out of reach behind two of them.
+            above = [back for back in range(index - 1, -1, -1)
+                     if lines[back].strip()][:2]
+            for position, back in enumerate(above):
+                numbered = RE_NUMBERED_ANY.match(lines[back])
+                if numbered:
+                    looked_back = _number_value(numbered.group("num"))
+                    piece = _title_fragment(numbered.group("rest"), hindi)
+                    if piece and not fragments:
+                        fragments.append(piece)
+                    break
+                only = RE_NUMBER_ONLY_ANY.match(lines[back])
+                if only:
+                    looked_back = _number_value(only.group("num"))
+                    # A title can START above the number and finish under the
+                    # heading word: "आधारभूत लोकतंत्र — भाग 1:" / "10" /
+                    # "अध्याय" / "शासन".
+                    earlier = [b for b in range(back - 1, -1, -1)
+                               if lines[b].strip()][:1]
+                    if earlier:
+                        piece = _title_fragment(lines[earlier[0]], hindi)
+                        if piece:
+                            fragments.insert(0, piece)
+                    break
+
+        seen = 0
+        for at in range(index + 1, len(lines)):
+            following = lines[at]
+            text = following if column is None else _left_column(following, column)
+            if not text.strip():
+                continue
+            seen += 1
+            if seen > 7:
+                break
+            # Before the body-opening test: "Objectives" is a heading on the
+            # opening page, and RE_BODY_OPENING would take it as the body
+            # starting and stop one line short of the title.
+            if text.strip().lower().rstrip(":") in NOISE_FRAGMENTS:
+                continue
+            if (RE_SECTION_NUMBER.match(text) or RE_HEADING_LINE.match(text)
+                    or RE_BODY_OPENING.match(text.strip())):
+                break
+            numbered = RE_NUMBERED_ANY.match(text)
             if numbered:
-                number = int(numbered.group(1))
-                piece = _title_fragment(numbered.group(2), hindi)
+                number = number or _number_value(numbered.group("num"))
+                piece = _title_fragment(numbered.group("rest"), hindi)
                 if piece:
+                    # "THEME Bricks, Beads and Bones" then "ONE The Harappan
+                    # Civilisation": a theme and its chapter, so a colon.
+                    if fragments and not numbered.group("num").isdigit():
+                        fragments[-1] += ":"
                     fragments.append(piece)
-                    started = True
+                    # Where the TITLE starts, not the number: "8      A Journey
+                    # through" puts the words seven columns in, level with the
+                    # "States of Water" underneath.
+                    last_at = at
+                    last_indent = (len(following) - len(following.lstrip())
+                                   + numbered.start("rest")
+                                   - (len(text) - len(text.lstrip())))
                 continue
-            only = RE_HEADING_NUMBER_ONLY.match(candidate)
+            only = RE_NUMBER_ONLY_ANY.match(text)
             if only:
-                number = int(only.group(1))
+                number = number or _number_value(only.group("num"))
                 continue
-            piece = _title_fragment(candidate, hindi)
+            if text.strip().lower().rstrip(":") in NOISE_FRAGMENTS:
+                continue
+            piece = _title_fragment(text, hindi)
             if piece is None:
-                # Body text, or the verse. Everything after it belongs to the
-                # page, not to the heading.
-                if started:
+                # A stray letter from a side column is stepped over; anything
+                # longer is the body starting.
+                if fragments and len(text.strip()) > 2:
                     break
                 continue
+            indent = len(following) - len(following.lstrip())
+            gap = sum(1 for b in lines[last_at + 1:at] if not b.strip())
+            if fragments and not _continues_title(fragments[-1], piece, gap,
+                                                  indent - last_indent):
+                break
+            # The first section heading after a Hindi title often ends in "!"
+            # -- "पूर्णांक" then "अधिक और अधिक संख्याएँ!" -- and Hindi has no case
+            # to tell it apart by.
+            if hindi and fragments and piece.endswith("!"):
+                break
             fragments.append(piece)
-            started = True
+            last_at, last_indent = at, indent
+            if len(fragments) >= 4:
+                break
         title = _finish_title(_join_title(fragments))
+        number = number or looked_back
         if number and title:
             return number, title
     return _headless_heading(lines)
@@ -491,6 +725,10 @@ def _join_title(fragments):
                 break
             kept.append(piece)
         fragments = kept
+    # "Introduction" over a title reads as "Introduction: Why Social Science?"
+    if len(fragments) > 1 and fragments[0].lower() in ("introduction", "परिचय",
+                                                       "प्रस्तावना"):
+        fragments = [f"{fragments[0]}: {' '.join(fragments[1:])}"]
     return re.sub(r'\s+', " ", " ".join(fragments)).strip(" .:-")
 
 
@@ -500,13 +738,20 @@ def _join_title(fragments):
 # various genres", "Welcome to the world of Yoga for holistic health".
 RE_BODY_OPENING = re.compile(
     r'^(?:objective|in this|let\W?s\b|let us|watch\b|imagine\b|all of us|'
-    r'this is\b|welcome\b|we\b|you\b|here\b|उद्देश्य|इस अध्याय)', re.IGNORECASE)
+    r'this is\b|welcome\b|we\b|you\b|here\b|after studying|उद्देश्य|इस अध्याय)',
+    re.IGNORECASE)
 # A title does not end on one of these. One that does was cut off mid-line:
 # "Watch a video to understand what", "Timeline and".
 # Not "us": "Materials Around Us" and "Economic Activities Around Us" are both
 # real chapter titles, and listing it took both off the shelf.
-RE_CUT_OFF = re.compile(r'\b(?:and|or|the|of|to|a|an|for|what|with|in|on|at|by|'
-                        r'from)$', re.IGNORECASE)
+# Deliberately NOT "on", "in", "over", "around", "about", "like", "after": a
+# title can end on those as the end of a phrasal verb -- "Time Goes On", "Look
+# Around" -- and "Time Goes On" was being thrown away. "our" and "their" are on
+# it: "Exploring Our" is the first line of "Exploring Our Neighbourhood".
+RE_CUT_OFF = re.compile(r'\b(?:and|or|the|of|to|a|an|for|what|with|at|by|from|is|'
+                        r'are|was|were|through|into|onto|between|within|towards|'
+                        r'across|their|its|our|my|your|his|her|this|that|these|'
+                        r'those|some|how|why|where|when|who|which)$', re.IGNORECASE)
 # Where the body of a chapter starts, when it starts on the same line as the
 # heading. The title is cut there rather than thrown away.
 RE_BODY_STARTS = re.compile(r'\s(?:इस अध्याय|उद्देश्य|in this chapter|objective)',
@@ -521,6 +766,22 @@ RE_JOINERS = re.compile("[\u200c\u200d]")
 # it, and with the chapter number if one follows.
 RE_CHAPTER_WORD_ANYWHERE = re.compile(r'(?:^|\s)(?:अध्याय|chapter)(?:\s+\d{1,2})?(?=\s|$)',
                                       re.IGNORECASE)
+
+
+_BOOK_TITLES = None
+
+
+def _book_titles():
+    """Every NCERT book's name, lower-cased, from the cached catalogue."""
+    global _BOOK_TITLES
+    if _BOOK_TITLES is None:
+        try:
+            with open(NCERT_CATALOGUE, encoding="utf-8") as handle:
+                _BOOK_TITLES = {RE_EDITION_SUFFIX.sub("", e["title"]).strip().lower()
+                                for e in json.load(handle)}
+        except (OSError, ValueError, KeyError):
+            _BOOK_TITLES = set()
+    return _BOOK_TITLES
 
 
 def _finish_title(title):
@@ -553,10 +814,22 @@ def _finish_title(title):
         while tokens and tokens[-1] == repeated:
             tokens.pop()
     title = " ".join(tokens)
-    # A question mark ends a title -- "Why Social Science?" -- so anything
-    # after one is whatever sat beside the heading.
-    if "?" in title[:-1]:
-        title = title[:title.index("?") + 1]
+    # The same phrase twice running: a running header printed beside the
+    # heading it repeats -- "Entering the World of Secondary Science the World
+    # of Secondary Science".
+    words = title.split()
+    for size in range(len(words) // 2, 1, -1):
+        if ([w.lower() for w in words[-size:]]
+                == [w.lower() for w in words[-2 * size:-size]]):
+            words = words[:-size]
+            break
+    title = " ".join(words)
+    # A question or exclamation mark ends a title -- "Why Social Science?",
+    # "Finding the Furry Cat!" -- so anything after one is whatever sat beside
+    # the heading, like the "Let us Sing" activity that follows that one.
+    stops = [title.index(mark) for mark in "?!" if mark in title[:-1]]
+    if stops:
+        title = title[:min(stops) + 1]
     # The heading word, and then the body's first word built from it:
     # "Assessment Assessments in art education play a crucial role".
     tokens = title.split()
@@ -575,7 +848,23 @@ def _finish_title(title):
     if title[:1].isascii() and title[:1].islower():
         return None
     last = title.split()[-1]
-    if len(last) == 1 and last.isascii():           # "...Paper As A"
+    # "...Paper As A" -- but only a LETTER. "आधारभूत लोकतंत्र — भाग 1" ends
+    # in a digit and is a real title.
+    if len(last) == 1 and last.isascii() and last.isalpha():
+        return None
+    if title.lower() in ("unit", "chapter", "theme", "lesson"):
+        return None
+    # The book's own name -- "Mridang", "Mathematics" -- is the running header
+    # at the top of the page, and every chapter would otherwise be called it.
+    if title.lower() in _book_titles():
+        return None
+    # A font drawn at a fixed offset from the letters it stores: "Fkdqfh Wr
+    # Glvfryhu Sdshu Dv D" is "Chance To Discover Paper As A" shifted by
+    # three. It passes every test above, but the shift turns the vowels into
+    # consonants. Measured over every real title on the shelf, the lowest
+    # vowel share is 0.25 ("Making Things"); the shifted titles are 0.08-0.19.
+    letters = [c for c in title.lower() if c.isascii() and c.isalpha()]
+    if len(letters) >= 12 and sum(c in "aeiou" for c in letters) / len(letters) < 0.22:
         return None
     return _tidy_case(title)
 
@@ -628,7 +917,47 @@ def _headless_heading(lines):
     without this the maths book and both English readers keep their filenames
     as chapter names, which is 62 of the 74 chapters on this device.
     """
+    # "REAL NUMBERS ... 1" -- the title and the number at the far end of the
+    # same line, near the top. Checked first, because the gap between them is
+    # exactly what the column test below rejects a line for.
+    seen = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        seen += 1
+        if seen > 6:
+            break
+        paired = RE_TITLE_THEN_NUMBER.match(line)
+        # The running header has exactly this shape -- "Bansuri–I Class 3
+        # ... 12" is the book, its class and the PAGE -- and taking it put a
+        # Class 3 chapter at number 12. A header names a class or ends in a
+        # volume number; a chapter title does neither.
+        if paired and not RE_RUNNING_HEADER.search(paired.group("title")):
+            title = _finish_title(_title_fragment(paired.group("title"),
+                                                  is_hindi(line)))
+            if title:
+                return int(paired.group("num")), title
+
+    # "13 Time Goes On": the number and the title with a single space between,
+    # at the very top. Only there -- lower down a digit and a word is a line of
+    # an exercise.
+    top = [line for line in lines if line.strip()][:4]
+    for position, line in enumerate(top[:3]):
+        tight = re.match(r'^\s*(\d{1,2})\s(?!\s)(\S.*)$', line)
+        # A Devanagari text layer that tore a word across two lines: the next
+        # line opens with a vowel sign that belongs to the end of this one.
+        # "10 शून्य के दसरी" / "ू ओर" is "शून्य के दूसरी ओर" in pieces, and a
+        # title in pieces is not read out.
+        after = top[position + 1].strip() if position + 1 < len(top) else ""
+        if after[:1] and "\u093e" <= after[0] <= "\u094d":
+            continue
+        if tight and not RE_SECTION_NUMBER.match(line):
+            title = _finish_title(_title_fragment(tight.group(2), is_hindi(line)))
+            if title:
+                return int(tight.group(1)), title
+
     number, fragments = None, []
+    last_at = last_indent = 0
     for index, line in enumerate(lines[:16]):
         if not line.strip():
             continue
@@ -644,6 +973,8 @@ def _headless_heading(lines):
             piece = _title_fragment(numbered.group(2), is_hindi(line))
             if piece:
                 fragments.append(piece)
+                last_at = index
+                last_indent = numbered.start(2)
             continue
         only = RE_HEADING_NUMBER_ONLY.match(line)
         if only and not fragments:
@@ -656,13 +987,19 @@ def _headless_heading(lines):
             if fragments and len(line.strip()) > 2:
                 break
             continue
+        indent = len(line) - len(line.lstrip())
+        gap = sum(1 for b in lines[last_at + 1:index] if not b.strip())
+        if fragments and not _continues_title(fragments[-1], piece, gap,
+                                              indent - last_indent):
+            break
+        if fragments and is_hindi(piece) and piece.endswith("!"):
+            break
         fragments.append(piece)
+        last_at, last_indent = index, indent
         # A title that is one line is the common case, two is a wrap, and three
         # is where the readers run into their own first activity.
         if len(fragments) >= 3:
             break
-    if len(fragments) > 1 and fragments[0].lower() in ("introduction", "प्रस्तावना"):
-        fragments = [f"{fragments[0]}: {' '.join(fragments[1:])}"]
     title = _finish_title(_join_title(fragments))
     if title:
         # The number may be None -- some chapters print none on their opening
@@ -797,7 +1134,11 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
                  pages = EXCLUDED.pages, head_text = EXCLUDED.head_text,
                  added_at = now()
            RETURNING id""",
-        (board, klass, subject, title, number, language, source, len(pages),
+        # pages is written as NULL here and filled in only once every piece is
+        # in, so a chapter interrupted half way -- the power goes, the run is
+        # killed -- is not mistaken for a finished one when fetch --all
+        # resumes. See the "done" query there.
+        (board, klass, subject, title, number, language, source, None,
          head_text),
         fetch="one")
     if not book:
@@ -807,6 +1148,7 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
                 fetch="none")
 
     chapter = (f"Chapter {number}" if number else from_name)
+    page_count = len(pages)
     written = 0
     for page, text in pieces:
         config = text_config(text)
@@ -816,6 +1158,9 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
                 (book_id, chapter, page, text, config, text),
                 fetch="none") is not None:
             written += 1
+    if written == len(pieces):
+        store.query("UPDATE books SET pages = %s WHERE id = %s",
+                    (page_count, book_id), fetch="none")
     return written, ""
 
 
@@ -1686,8 +2031,11 @@ def fetch_and_index(classes=None, mediums=("en", "hi"), subjects=None,
     # English first, then Hindi, then by class: if the run is stopped halfway,
     # what exists is the half most likely to be asked about.
     wanted.sort(key=lambda e: (mediums.index(e["medium"]), e["class"], e["code"]))
+    # Only chapters that finished: pages stays NULL until every piece of a
+    # chapter is written, so one cut off half way is fetched again.
     done = {os.path.basename(row["source"])
-            for row in (store.query("SELECT source FROM books") or [])}
+            for row in (store.query("SELECT source FROM books "
+                                    "WHERE pages IS NOT NULL") or [])}
     skips = _load_skips()
     print(f"[BOOKS] {len(wanted)} books to work through; "
           f"{len(done)} chapters already indexed.", flush=True)
@@ -1772,9 +2120,10 @@ def retitle():
     changed = 0
     for row in rows:
         pages = row["head_text"].split("\f")
+        # The FIRST page only. Page two carries the running header -- "2
+        # MATHEMATICS", "Themes in Indian History" -- and read as a heading that
+        # names every chapter after the book it is in.
         heading_number, heading_title = chapter_heading(pages[0] if pages else "")
-        if heading_title is None and len(pages) > 1:
-            heading_number, heading_title = chapter_heading(pages[1])
         stem = os.path.splitext(os.path.basename(row["source"]))[0]
         match = RE_NCERT_FILE.match(stem)
         subject, number, title = row["subject"], row["chapter"], row["title"]
