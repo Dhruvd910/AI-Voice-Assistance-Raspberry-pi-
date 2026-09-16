@@ -726,6 +726,29 @@ def contents(klass=None, board=None, subject=None):
 CONTENTS_MAX_CHARS = int(os.getenv("BOOK_CONTENTS_CHARS", "1600"))
 
 
+# WHICH SUBJECT GETS THE ROOM WHEN THERE IS NOT ENOUGH.
+#
+# The contents list has a character budget and a Class 6 shelf has a dozen
+# subjects on it, so something is going to be left out -- and left to an
+# alphabetical sort the first casualties were Maths and Science, while Exemplar
+# Problems and Khel Yatra kept their places. Nobody asks this device what is in
+# the physical-education book. Core subjects first, and the supplementary
+# volumes last, so what gets dropped is what nobody was going to ask about.
+SUBJECT_ORDER = [
+    "Maths", "Science", "Physics", "Chemistry", "Biology",
+    "Social Science", "History", "Geography", "Civics", "Economics",
+    "English", "Hindi", "Sanskrit", "Computer Science",
+]
+
+
+def _subject_order(subject):
+    """Sort key: core subjects first, then everything else alphabetically."""
+    try:
+        return (0, SUBJECT_ORDER.index(subject), subject)
+    except ValueError:
+        return (1, 0, subject)
+
+
 def contents_block(profile=None):
     """What is actually in this student's books, as a prompt section. "" if none.
 
@@ -753,7 +776,7 @@ def contents_block(profile=None):
         return ""
 
     lines, used = [], 0
-    for subject in sorted({row["subject"] for row in rows}):
+    for subject in sorted({row["subject"] for row in rows}, key=_subject_order):
         chapters = [row for row in rows if row["subject"] == subject]
         listed = ", ".join(
             f"{row['chapter']}. {row['title']}" if row["chapter"]
