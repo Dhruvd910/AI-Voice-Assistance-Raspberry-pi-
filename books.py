@@ -525,16 +525,69 @@ RE_ASKING = re.compile(
     re.IGNORECASE)
 
 
+# The Hindi equivalent of RE_ASKING. Devanagari vowel signs are combining marks
+# rather than word characters, so \b does not work against them -- these are
+# matched as whole whitespace-separated tokens instead, the same sidestep
+# HI_DROP_TOKENS uses in media.py.
+HINDI_ASKING = {
+    "क्या", "कौन", "कौनसा", "कैसे", "कैसा", "कहाँ", "कहां", "कब", "क्यों",
+    "कितना", "कितने", "किस", "किसे", "किसका", "है", "हैं", "था", "थी", "थे",
+    "हो", "होता", "होती", "होते", "का", "की", "के", "को", "में", "से", "पर",
+    "और", "या", "यह", "वह", "ये", "वे", "एक", "भी", "ही", "कि", "तो", "जो",
+    "मैं", "मुझे", "मुझको", "आप", "हम", "नहीं", "बताओ", "बताइए", "समझाओ",
+    "समझाइए", "अध्याय", "पाठ", "किताब", "पुस्तक", "सवाल", "प्रश्न", "उत्तर",
+    "जवाब",
+}
+
+
 def _query_terms(question):
-    """The part of a question worth searching for. "" when there is none."""
+    """The words worth searching for, as an OR query. "" when there are none.
+
+    OR, NOT AND, and that is the whole of this function's job.
+    websearch_to_tsquery joins bare words with AND, so every word had to appear
+    in the SAME passage: "why do leaves look green" became 'leav & green &
+    look' and matched nothing in a chapter that plainly discusses green leaves,
+    because the word "look" happened not to be in it. One stray word killed
+    every match.
+
+    OR puts recall back, and precision is handled where it belongs -- by
+    ts_rank_cd, which scores a passage higher the more of the terms it carries
+    and the closer together they sit, and by the relative floor in search(),
+    which throws away anything much worse than the best hit. That is the right
+    division of labour: the query decides what is ELIGIBLE, the ranking decides
+    what is GOOD.
+    """
     text = re.sub(r'[^\w\sऀ-ॿ]', " ", question or "")
-    if not is_hindi(text):
-        text = RE_ASKING.sub(" ", text)
-    words = [w for w in text.split() if len(w) > 2]
-    # Longest first, so a query that has to be cut keeps the rare words. The
-    # cap is what stops a rambling question becoming a fifty-term OR.
+    if is_hindi(text):
+        words = [w for w in text.split()
+                 if len(w) > 2 and w not in HINDI_ASKING]
+    else:
+        words = [w for w in RE_ASKING.sub(" ", text).split() if len(w) > 2]
+    # Longest first, so a query that has to be cut keeps the rare words -- and
+    # the rare word is the one that says which chapter this is about. The cap
+    # stops a rambling question becoming a fifty-term query.
     words.sort(key=len, reverse=True)
-    return " ".join(words[:8])
+    # "OR" is websearch_to_tsquery's own syntax, so the terms still go through
+    # its escaping rather than being pasted into a tsquery by hand.
+    return " OR ".join(words[:8])
+
+
+def _covers(content, terms):
+    """How many of `terms` appear in `content`.
+
+    Matched on a crude stem -- the word less its last two characters, never
+    below four -- because the index is stemmed and the terms are not: the
+    passage says "leaf" where the question said "leaves", and "magnetic" where
+    it said "magnet". Exact matching would throw away the passages this is
+    meant to keep.
+    """
+    lowered = (content or "").lower()
+    found = 0
+    for term in terms:
+        stem = term.lower()[:max(4, len(term) - 2)]
+        if stem and stem in lowered:
+            found += 1
+    return found
 
 
 def search(question, klass=None, board=None, subject=None, limit=None):
@@ -599,9 +652,26 @@ def search(question, klass=None, board=None, subject=None, limit=None):
     # and how rare the words are. A quarter of the best score keeps the two or
     # three passages that are genuinely about the same thing and drops the tail
     # that merely contains the word "water".
+    # HOW MANY OF THE WORDS THE PASSAGE ACTUALLY CARRIES.
+    #
+    # The other half of the OR in _query_terms. OR makes a passage eligible on
+    # ONE word, so "what is the capital of France" -- which no science book
+    # answers -- came back with a page that happens to contain the word
+    # "capital", ranked best simply because everything else ranked worse. The
+    # relative floor below cannot catch that: it is relative to the best of a
+    # bad set.
+    #
+    # So a passage has to carry at least half the terms, and at least two of
+    # them whenever the question had two to give. Counted here rather than in
+    # SQL because the text is already in hand and a per-row subquery over the
+    # whole index is not free.
+    terms = [term for term in re.split(r'\s+OR\s+', terms) if term]
+    wanted = max(2, (len(terms) + 1) // 2) if len(terms) >= 2 else 1
     best = max(row["score"] for row in rows)
     kept, seen = [], set()
     for row in rows:
+        if _covers(row["content"], terms) < wanted:
+            continue
         if row["score"] < max(best * RANK_RELATIVE_FLOOR, RANK_FLOOR):
             continue
         # Chunks overlap by design, so two hits from the same page legitimately
