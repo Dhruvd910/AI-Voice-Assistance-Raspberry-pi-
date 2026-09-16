@@ -1274,6 +1274,34 @@ def student_profile_block():
     )
 
 
+def _recent_work(user_id, limit=6):
+    """The last few things they finished, as one phrase. "" when there are none.
+
+    Deliberately short and undated. This goes into a prompt that is billed by
+    the token on every turn, and the useful part of it is WHAT they have been
+    doing, not when -- she is being given a memory of the student, not a report
+    to read out.
+    """
+    try:
+        rows = store.recent_activities(user_id, limit=limit) or []
+    except Exception:
+        return ""
+    said, seen = [], set()
+    for row in rows:
+        topic = (row.get("topic") or "").strip()
+        key = (row.get("kind"), topic.lower())
+        if not topic or key in seen:
+            continue
+        seen.add(key)
+        said.append({"story": f"the story {topic}",
+                     "spelling": f"spelling {topic}",
+                     "letters": f"the letter {topic}",
+                     "test": f"a test on {topic.lower()}",
+                     "order": "putting letters in order",
+                     }.get(row.get("kind"), topic.lower()))
+    return ", ".join(said[:5])
+
+
 # How confusion is spotted, for deciding whether a concept goes down as met or
 # as struggled-with. Deliberately narrow: only an explicit admission counts, so
 # an ordinary question never marks a child down.
@@ -1308,6 +1336,15 @@ def note_learning(text):
         _current_concept = slug
         if store.record_concept(user_id, slug, outcome):
             print(f"[LEARN] {slug} ({outcome})", flush=True)
+        # And into the progress log beside it, which is the half a parent can
+        # read: student_concepts is a running confidence with no dates in it,
+        # so it cannot answer "what did they work on this week". See the
+        # activities table in schema.sql.
+        concept = store.concept_by_slug(slug) or {}
+        store.record_activity(
+            user_id, "lesson", concept.get("name") or slug.replace("-", " "),
+            detail=("Asked about it and found it hard" if outcome == "struggling"
+                    else "Asked about it and we went through it"))
     except Exception as exc:
         print(f"[LEARN] Could not record the concept ({exc}).", flush=True)
 
@@ -1323,16 +1360,27 @@ def learning_history_block(profile):
     if not user_id:
         return ""
     recent = store.student_summary(user_id, limit=6)
-    if not recent:
+    # What they DID, beside what she believes they know. A child can have spent
+    # a week on the spelling and story screens and have nothing at all in
+    # student_concepts, because only the graded conversation flow writes to it
+    # -- so without this she meets a regular student as a stranger every time.
+    done = _recent_work(user_id)
+    if not recent and not done:
         return ""
-    seen = ", ".join(f"{row['name'].lower()} ({row['status']})" for row in recent)
-    lines = [
-        "### 1b. WHAT THIS STUDENT HAS ALREADY WORKED ON WITH YOU",
-        f"Recently, most recent first: {seen}.",
+    lines = ["### 1b. WHAT THIS STUDENT HAS ALREADY WORKED ON WITH YOU"]
+    if recent:
+        seen = ", ".join(f"{row['name'].lower()} ({row['status']})"
+                         for row in recent)
+        lines.append(f"Ideas you have been through, most recent first: {seen}.")
+    if done:
+        lines.append(f"Things they have finished on the device lately: {done}.")
+    lines.append(
         "Connect new ideas back to the ones they are confident about -- that is what a "
         "teacher who remembers them would do. NEVER read this list aloud, never say you "
-        "have a record of them, and never open with what they did last time.",
-    ]
+        "have a record of them, and never open with what they did last time. "
+        "Asked outright -- \"what have I been learning?\", \"what did we do "
+        "last time?\" -- answer it from this, warmly and in one or two "
+        "sentences, naming two or three things and no more.")
 
     # The gap query. Asked about whatever the CURRENT question is about, falling
     # back to whatever they are struggling with -- a student who has just asked

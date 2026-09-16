@@ -298,6 +298,183 @@ def student_summary(user_id, limit=8):
 
 
 # ---------------------------------------------------------------------------
+# what they actually did
+# ---------------------------------------------------------------------------
+# The log beside the knowledge graph; see the activities table in schema.sql for
+# why there are two of these and what each is for.
+#
+# EVERY WRITE HERE IS ADVISORY. A lesson must never stop because a progress row
+# could not be saved, so nothing below raises and nothing downstream checks the
+# return value for anything but logging.
+PROGRESS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history")
+# How many rows the JSON fallback keeps per student. A row is about 150 bytes,
+# so this is a file of maybe 120KB for a child who uses the device every day for
+# a year -- and the screen only ever shows the newest few dozen.
+PROGRESS_KEEP = 800
+
+
+def progress_path(user_id):
+    return os.path.join(PROGRESS_DIR, f"{user_id}.progress.json")
+
+
+def _read_progress_file(user_id):
+    try:
+        with open(progress_path(user_id), encoding="utf-8") as handle:
+            rows = json.load(handle)
+        return rows if isinstance(rows, list) else []
+    except (FileNotFoundError, ValueError):
+        return []
+    except Exception as exc:
+        print(f"[STORE] Could not read the progress file ({exc}).", flush=True)
+        return []
+
+
+def _append_progress_file(user_id, row):
+    """The fallback copy, for a device whose PostgreSQL is down or absent.
+
+    Written on EVERY record, not only when the database is missing. A child's
+    week of work is not worth re-losing to find out which store was live at the
+    time, and the cost is one small file append per finished activity.
+    """
+    rows = _read_progress_file(user_id)
+    rows.append(row)
+    del rows[:-PROGRESS_KEEP]
+    try:
+        os.makedirs(PROGRESS_DIR, exist_ok=True)
+        # Written beside and moved into place, so a power cut mid-lesson leaves
+        # the old file rather than half a JSON document.
+        temporary = progress_path(user_id) + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle, ensure_ascii=False)
+        os.replace(temporary, progress_path(user_id))
+    except Exception as exc:
+        print(f"[STORE] Could not write the progress file ({exc}).", flush=True)
+
+
+def forget_progress_file(user_id):
+    """Delete a removed student's progress, the way their history is deleted."""
+    if not user_id:
+        return
+    try:
+        os.remove(progress_path(user_id))
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        print(f"[STORE] Could not remove the progress file ({exc}).", flush=True)
+
+
+def record_activity(user_id, kind, topic, detail=None, score=None, out_of=None,
+                    language=None):
+    """Note one finished thing. True when it reached PostgreSQL.
+
+    `score` is left None for anything that is not a test. Listening to a story
+    is not scored, and a progress screen that shows a mark against it teaches a
+    five-year-old that listening was something they could have failed.
+    """
+    if not user_id or not kind or not topic:
+        return False
+    row = {"kind": kind, "topic": topic, "detail": detail, "score": score,
+           "out_of": out_of, "language": language,
+           "created_at": _now().isoformat()}
+    _append_progress_file(user_id, row)
+    return query(
+        """INSERT INTO activities (user_id, kind, topic, detail, score,
+                                   out_of, language)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (user_id, kind, topic, detail, score, out_of, language),
+        fetch="none") is not None
+
+
+def recent_activities(user_id, limit=40):
+    """The newest things this student finished, newest first.
+
+    Falls back to the JSON file, which is why the file is written on every
+    record rather than only when the database is away -- see
+    _append_progress_file.
+    """
+    if not user_id:
+        return []
+    rows = query(
+        """SELECT kind, topic, detail, score, out_of, language, created_at
+             FROM activities WHERE user_id = %s
+            ORDER BY created_at DESC, id DESC LIMIT %s""",
+        (user_id, limit))
+    if rows is not None:
+        return rows
+    return list(reversed(_read_progress_file(user_id)))[:limit]
+
+
+def progress_totals(user_id):
+    """One row per kind: how many, how many different, and the average mark.
+
+    This is what the progress screen is made of. Computed in SQL where the
+    database is live and in Python where it is not, from the same rows either
+    way, so the screen cannot say two different things about the same child
+    depending on whether Postgres happens to be up.
+    """
+    if not user_id:
+        return []
+    rows = query(
+        """SELECT kind,
+                  COUNT(*)                        AS times,
+                  COUNT(DISTINCT topic)           AS different,
+                  SUM(score)                      AS scored,
+                  SUM(out_of)                     AS available,
+                  MAX(created_at)                 AS last_seen
+             FROM activities WHERE user_id = %s
+            GROUP BY kind ORDER BY MAX(created_at) DESC""",
+        (user_id,))
+    if rows is not None:
+        return rows
+    totals = {}
+    for row in _read_progress_file(user_id):
+        entry = totals.setdefault(row.get("kind") or "lesson",
+                                  {"kind": row.get("kind") or "lesson",
+                                   "times": 0, "topics": set(), "scored": 0,
+                                   "available": 0, "last_seen": ""})
+        entry["times"] += 1
+        entry["topics"].add(row.get("topic"))
+        entry["scored"] += row.get("score") or 0
+        entry["available"] += row.get("out_of") or 0
+        entry["last_seen"] = max(entry["last_seen"], row.get("created_at") or "")
+    out = []
+    for entry in totals.values():
+        entry["different"] = len(entry["topics"])
+        entry.pop("topics")
+        # None, not 0, for a kind with no marks in it -- SUM over all-NULL
+        # returns NULL on the database path, and a screen that has to know
+        # which store it is reading is a screen with two ways to be wrong.
+        if not entry["available"]:
+            entry["scored"] = entry["available"] = None
+        out.append(entry)
+    out.sort(key=lambda entry: entry["last_seen"] or "", reverse=True)
+    return out
+
+
+def progress_topics(user_id, kind, limit=12):
+    """The different things done within one kind, most recent first."""
+    if not user_id:
+        return []
+    rows = query(
+        """SELECT topic, COUNT(*) AS times, MAX(created_at) AS last_seen
+             FROM activities WHERE user_id = %s AND kind = %s
+            GROUP BY topic ORDER BY MAX(created_at) DESC LIMIT %s""",
+        (user_id, kind, limit))
+    if rows is not None:
+        return rows
+    seen = {}
+    for row in _read_progress_file(user_id):
+        if (row.get("kind") or "") != kind:
+            continue
+        entry = seen.setdefault(row["topic"], {"topic": row["topic"], "times": 0,
+                                               "last_seen": ""})
+        entry["times"] += 1
+        entry["last_seen"] = max(entry["last_seen"], row.get("created_at") or "")
+    return sorted(seen.values(), key=lambda e: e["last_seen"] or "",
+                  reverse=True)[:limit]
+
+
+# ---------------------------------------------------------------------------
 # Recognising which concept a question is about
 # ---------------------------------------------------------------------------
 # Keyword matching against the concept table rather than an LLM classifier. This

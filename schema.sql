@@ -71,3 +71,40 @@ CREATE TABLE IF NOT EXISTS student_concepts (
     PRIMARY KEY (user_id, concept_id)
 );
 CREATE INDEX IF NOT EXISTS student_concepts_user_idx ON student_concepts (user_id, last_seen DESC);
+
+-- ---------------------------------------------------------------------------
+-- What each student actually DID
+-- ---------------------------------------------------------------------------
+-- student_concepts above is what she BELIEVES about a child -- a running
+-- confidence per idea, which is the right shape for deciding what to teach
+-- next and the wrong shape for answering "what did they do today". It carries
+-- no dates you can list, it collapses ten sessions into one row, and nothing
+-- outside the graded conversation flow ever writes to it: a Kindergarten child
+-- could spend a week on this device and leave no trace at all.
+--
+-- So this is the log beside it. One row per thing finished -- a story heard, a
+-- word spelled, a test scored, a topic taught -- appended and never updated,
+-- because the question it exists to answer is a question about time.
+CREATE TABLE IF NOT EXISTS activities (
+    id         BIGSERIAL PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES students(user_id) ON DELETE CASCADE,
+    -- 'story', 'spelling', 'letters', 'counting', 'order', 'test', 'lesson'.
+    -- Text rather than an enum: a new KG screen should not need a migration
+    -- before it can record anything.
+    kind       TEXT NOT NULL,
+    -- What it was about: the story's title, the word, the letter, the concept.
+    topic      TEXT NOT NULL,
+    -- One short line for the progress screen to show. Never read by any query.
+    detail     TEXT,
+    -- Marks out of marks available. NULL for the things that are not scored --
+    -- listening to a story is not a test and must never look like one.
+    score      INT,
+    out_of     INT,
+    language   TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS activities_user_idx
+    ON activities (user_id, created_at DESC);
+-- The progress screen groups by kind and by topic, over one student.
+CREATE INDEX IF NOT EXISTS activities_user_kind_idx
+    ON activities (user_id, kind, created_at DESC);

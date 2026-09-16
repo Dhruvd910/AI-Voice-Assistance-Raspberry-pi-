@@ -654,11 +654,36 @@ DEVANAGARI_FONTS = {
     False: "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
     True: "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
 }
+# WHAT TO USE WHEN THE SAME LINE IS IN TWO SCRIPTS.
+#
+# The Noto Devanagari faces above have no Latin letters in them at all, and
+# Pillow has no font fallback -- so a mixed line comes out with a tofu box per
+# Latin character. "हिंदी letter क, as in कमल" rendered as "हिंदी ⬜⬜⬜⬜⬜⬜ क,
+# ⬜⬜ ⬜⬜ कमल" on the progress screen, which is the whole line unreadable to
+# fix half of it.
+#
+# Lohit carries both scripts and shapes Devanagari properly -- conjuncts and
+# all, checked against विद्यार्थी, which is where the cheaper Latin-plus-
+# Devanagari faces come apart. It is the fallback and not the default because
+# Noto is the better Devanagari face, and mixed lines are the exception on
+# these screens rather than the rule.
+MIXED_SCRIPT_FONT = "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf"
 _text_cache = {}
 
 
 def has_devanagari(text):
     return any("ऀ" <= ch <= "ॿ" for ch in text or "")
+
+
+def has_latin(text):
+    return any(("a" <= ch <= "z") or ("A" <= ch <= "Z") for ch in text or "")
+
+
+def _shaping_font(text, bold):
+    """The face to set `text` in. See MIXED_SCRIPT_FONT."""
+    if has_latin(text) and os.path.exists(MIXED_SCRIPT_FONT):
+        return MIXED_SCRIPT_FONT
+    return DEVANAGARI_FONTS[bold]
 
 
 def _wrap_shaped(text, font, width, max_lines=None):
@@ -697,7 +722,7 @@ def devanagari_image(text, px, bold, fill, width=None, justify="center",
         return _text_cache[key]
     try:
         from PIL import ImageFont
-        font = ImageFont.truetype(DEVANAGARI_FONTS[bold], px,
+        font = ImageFont.truetype(_shaping_font(text, bold), px,
                                   layout_engine=ImageFont.Layout.RAQM)
         lines = _wrap_shaped(text, font, width, max_lines) if width else [text]
         ascent, descent = font.getmetrics()
@@ -3125,6 +3150,9 @@ class TutorUI:
         # and the next screen's question went unheard for the whole of it.
         if self.overlay != name:
             kg.kg_cancel_listen()
+            # A new screen is a new visit, so what it records is recorded
+            # again -- see _kg_note.
+            self._kg_noted = set()
         self._clear_overlay()
         self.overlay = name
         # The wallpaper first, with this screen's colour washed over it. Held in
@@ -3487,6 +3515,12 @@ class TutorUI:
             self._overlay_button(628, 20, 780, 56, "Close",
                                  self.dismiss_overlay, fill="#E6E9F5",
                                  text_colour=COL_TEXT, size=10)
+        if active:
+            # Top left, opposite Close. This is the only way in for a student
+            # past KG: they never see the KG home screen, where the other one
+            # is.
+            self._overlay_button(20, 20, 172, 56, "Progress", self.show_progress,
+                                 fill="#E6E9F5", text_colour=COL_TEXT, size=10)
 
     def choose_profile(self, profile):
         profiles.set_active_profile(profile["user_id"])
@@ -3506,6 +3540,139 @@ class TutorUI:
         the active profile makes Close mean "back", not "leave KG".
         """
         self.route_for_profile(profiles.active_profile())
+
+    # ---------- what they have been learning ----------
+    # The screen the progress log exists for. Two halves, and the order is the
+    # point: what they have DONE across the top in big numbers, and what they
+    # did most recently underneath it.
+    #
+    # A parent is the reader here, and a child is looking over their shoulder --
+    # which is why nothing on it is a percentage, nothing is red, and a story
+    # never carries a mark. The one thing this screen must not become is a
+    # report card for a five-year-old.
+    KG_PROGRESS_KINDS = {
+        "story":    ("Stories heard",     "#B45309"),
+        "letters":  ("Letters practised", "#2563EB"),
+        "spelling": ("Words spelled",     "#7C3AED"),
+        "counting": ("Counting",          "#059669"),
+        "order":    ("Alphabet order",    "#D97706"),
+        "test":     ("Tests taken",       "#0EA5E9"),
+        "lesson":   ("Topics learned",    "#0F766E"),
+    }
+
+    def show_progress(self):
+        profile = profiles.active_profile() or {}
+        name = profile.get("name") or "this student"
+        user_id = profile.get("user_id")
+        try:
+            totals = store.progress_totals(user_id) if user_id else []
+            recent = store.recent_activities(user_id, limit=6) if user_id else []
+        except Exception as exc:
+            print(f"[PROGRESS] Could not read the log ({exc}).", flush=True)
+            totals, recent = [], []
+
+        self._overlay_screen("progress", f"{name}'s progress",
+                             "Everything you have been learning",
+                             backdrop=("KG Activity", "Glass_BG.png"),
+                             backdrop_at=(19, 20))
+
+        if not totals:
+            # An empty log is the normal state of a brand new student, so it
+            # gets a sentence rather than an empty grid with a zero in it.
+            self._round_rect(120, 150, 680, 280, 14, fill="#FFFFFF",
+                             outline=COL_CARD_EDGE, tags=self.OVERLAY_TAG)
+            self._overlay_text(UI_W / 2, 215,
+                               "Nothing here yet. Spell a word, hear a story or "
+                               "take a test, and it will show up here.",
+                               12, fill=COL_TEXT_DIM, width=480)
+        # Five across is what fits at a size the numbers can be read from
+        # arm's length, and five covers everything a KG child does bar one.
+        # Anything past the fifth kind is still in the list below.
+        for index, row in enumerate(totals[:5]):
+            label, colour = self.KG_PROGRESS_KINDS.get(
+                row["kind"], (row["kind"].title(), "#475569"))
+            x0 = 34 + index * 147
+            self._round_rect(x0, 88, x0 + 135, 174, 14, fill="#FFFFFF",
+                             outline=COL_CARD_EDGE, tags=self.OVERLAY_TAG)
+            # For everything except a test, the interesting number is how many
+            # DIFFERENT things -- eighteen letters, not the ninety times they
+            # were looked at. A test is the opposite: each sitting counts.
+            count = row["times"] if row["kind"] == "test" else row["different"]
+            self._overlay_text(x0 + 67, 118, str(count), 26, bold=True,
+                               fill=colour)
+            self._overlay_text(x0 + 67, 145, label, 9, fill=COL_TEXT, width=124)
+            self._overlay_text(x0 + 67, 162, self._progress_note(row), 8,
+                               fill=COL_TEXT_DIM, width=124)
+
+        if recent:
+            # A card under the list, for the same reason the summary numbers
+            # have one: this screen sits on the wallpaper, and small grey text
+            # on a rainbow is not text anybody reads.
+            self._round_rect(34, 190, 766, 384, 14, fill="#FFFFFF",
+                             outline=COL_CARD_EDGE, tags=self.OVERLAY_TAG)
+            self._overlay_text(50, 208, "Lately", 10, bold=True,
+                               fill=COL_TEXT_DIM, anchor="w")
+        for index, row in enumerate(recent[:6]):
+            y = 232 + index * 25
+            _label, colour = self.KG_PROGRESS_KINDS.get(
+                row["kind"], (row["kind"], "#475569"))
+            self.canvas.create_oval(50, y - 4, 58, y + 4, fill=colour,
+                                    outline="", tags=self.OVERLAY_TAG)
+            self._overlay_text(70, y, row["topic"], 10, bold=True,
+                               fill=COL_TEXT, anchor="w", width=210,
+                               max_lines=1, justify="left")
+            self._overlay_text(296, y, row.get("detail") or "", 9,
+                               fill=COL_TEXT_DIM, anchor="w", width=370,
+                               max_lines=1, justify="left")
+            self._overlay_text(750, y, self._when(row.get("created_at")), 9,
+                               fill=COL_TEXT_DIM, anchor="e")
+
+        self._overlay_button(UI_W / 2 - 110, 406, UI_W / 2 + 110, 452, "Done",
+                             self.dismiss_overlay, fill=COL_INDIGO, size=13)
+
+    def _progress_note(self, row):
+        """The small line under a summary card, or "" when it would only
+        repeat the big number above it.
+
+        Four different letters over four visits said "4" and then "4 times",
+        which is two labels for one fact. It earns its line only when the two
+        numbers actually differ -- four letters looked at nine times is worth
+        knowing.
+        """
+        if row.get("available"):
+            return f"{row['scored']} of {row['available']} marks"
+        times, different = row.get("times") or 0, row.get("different") or 0
+        return f"{times} times" if times > different else ""
+
+    def _when(self, value):
+        """"today", "yesterday", "3 days ago" -- from either store.
+
+        The database hands back a datetime and the JSON fallback hands back the
+        string it was written as, and this screen must not say two different
+        things about the same row depending on which one answered.
+        """
+        if not value:
+            return ""
+        if isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value)
+            except ValueError:
+                return ""
+        try:
+            now = datetime.now(value.tzinfo) if value.tzinfo else datetime.now()
+            days = (now.date() - value.date()).days
+        except Exception:
+            return ""
+        if days <= 0:
+            return "today"
+        if days == 1:
+            return "yesterday"
+        if days < 7:
+            return f"{days} days ago"
+        if days < 60:
+            weeks = days // 7
+            return "a week ago" if weeks == 1 else f"{weeks} weeks ago"
+        return value.strftime("%d %b")
 
     # ---------- creating and editing a profile ----------
     def show_profile_setup(self, profile=None):
@@ -3803,15 +3970,54 @@ class TutorUI:
         # activity to wander into.
         # Kept inside the panel: it ends at 461, and the row used to run to 464.
         row_y = 406 if glass is not None else 412
-        self._overlay_button(30, row_y, 560, row_y + 50, "Test yourself",
+        self._overlay_button(30, row_y, 430, row_y + 50, "Test yourself",
                              self.show_kg_test_picker, fill="#0EA5E9", size=15,
                              sub="See what you have learned",
                              label_frac=0.42, sub_frac=0.74)
-        self._overlay_button(580, row_y, 770, row_y + 50, "Switch user",
+        # Between the test and Switch user, because that is the order somebody
+        # sitting with the child reaches for them: try something, see how it
+        # went, hand the device to the next one.
+        self._overlay_button(446, row_y, 606, row_y + 50, "My progress",
+                             self.show_progress, fill="#4F46E5", size=11)
+        self._overlay_button(622, row_y, 770, row_y + 50, "Switch user",
                              self.show_profile_picker, fill="#E6E9F5",
                              text_colour=COL_TEXT, size=11)
         if greet and name:
             kg.kg_say(f"Hello {name}! What would you like to do today?", "warm")
+
+    # ---------- keeping a record of what they did ----------
+    def _kg_note(self, kind, topic, detail=None, score=None, out_of=None,
+                 once=True):
+        """Write one line into this student's progress log. Never raises.
+
+        `once` keeps a screen from filing the same thing twice while the child
+        is still on it -- a child pressing Say it again four times on the letter
+        A has practised A once, not four times. The set is cleared by
+        _overlay_screen, so coming back to a screen later counts again, which is
+        the whole point of coming back to it.
+
+        Advisory, like everything else that writes to the store: a lesson must
+        never stop because a progress row could not be saved.
+        """
+        try:
+            profile = profiles.active_profile() or {}
+            user_id = profile.get("user_id")
+            if not user_id:
+                return
+            if once:
+                seen = getattr(self, "_kg_noted", None)
+                if seen is None:
+                    seen = self._kg_noted = set()
+                if (kind, topic) in seen:
+                    return
+                seen.add((kind, topic))
+            store.record_activity(user_id, kind, topic, detail=detail,
+                                  score=score, out_of=out_of,
+                                  language=getattr(self, "_kg_story_lang", None)
+                                  if kind == "story" else None)
+        except Exception as exc:
+            print(f"[PROGRESS] Could not record {kind} {topic!r} ({exc}).",
+                  flush=True)
 
     def _kg_tile_glyph(self, kind, cx, cy, tag):
         """The picture on a home tile. Drawn under the label, same tag, so
@@ -3849,6 +4055,13 @@ class TutorUI:
         title = "हिंदी अक्षर" if language == "hi" else "English Alphabets"
         self._kg_class_screen("kg_alpha", title,
                               f"{self._kg_alpha_index + 1} of {len(bank)}")
+        # After the screen is named, so the per-visit guard in _kg_note is
+        # against THIS visit. once=False because every letter is its own topic
+        # and walking the alphabet should show up as walking the alphabet --
+        # the guard only stops the same letter being filed twice.
+        self._kg_note("letters", letter,
+                      detail=f"{'हिंदी' if language == 'hi' else 'English'}"
+                             f" letter {letter}, as in {word}")
 
         # She stands in the room and the letter is held up beside her, on a
         # frosted card over the right-hand end of the board. The card starts at
@@ -3951,6 +4164,13 @@ class TutorUI:
 
         self._kg_class_screen("kg_count", "Counting",
                               f"{n} of {kg_content.COUNT_MAX}")
+        # Every fifth number, and not every number. How far they got is the
+        # thing worth keeping; fifty rows saying "the child saw 7, then 8" is
+        # not a record of anything, and the topic being the milestone is what
+        # makes the highest one they reached readable off the list.
+        if n % 5 == 0:
+            self._kg_note("counting", f"Counted to {n}",
+                          detail=f"Counted all the way up to {english.lower()}")
         self._kg_keep_mascot()
         self._kg_ask_button()
         # Something to actually count. Apples rather than dots: a child counts
@@ -4197,6 +4417,9 @@ class TutorUI:
             kg.kg_say(letter, "curious")
             return
         self._kg_order_done = True
+        self._kg_note("order", "".join(self._kg_order_target),
+                      detail="Put the letters in order",
+                      score=1, out_of=1, once=False)
         self._draw_kg_order()
         kg.kg_say_many([(random.choice(kg_content.PRAISE), "proud"),
                      (" ".join(kg_content.letter_sound(c)
@@ -4752,6 +4975,11 @@ class TutorUI:
                               primary=True)
         kg.kg_say_many([(f"You scored {score} out of {total}!", "excited"),
                      (message, tone)])
+        self._kg_note("test", {"en": "English letters", "hi": "हिंदी अक्षर",
+                               "count": "Counting"}.get(self._kg_test_kind,
+                                                        self._kg_test_kind),
+                      detail=f"Scored {score} out of {total}",
+                      score=score, out_of=total, once=False)
         # Recorded against the knowledge graph, so a parent switching to the
         # graded flow later sees that this child has met these at all.
         # Only the counting test has a concept in the graph. The letter tests
@@ -5245,6 +5473,11 @@ class TutorUI:
         # The word is now full length, so it can be marked.
         if self._kg_typed == target:
             praise = random.choice(kg_content.PRAISE)
+            # The WRITTEN stage is the real assessment -- see the note above
+            # about Whisper hearing B for D -- so this is the one that is
+            # marked, and the spoken attempt above never is.
+            self._kg_note("spelling", target, detail=f"Spelled {target} correctly",
+                          score=1, out_of=1)
             self._kg_feedback = praise
             self._draw_kg_spelling()
             kg.kg_say(f"{praise} {target}. {kg_content.spell_out_spoken(target)}")
@@ -5256,6 +5489,9 @@ class TutorUI:
                                     settle_ms=900)
         else:
             nudge = random.choice(kg_content.ENCOURAGEMENT)
+            self._kg_note("spelling", target,
+                          detail=f"Still learning to spell {target}",
+                          score=0, out_of=1)
             self._kg_feedback = nudge
             self._kg_typed = ""
             self._draw_kg_spelling()
@@ -5483,6 +5719,14 @@ class TutorUI:
         # story breaks the spell for the child who was just listening to it.
         language = getattr(self, "_kg_story_lang", "en")
         correct = said_yes == self._kg_story["answer"]
+        # NOT SCORED. A story is something they listened to, and a progress
+        # screen that puts a mark against listening teaches a five-year-old
+        # that listening was a thing they could have failed. Whether they
+        # followed it goes in the wording instead, where a parent can read it
+        # and nothing adds it up.
+        self._kg_note("story", self._kg_story["title"],
+                      detail=("Listened, and answered the question correctly"
+                              if correct else "Listened to the whole story"))
         if correct:
             kg.kg_say(kg_content.story_praise(language), "proud")
         else:

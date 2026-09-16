@@ -308,6 +308,11 @@ def delete_profile(user_id, path=None):
                 # schema.sql. Deleting a child means deleting what the device
                 # knows about them, not just hiding their name.
                 store.delete_student(user_id)
+                # Not covered by that cascade: the progress log keeps a JSON
+                # copy of every row beside the database one, and a deleted
+                # child's work coming back the next time Postgres was down is
+                # exactly the leak _forget_history_file below exists to close.
+                store.forget_progress_file(user_id)
             except Exception:
                 pass
         _forget_history_file(user_id)
