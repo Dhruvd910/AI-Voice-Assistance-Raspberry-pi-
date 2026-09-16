@@ -200,6 +200,35 @@ PRINTED_LATIN = set(
 GARBAGE_MARKS = set("\\^\u00b8\u00aa")
 
 
+# HINDI SET IN A PRE-UNICODE FONT.
+#
+# The older Hindi-medium books -- Class 11 Maths, Class 12 Physics, and most of
+# that generation -- were typeset in Kruti Dev / Chanakya, fonts that draw
+# Devanagari but store Latin letters. pdftotext hands back what is stored, so a
+# whole chapter arrives as "vkos'k rFkk {ks=k" and not one word of it is
+# Hindi. Unlike the broken verses in the Arts book, there is no readable text
+# around it to keep: indexing it would put a shelf of noise where a book should
+# be.
+#
+# Detected by its commonest words. In these fonts ke, hai, ka, mein, aur, ki, se
+# are "osQ", "gS", "dk", "esa", "vkSj", "dh", "ls", and between them they are a
+# fifth of any Hindi page. Measured: 16-22% in the legacy chapters, 0.00% in
+# every Unicode Hindi, English and maths chapter sampled.
+LEGACY_HINDI_WORDS = {"osQ", "gS", "gSA", "dk", "esa", "vkSj", "dh", "ls", "dks",
+                      "fd", "gSa", "gSaA", "Hkh", ";g", "bl", "rFkk", "tks",
+                      "fy,", "ij", "Fkk"}
+LEGACY_HINDI_RATE = 0.03
+
+
+def is_legacy_hindi(text):
+    """True when this is Hindi stored in a pre-Unicode font. See above."""
+    tokens = (text or "").split()
+    if len(tokens) < 40:
+        return False
+    hits = sum(1 for token in tokens if token.strip(".,;:()") in LEGACY_HINDI_WORDS)
+    return hits / len(tokens) >= LEGACY_HINDI_RATE
+
+
 def repair_text(text):
     """Mend what a text layer broke, and drop the words it cannot mend."""
     for bad, good in TEXT_REPAIRS.items():
@@ -678,6 +707,25 @@ def available():
     return bool(rows)
 
 
+HEAD_TEXT_CHARS = 12000
+
+
+def _chapter_number(from_filename, from_heading):
+    """Which chapter number to believe for an NCERT file.
+
+    The filename's, normally -- it is what the URL is built from, and the
+    heading reader has taken a figure label for a chapter number before
+    (fhkb105 opens with a "3"). EXCEPT when the page prints a LATER number:
+    Part II of a book carries on counting from Part I, so Class 11 Physics Part
+    II's first file is keph201 and its first chapter is Chapter Eight. A
+    heading number below the filename's is the misread; one above it is the
+    book continuing.
+    """
+    if from_heading and from_heading > from_filename:
+        return from_heading
+    return from_filename
+
+
 def ingest_file(path, board=None, klass=None, subject=None, title=None):
     """One book into the index. (chunks written, why not)."""
     board_from, class_from, subject_from, _chapter = describe(path)
@@ -700,6 +748,9 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
             return 0, f"I could not open it ({exc})"
     if not pages:
         return 0, "there was no readable text in it"
+    if is_legacy_hindi(" ".join(pages[:6])):
+        return 0, ("its Hindi is set in an old pre-Unicode font, so the text "
+                   "comes out as nonsense and cannot be searched")
 
     pieces = chunks_from_pages(pages)
     if not pieces:
@@ -724,24 +775,30 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
     # the heading is the better evidence, and the filename only the fallback.
     ncert = RE_NCERT_FILE.match(os.path.splitext(os.path.basename(path))[0])
     if ncert:
-        number = int(ncert.group(2))
+        number = _chapter_number(int(ncert.group(2)), heading_number)
     else:
         number = heading_number
         if number is None and from_name:
             found = re.search(r'(\d{1,2})', from_name)
             number = int(found.group(1)) if found else None
 
+    # The opening pages, kept raw, so the chapter's name can be read again later
+    # with a better reader once the PDF itself is gone. See head_text in
+    # schema.sql.
+    head_text = "\f".join(pages[:2])[:HEAD_TEXT_CHARS]
     book = store.query(
         """INSERT INTO books (board, class, subject, title, chapter, language,
-                              source, pages)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                              source, pages, head_text)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (source) DO UPDATE
              SET board = EXCLUDED.board, class = EXCLUDED.class,
                  subject = EXCLUDED.subject, title = EXCLUDED.title,
                  chapter = EXCLUDED.chapter, language = EXCLUDED.language,
-                 pages = EXCLUDED.pages, added_at = now()
+                 pages = EXCLUDED.pages, head_text = EXCLUDED.head_text,
+                 added_at = now()
            RETURNING id""",
-        (board, klass, subject, title, number, language, source, len(pages)),
+        (board, klass, subject, title, number, language, source, len(pages),
+         head_text),
         fetch="one")
     if not book:
         return 0, "the database would not take it"
@@ -1581,6 +1638,162 @@ def tidy(root=None, dry_run=False):
     return moved
 
 
+SKIPS_PATH = os.path.join(BOOKS_DIR, "skipped.json")
+
+
+def _load_skips():
+    try:
+        with open(SKIPS_PATH, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_skips(skips):
+    try:
+        os.makedirs(BOOKS_DIR, exist_ok=True)
+        temporary = SKIPS_PATH + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(skips, handle, ensure_ascii=False, indent=1, sort_keys=True)
+        os.replace(temporary, SKIPS_PATH)
+    except OSError as exc:
+        print(f"[BOOKS] Could not save the skip list ({exc}).", flush=True)
+
+
+def fetch_and_index(classes=None, mediums=("en", "hi"), subjects=None,
+                    discard=True):
+    """Download, index and (by default) delete, one chapter at a time.
+
+    WHY ONE AT A TIME. Classes 1 to 12 in two languages is about 17GB of PDF and
+    about 300MB once indexed, and the card has 5GB free. Fetching everything
+    first and indexing after cannot fit; indexing each chapter as it lands and
+    deleting it means the disk never holds more than the one chapter in hand.
+    Chapter names survive the PDF being deleted -- see head_text.
+
+    RESUMABLE, because this runs for many hours on a device that gets switched
+    off. A chapter already in the index is not fetched again; nor is one that
+    was already found unreadable, nor a book NCERT no longer publishes. Those
+    last two are remembered in books/skipped.json, keyed by file name so a
+    later change to which subject a book is filed under does not make them
+    look new.
+    """
+    entries = catalogue()
+    wanted = [e for e in entries
+              if (not classes or e["class"] in classes)
+              and e["medium"] in mediums
+              and (not subjects or any(s.lower() in e["subject"].lower()
+                                       for s in subjects))]
+    # English first, then Hindi, then by class: if the run is stopped halfway,
+    # what exists is the half most likely to be asked about.
+    wanted.sort(key=lambda e: (mediums.index(e["medium"]), e["class"], e["code"]))
+    done = {os.path.basename(row["source"])
+            for row in (store.query("SELECT source FROM books") or [])}
+    skips = _load_skips()
+    print(f"[BOOKS] {len(wanted)} books to work through; "
+          f"{len(done)} chapters already indexed.", flush=True)
+
+    totals = {"indexed": 0, "skipped": 0, "books": 0}
+    for position, entry in enumerate(wanted, start=1):
+        code = entry["code"]
+        if skips.get(code):
+            continue
+        folder = os.path.join(BOOKS_DIR, "CBSE", f"class-{entry['class']}",
+                              entry["subject"])
+        found = misses = 0
+        for chapter in range(1, NCERT_MAX_CHAPTERS + 1):
+            name = f"{code}{chapter:02d}.pdf"
+            if name in done or name in skips:
+                found += 1
+                misses = 0
+                continue
+            room = free_bytes()
+            if room is not None and room < DISK_FLOOR_BYTES:
+                print(f"[BOOKS] Stopping: {room / 1024**3:.1f}GB free is below the "
+                      f"floor. Run it again once there is room; it resumes.",
+                      flush=True)
+                return totals
+            body = _get(f"{NCERT_BASE}/{name}")
+            if body is None or not body.startswith(b"%PDF"):
+                misses += 1
+                if misses > NCERT_MISSES_ALLOWED:
+                    break
+                continue
+            misses = 0
+            found += 1
+            os.makedirs(folder, exist_ok=True)
+            target = os.path.join(folder, name)
+            try:
+                with open(target, "wb") as handle:
+                    handle.write(body)
+            except OSError as exc:
+                print(f"[BOOKS] Could not save {name} ({exc}).", flush=True)
+                return totals
+            written, why = ingest_file(target)
+            if written:
+                totals["indexed"] += 1
+                done.add(name)
+            else:
+                totals["skipped"] += 1
+                skips[name] = why
+                _save_skips(skips)
+            if discard:
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+            print(f"[BOOKS] {position}/{len(wanted)}  Class {entry['class']} "
+                  f"{entry['medium']} {entry['subject']}  {name}  "
+                  + (f"{written} pieces" if written else f"skipped: {why}"),
+                  flush=True)
+        if found:
+            totals["books"] += 1
+        else:
+            skips[code] = "not published -- NCERT has withdrawn or renamed it"
+            _save_skips(skips)
+        # Empty folders are what a book that turned out to be missing leaves.
+        try:
+            os.rmdir(folder)
+        except OSError:
+            pass
+    print(f"[BOOKS] Done: {totals['books']} books, {totals['indexed']} chapters "
+          f"indexed, {totals['skipped']} unreadable.", flush=True)
+    return totals
+
+
+def retitle():
+    """Read every chapter's name and subject again, from what the index kept.
+
+    The PDFs are gone by the time the reader improves, so this works from
+    head_text -- which is the whole reason head_text is stored.
+    """
+    known = {entry["code"]: entry for entry in catalogue()}
+    rows = store.query("SELECT id, source, subject, title, chapter, head_text "
+                       "FROM books WHERE head_text IS NOT NULL") or []
+    changed = 0
+    for row in rows:
+        pages = row["head_text"].split("\f")
+        heading_number, heading_title = chapter_heading(pages[0] if pages else "")
+        if heading_title is None and len(pages) > 1:
+            heading_number, heading_title = chapter_heading(pages[1])
+        stem = os.path.splitext(os.path.basename(row["source"]))[0]
+        match = RE_NCERT_FILE.match(stem)
+        subject, number, title = row["subject"], row["chapter"], row["title"]
+        if match:
+            entry = known.get(match.group(1).lower())
+            if entry:
+                subject = entry["subject"]
+            number = _chapter_number(int(match.group(2)), heading_number)
+        title = heading_title or stem
+        if (subject, number, title) != (row["subject"], row["chapter"], row["title"]):
+            store.query("UPDATE books SET subject = %s, chapter = %s, title = %s "
+                        "WHERE id = %s", (subject, number, title, row["id"]),
+                        fetch="none")
+            changed += 1
+    print(f"[BOOKS] {changed} of {len(rows)} chapters renamed or refiled.",
+          flush=True)
+    return changed
+
+
 def fetch(classes=None, medium="en", subjects=None, force=False):
     """Download NCERT books for these classes. Returns (books, chapters).
 
@@ -1628,6 +1841,12 @@ USAGE = """Liza's textbooks.
   books.py catalogue [--refresh]        list the NCERT books that can be fetched
   books.py fetch --class 6 [--class 10] [--medium en|hi] [--subject science]
                                         download those NCERT books
+  books.py fetch --all [--class N] [--medium en|hi] [--keep-pdf]
+                                        download, index and delete each chapter
+                                        in turn, for every class unless one is
+                                        named; resumes where it stopped
+  books.py retitle                      read chapter names again from the text
+                                        the index kept
   books.py tidy [--dry-run]             refile NCERT books under the subject the
                                         catalogue now gives them, and remove the
                                         folders left empty by withdrawn books
@@ -1687,6 +1906,17 @@ def main(argv):
                 continue
             print(f"  {entry['code']}  Class {entry['class']:>2}  "
                   f"{entry['medium']}  {entry['subject']:22} {entry['title']}")
+        return 0
+
+    if command == "fetch" and ("--index" in rest or "--all" in rest):
+        fetch_and_index(classes=classes or list(range(1, 13)),
+                        mediums=tuple(mediums or ["en", "hi"]),
+                        subjects=subjects,
+                        discard="--keep-pdf" not in rest)
+        return 0
+
+    if command == "retitle":
+        retitle()
         return 0
 
     if command == "fetch":

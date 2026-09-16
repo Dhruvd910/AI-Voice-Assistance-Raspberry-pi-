@@ -134,6 +134,11 @@ CREATE TABLE IF NOT EXISTS books (
     -- model's memory of a book that has since been withdrawn.
     title    TEXT NOT NULL,
     chapter  INT,
+    -- The raw text of the chapter's first two pages. Kept so that chapter names
+    -- can be read again with a better reader WITHOUT the PDF, which is deleted
+    -- once it is indexed: the whole shelf is ~17GB of PDFs and ~300MB indexed,
+    -- on an SD card with 5GB free.
+    head_text TEXT,
     language TEXT NOT NULL DEFAULT 'en',
     -- The file it was read from. UNIQUE so re-running the ingest over a folder
     -- replaces a book rather than doubling it, which is the normal way this is
