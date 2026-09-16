@@ -2950,7 +2950,11 @@ class TutorUI:
     # The lesson screens, where tapping her means "stop, I want to ask you
     # something". Not the keyboard screens: she is behind the backing there and
     # cannot be tapped at all, and not the pickers, where nothing is being said.
-    KG_ASK_SCREENS = {"kg_alpha", "kg_count", "kg_story"}
+    # kg_story_list is a picker, and it is here anyway: it is the one picker
+    # she talks over, because it reads the titles out for the child who cannot
+    # read them. A child who wants the third one before she has finished the
+    # list needs a way to stop her.
+    KG_ASK_SCREENS = {"kg_alpha", "kg_count", "kg_story", "kg_story_list"}
 
     # Where the Ask button sits on the lesson screens. The left column is empty
     # on all of them -- the mascot starts at 180 and the lesson itself is in the
@@ -3177,7 +3181,21 @@ class TutorUI:
 
     def _overlay_button(self, x0, y0, x1, y1, label, command, fill=COL_INDIGO,
                         text_colour="#FFFFFF", radius=12, size=13, sub=None,
-                        label_frac=None, sub_frac=0.68):
+                        label_frac=None, sub_frac=0.68, wrap=False, label_dx=0):
+        """A pill with a word on it.
+
+        The wording goes through _overlay_text rather than straight to
+        canvas.create_text, so a Devanagari label comes out SHAPED. Tk cannot
+        join Devanagari -- it draws the consonants and the vowel signs as
+        separate glyphs in the order they are stored -- and the "हिंदी" button
+        on the story language picker has been wrong on this screen since the
+        day it was drawn. Latin text takes the same path it always did.
+
+        `wrap` gives the label the pill's own width to wrap inside, for the
+        buttons whose text is a title somebody else wrote rather than a word
+        chosen to fit. `label_dx` shifts the wording off the pill's centre, for
+        the pills with something else standing at one end of them.
+        """
         self._overlay_seq += 1
         tag = f"ovbtn{self._overlay_seq}"
         tags = (self.OVERLAY_TAG, tag)
@@ -3187,11 +3205,14 @@ class TutorUI:
             label_y = y0 + height * label_frac
         else:
             label_y = (y0 + y1) / 2 if not sub else y0 + height * 0.36
-        self.canvas.create_text((x0 + x1) / 2, label_y, text=label,
-                                font=self._font(size, True), fill=text_colour, tags=tags)
+        room = (x1 - x0) - 20 - 2 * abs(label_dx)
+        self._overlay_text((x0 + x1) / 2 + label_dx, label_y, label, size,
+                           bold=True, fill=text_colour, tags=tags,
+                           width=room if wrap else None)
         if sub:
-            self.canvas.create_text((x0 + x1) / 2, y0 + height * sub_frac, text=sub,
-                                    font=self._font(8), fill=text_colour, tags=tags)
+            self._overlay_text((x0 + x1) / 2 + label_dx, y0 + height * sub_frac,
+                               sub, 8, fill=text_colour, tags=tags,
+                               width=room if wrap else None)
         if command is not None:
             self.canvas.tag_bind(tag, "<Button-1>", lambda e: command())
         return tag
@@ -4200,13 +4221,13 @@ class TutorUI:
         self._kg_class_screen("kg_story_lang", "Story Time",
                               "Which language would you like?")
         english = self._overlay_button(110, 226, 390, 378, "English",
-                                       lambda: self.show_kg_story("en"),
+                                       lambda: self.show_kg_story_list("en"),
                                        fill="#B45309", size=20, radius=18,
                                        sub="A story in English",
                                        label_frac=0.68, sub_frac=0.86)
         self._kg_book_glyph(250, 272, english)
         hindi = self._overlay_button(410, 226, 690, 378, "हिंदी",
-                                     lambda: self.show_kg_story("hi"),
+                                     lambda: self.show_kg_story_list("hi"),
                                      fill="#BE185D", size=22, radius=18,
                                      sub="हिंदी में कहानी",
                                      label_frac=0.68, sub_frac=0.86)
@@ -4215,6 +4236,114 @@ class TutorUI:
                               arrow="left")
         kg.kg_say_many([("Would you like a story in English,", "curious"),
                      ("या हिंदी में?", "curious")])
+
+    # ----- and WHICH story? -----
+    # The language picker used to hand straight to a random story, so the child
+    # got whichever one the shuffle produced and the only way to reach a
+    # particular one was to keep pressing Next. They have favourites. Being
+    # handed a different story than the one you were promised is, at five, a
+    # real disappointment.
+    #
+    # So the titles go on the screen and the child picks. Two columns of four:
+    # a title is a phrase, not a word, and a four-across grid cuts every one of
+    # them to three cramped lines. These are wide enough for "The Ant and the
+    # Grasshopper" on one.
+    KG_STORY_COLUMNS = 2
+    KG_STORY_PER_PAGE = 8
+    # One colour per tile, all of them dark enough to carry white lettering at
+    # 4.5:1 -- the same rule the language cards above are written to.
+    KG_STORY_COLOURS = ["#B45309", "#1D4ED8", "#047857", "#BE185D",
+                        "#6D28D9", "#0F766E", "#B91C1C", "#0E7490"]
+
+    def show_kg_story_list(self, language=None, page=0):
+        """The titles she knows, to be chosen from."""
+        if language:
+            self._kg_story_lang = language
+        language = getattr(self, "_kg_story_lang", "en")
+        titles = kg_content.story_titles(language)
+        pages = max(1, -(-len(titles) // self.KG_STORY_PER_PAGE))
+        page = page % pages
+        self._kg_story_page = page
+        showing = titles[page * self.KG_STORY_PER_PAGE:
+                         (page + 1) * self.KG_STORY_PER_PAGE]
+
+        hindi = language == "hi"
+        self._kg_class_screen(
+            "kg_story_list",
+            "कौन सी कहानी?" if hindi else "Which story?",
+            "जो सुननी है उस पर उँगली रखो" if hindi else "Tap the one you want")
+
+        for index, title in enumerate(showing):
+            column, row = index % self.KG_STORY_COLUMNS, index // self.KG_STORY_COLUMNS
+            x0 = 40 + column * 375
+            y0 = 150 + row * 58
+            colour = self.KG_STORY_COLOURS[(page * self.KG_STORY_PER_PAGE + index)
+                                           % len(self.KG_STORY_COLOURS)]
+            # label_dx clears the number badge below: the wording is centred
+            # in what is left of the pill, not in the whole of it, or a long
+            # title runs straight under the number.
+            tag = self._overlay_button(
+                x0, y0, x0 + 345, y0 + 50, title,
+                lambda t=title: self.show_kg_story(language, t),
+                fill=colour, size=14, radius=14, wrap=True, label_dx=18)
+            # The number of the story, in a circle at the left end. A
+            # pre-reader cannot read "The Two Goats", but they CAN count to
+            # eight -- so she reads the titles out in order below, and the
+            # number is how a child holds on to which one they wanted.
+            self.canvas.create_oval(x0 + 8, y0 + 11, x0 + 36, y0 + 39,
+                                    fill="#FFFFFF", outline="",
+                                    tags=(self.OVERLAY_TAG, tag))
+            self._overlay_text(x0 + 22, y0 + 25,
+                               str(page * self.KG_STORY_PER_PAGE + index + 1),
+                               13, bold=True, fill=colour,
+                               tags=(self.OVERLAY_TAG, tag))
+
+        self._kg_class_button(self.KG_ROW_4[0], "Back",
+                              self.show_kg_story_picker, arrow="left")
+        self._kg_ask_button(self.KG_ASK_BOX_STORY)
+        self._kg_class_button(self.KG_ROW_4[2], "Surprise me",
+                              lambda: self.show_kg_story(language), size=11,
+                              primary=True)
+        if pages > 1:
+            self._kg_class_button(
+                self.KG_ROW_4[3], "More stories",
+                lambda: self.show_kg_story_list(language, page + 1), size=11,
+                arrow="right")
+        else:
+            self._kg_class_button(self.KG_ROW_4[3], "Read titles",
+                                  lambda: self._kg_read_titles(showing), size=11)
+        # Read out in full the FIRST time this page is opened, and after that
+        # only asked. A child who has just heard a story and pressed All
+        # stories does not need all eight titles read to them again to pick the
+        # next one -- they were listening ten seconds ago. The button is there
+        # for when they do.
+        already = getattr(self, "_kg_titles_read", set())
+        if (language, page) in already:
+            kg.kg_say("कौन सी कहानी सुनोगे?" if hindi
+                      else "Which story would you like?", "curious")
+        else:
+            already.add((language, page))
+            self._kg_titles_read = already
+            self._kg_read_titles(showing)
+
+    def _kg_read_titles(self, titles):
+        """Read the list out, numbered.
+
+        Not decoration. Every other KG screen can be used by a child who cannot
+        read a word on it, because the picture or the letter carries it -- a
+        list of titles is the one screen here that is pure text. Reading them
+        aloud in the order they are numbered is what puts it back within reach
+        of the child it was built for.
+        """
+        hindi = getattr(self, "_kg_story_lang", "en") == "hi"
+        opening = ("मेरे पास ये कहानियाँ हैं।" if hindi
+                   else "Here are the stories I know.")
+        lines = [(opening, "warm")]
+        for index, title in enumerate(titles, start=1):
+            lines.append((f"{index}. {title}.", "curious"))
+        lines.append(("जो सुननी है उसे दबाओ।" if hindi
+                      else "Tap the one you would like.", "gentle"))
+        kg.kg_say_many(lines)
 
     # ----- tests -----
     # A test is five questions, each in two parts: NAME the picture, then spell
@@ -5179,13 +5308,20 @@ class TutorUI:
         "mysterious":  (CHALK_BLUE, 14),
     }
 
-    def show_kg_story(self, language=None):
+    def show_kg_story(self, language=None, title=None):
+        """Tell a story. `title` is the one the child chose off the list; with
+        no title it is whichever one they have not just had."""
         # Remembered so Next story stays in the language they chose rather than
         # dropping back to English on the second story.
         if language:
             self._kg_story_lang = language
         language = getattr(self, "_kg_story_lang", "en")
-        self._kg_story = kg_content.random_story_in(language, self._kg_seen_stories)
+        story = kg_content.story_by_title(title, language) if title else None
+        # A title that is no longer in the bank falls back to a random one
+        # rather than to an empty screen: the child pressed something and a
+        # story has to come out of it.
+        self._kg_story = story or kg_content.random_story_in(
+            language, self._kg_seen_stories)
         self._kg_seen_stories.add(self._kg_story["title"])
         if len(self._kg_seen_stories) >= len(kg_content.stories_for(language)):
             self._kg_seen_stories.clear()
@@ -5331,8 +5467,10 @@ class TutorUI:
                                             outline="", tags=self.OVERLAY_TAG)
                     x += gap
 
-        self._kg_class_button(self.KG_ROW_4[0], "Back",
-                              self.show_kg_story_picker, arrow="left")
+        # Back goes to the LIST, not to the language question: the child came
+        # from the list and that is where "another one" lives now.
+        self._kg_class_button(self.KG_ROW_4[0], "All stories",
+                              self.show_kg_story_list, arrow="left", size=11)
         # Slot 1 of the same row; see KG_ASK_BOX_STORY.
         self._kg_ask_button(self.KG_ASK_BOX_STORY)
         self._kg_class_button(self.KG_ROW_4[2], "Read again", self._kg_narrate,
