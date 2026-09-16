@@ -2467,12 +2467,65 @@ def _fetch_chapters_into(code, folder):
         # Written beside and renamed into place, so a download cut off by a
         # power cut leaves no half a PDF that a resumed run would take as done
         # -- the very failure that left every zip in books_new unreadable.
+        # And CHECKED before it is renamed: a cut-off download still starts
+        # with %PDF, so the first test above cannot tell. One retry, then the
+        # chapter is left out and said so, rather than kept broken.
         partial = target + ".part"
-        with open(partial, "wb") as handle:
-            handle.write(body)
+        for attempt in range(2):
+            with open(partial, "wb") as handle:
+                handle.write(body)
+            if pdf_is_whole(partial):
+                break
+            body = _get(f"{NCERT_BASE}/{code}{chapter:02d}.pdf") or b""
+        if not pdf_is_whole(partial):
+            os.remove(partial)
+            print(f"[BOOKS]     {code}{chapter:02d}.pdf arrived cut off twice; "
+                  f"left out.", flush=True)
+            continue
         os.replace(partial, target)
         got += 1
     return got
+
+
+ROMAN_NAMES = {value: name.upper() for name, value in ROMAN_CLASSES.items()}
+
+
+def add_subject(subject, classes=None, medium="en"):
+    """Fetch one subject's NCERT books into books_new, filed like the rest.
+
+    Into books_new/<class>/<subject>/, the way the family's own folders are
+    laid out, and kept -- this is their shelf, not the fetcher's scratch space.
+
+    ONE EDITION PER CLASS. NCERT still lists books it has replaced, and for
+    Maths the new Ganita Prakash sits in the catalogue beside the Mathematics it
+    replaced. Both on the shelf would put two different chapter ones in the
+    contents list, so where a class has a Ganita book the older one is left
+    out. A withdrawn book fetches nothing anyway; this is for the ones that are
+    still downloadable and simply out of date.
+    """
+    wanted_classes = list(classes or WANTED_CLASSES)
+    entries = [e for e in catalogue()
+               if e["class"] in wanted_classes and e["medium"] == medium
+               and e["subject"].lower() == subject.lower()]
+    newer = {e["class"] for e in entries if e["title"].lower().startswith("ganita")}
+    entries = [e for e in entries
+               if not (e["class"] in newer
+                       and not e["title"].lower().startswith("ganita"))]
+    folder_name = subject.lower().replace(" ", "_")
+    total = 0
+    for entry in sorted(entries, key=lambda e: (e["class"], e["code"])):
+        folder = os.path.join(BOOKS_DIR, ROMAN_NAMES[entry["class"]], folder_name)
+        os.makedirs(folder, exist_ok=True)
+        got = _fetch_chapters_into(entry["code"], folder)
+        if got is None:
+            break
+        total += got
+        print(f"[BOOKS] Class {entry['class']} {entry['title']} ({entry['code']}): "
+              f"{got} chapters", flush=True)
+        if not os.listdir(folder):
+            os.rmdir(folder)
+    print(f"[BOOKS] {total} {subject} chapters on the shelf.", flush=True)
+    return total
 
 
 def fetch(classes=None, medium="en", subjects=None, force=False):
@@ -2534,6 +2587,8 @@ USAGE = """Liza's textbooks.
   books.py zips [--dry-run]             unpack every zip on the shelf, or fetch
                                         the book an incomplete one was meant to hold
   books.py repair [--dry-run]           re-fetch every NCERT PDF that was cut off
+  books.py add --subject maths [--class 9]
+                                        fetch a subject's NCERT books into books_new
   books.py ingest [folder]              read every PDF under books_new/ into the index
   books.py search "why do leaves look green" [--class 6]
   books.py forget [--class 6] [--board ICSE]
@@ -2612,6 +2667,15 @@ def main(argv):
 
     if command == "zips":
         repair_zips(dry_run="--dry-run" in rest)
+        return 0
+
+    if command == "add":
+        if not subjects:
+            print("Which subject? e.g. books.py add --subject maths")
+            return 2
+        for subject in subjects:
+            add_subject(subject, classes=classes or None,
+                        medium=(mediums or ["en"])[0])
         return 0
 
     if command == "repair":
