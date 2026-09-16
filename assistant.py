@@ -49,7 +49,8 @@ from config import (BARGE_IN_NEAR_MISS, KG_BARGE_IN_ENABLED,
                     STT_SEED_PROMPT, VAD_AGGRESSIVENESS, VAD_ENABLED,
                     VAD_FRAME_BYTES, VAD_FRAME_MS, VAD_MIN_RMS,
                     VAD_PREROLL_MS, VAD_RATE, VAD_START_MS,
-                    VAD_TAIL_MS, WAKE_LISTEN_TIMEOUT_S, WAKE_PHRASE_LIMIT_S,
+                    VAD_TAIL_MS, WAKE_COLD_AFTER_S, WAKE_LISTEN_TIMEOUT_S,
+                    WAKE_PHRASE_LIMIT_S,
                     WAKE_SEED_PROMPT, WAKE_SEED_PROMPT_ASLEEP, WAKE_STT_MODEL)
 
 # The screen. ui.py imports THIS module back, and that cycle is safe only
@@ -1599,6 +1600,11 @@ def ai_loop(ui, headless=False):
                 if WAKE_WORD_ENABLED:
                     print(f"[STATE] In {'Sleep' if ui.asleep else 'Standby'} Mode. "
                           f"Say 'Hey Liza' or tap Speak...", flush=True)
+                    # When this stretch of standby began, so the loop below can
+                    # tell a pause in a conversation from a device nobody has
+                    # touched. See WAKE_COLD_AFTER_S.
+                    standby_since = time.time()
+                    gone_cold = False
                     while not wake_event.is_set():
                         if kg_holds_microphone(ui):
                             kg_took_the_microphone = True
@@ -1606,6 +1612,23 @@ def ai_loop(ui, headless=False):
                         if state.pending_mode_intro:
                             mode_tapped = True
                             break
+                        # THE WAKE BAR RISES ON A DEVICE NOBODY IS USING.
+                        #
+                        # This is the "she wakes up by herself a few minutes
+                        # after booting" report. Nothing had gone wrong with the
+                        # microphone: standby uses the LOOSE pattern and seeds
+                        # Whisper with "Hey Liza.", which is documented two
+                        # files away as the one thing guaranteed to make room
+                        # noise transcribe as the wake phrase. Awake that is a
+                        # fair trade. On a device that was switched on and left,
+                        # there is no turn to discard -- she just starts talking
+                        # to an empty room.
+                        cold = time.time() - standby_since > WAKE_COLD_AFTER_S
+                        if cold and not gone_cold:
+                            gone_cold = True
+                            print("[WAKE] Nobody has used her for a while; "
+                                  "listening for the full 'Hey Liza' only.",
+                                  flush=True)
                         # Timed like every other read. Standby is where the
                         # device spends most of its life, so a wedge here is the
                         # single most likely one -- and it was the one place the
@@ -1616,6 +1639,13 @@ def ai_loop(ui, headless=False):
                         try:
                             woke, pending_question, pending_language = listen_for_wake_word(
                                 recognizer, mic_device, asleep=ui.asleep, listener=listener,
+                                # Cold: the sleep pattern and NO seed. Not
+                                # asleep=True as well -- that also caps the
+                                # whole utterance at six words, and "Hey Liza,
+                                # what is a number line" is seven. The two
+                                # changes that matter here are the two above.
+                                pattern=(RE_WAKE_WORD_ASLEEP if cold else None),
+                                seed=(WAKE_SEED_PROMPT_ASLEEP if cold else None),
                                 # A screen that opens mid-read, a Speak tap or a
                                 # mode tap all get the device back within a frame
                                 # or two, instead of after the ten-second window
