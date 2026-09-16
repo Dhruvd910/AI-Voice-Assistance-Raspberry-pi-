@@ -1101,11 +1101,14 @@ def contents_block(profile=None):
                                 if row["subject"] == subject}):
             groups.append((subject, language))
 
-    lines, used = [], 0
+    lines, used, left_out = [], 0, []
     for subject, language in groups:
         chapters = [row for row in rows if row["subject"] == subject
                     and row["language"] == language]
-        named_as = f"{subject} in Hindi" if language == "hi" else subject
+        # "Hindi in Hindi" says nothing a child would; the language book is
+        # just the language book.
+        named_as = (f"{subject} in Hindi" if language == "hi" and subject != "Hindi"
+                    else subject)
         named = [row for row in chapters if not _is_placeholder_title(row["title"])]
         if len(named) < max(1, len(chapters) // 2):
             # A book whose first pages carry no heading this can read -- most
@@ -1120,11 +1123,18 @@ def contents_block(profile=None):
                 else row["title"] for row in named)
             line = f"Class {klass} {named_as}: {listed}."
         if used + len(line) > CONTENTS_MAX_CHARS:
-            break
+            left_out.append(named_as)
+            continue
         used += len(line)
         lines.append(line)
     if not lines:
         return ""
+    # The books that did not fit, by name. The section tells her that a book
+    # missing from it is one she does not have -- so without this line she
+    # would deny having the skills and PE books sitting on the same shelf.
+    if left_out:
+        lines.append(f"Also on this device, contents not listed here: "
+                     f"{', '.join(left_out)}.")
     return (
         "### 1d. WHAT IS IN THEIR BOOKS\n"
         "The chapters of the books on this device, in order, exactly as they are "
