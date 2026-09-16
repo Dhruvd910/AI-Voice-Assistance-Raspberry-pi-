@@ -223,6 +223,112 @@ RE_CLASS_DIR = re.compile(r'^(?:class|grade|std)[\s._-]*(\d{1,2})$', re.IGNORECA
 RE_CHAPTER = re.compile(r'(?:chapter|ch|lesson)[\s._-]*(\d{1,2})|(\d{2})\s*$',
                         re.IGNORECASE)
 
+# THE CHAPTER'S OWN NAME, off its first page.
+#
+# Without this the index knew a passage was in "Chapter 2" and nothing more, so
+# "what is the first chapter of my science book?" had nothing to answer from and
+# was answered from the model's memory instead -- which said "Food: Where Does
+# It Come From?", the first chapter of the book NCERT WITHDREW. The book on this
+# device is Curiosity and its first chapter is The Wonderful World of Science.
+# A confidently wrong chapter name is the worst kind of wrong answer here,
+# because it is exactly the kind a child cannot check.
+#
+# NCERT sets the heading as the word "Chapter", then the number and the title,
+# and sometimes runs the title onto a second line:
+#
+#       Chapter
+#                 9     Methods of Separation
+#                       in Everyday Life
+RE_HEADING_WORD = re.compile(r'^\s*chapter\s*$', re.IGNORECASE)
+# "Chapter 9   Methods of Separation", all on one line. WHITESPACE after the
+# number, not any punctuation: NCERT's page footer is "Chapter 10.indd 183
+# 10/4/2024 3:09:33 PM", and a looser separator read that as chapter 10 titled
+# ".indd 183 10/4/2024".
+RE_HEADING_INLINE = re.compile(r'^\s*chapter\s+(\d{1,2})\s+(\S.*)$', re.IGNORECASE)
+RE_HEADING_NUMBERED = re.compile(r'^\s*(\d{1,2})\s{2,}(\S.*)$')
+RE_HEADING_NUMBER_ONLY = re.compile(r'^\s*(\d{1,2})\s*$')
+# Typesetting leftovers that survive into the text layer.
+RE_NOT_A_TITLE = re.compile(r'\.indd|\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}:\d{2}|'
+                            r'^(?:reprint|rationalised)', re.IGNORECASE)
+# How far either side of the word "Chapter" the number and the title may sit.
+HEADING_WINDOW = (2, 4)
+
+
+def _title_fragment(line):
+    """`line` as a piece of a chapter title, or None.
+
+    Judged on SHAPE, because the position differs from chapter to chapter --
+    NCERT sets the number above the word "Chapter" in some and below it in
+    others, and runs a long title onto a second line in several. A fragment is
+    short, starts with a letter, is not a sentence, and is not the Sanskrit
+    verse that follows most of these headings.
+    """
+    text = re.sub(r'\s{2,}', " ", (line or "")).strip()
+    if not text or is_hindi(text) or RE_NOT_A_TITLE.search(text):
+        return None
+    if not text[0].isalpha():
+        return None
+    if re.search(r'[.?!;,]$', text):
+        return None
+    return text if 1 <= len(text.split()) <= 8 else None
+
+
+def chapter_heading(first_page):
+    """(number, title) off a chapter's opening page, or (None, None).
+
+    Without this the index knew a passage was in "Chapter 2" and nothing more,
+    so "what is the first chapter of my science book?" had nothing to answer
+    from and was answered out of the model's memory instead -- which said
+    "Food: Where Does It Come From?", the first chapter of the book NCERT
+    WITHDREW. The book on this device is Curiosity and its first chapter is The
+    Wonderful World of Science. A confidently wrong chapter name is the worst
+    kind of wrong answer here, because it is exactly the kind a child cannot
+    check.
+    """
+    lines = [line.rstrip() for line in (first_page or "").split("\n")][:40]
+    for index, line in enumerate(lines):
+        inline = RE_HEADING_INLINE.match(line)
+        if inline:
+            title = _title_fragment(inline.group(2))
+            if title:
+                return int(inline.group(1)), title
+            continue
+        if not RE_HEADING_WORD.match(line):
+            continue
+        # The word "Chapter" on its own. The number and the title are somewhere
+        # in the few lines around it, in an order that varies by chapter.
+        before, after = HEADING_WINDOW
+        window = [(at, lines[at]) for at in
+                  range(max(0, index - before), min(len(lines), index + after + 1))
+                  if at != index and lines[at].strip()]
+        number, fragments, started = None, [], False
+        for _at, candidate in window:
+            numbered = RE_HEADING_NUMBERED.match(candidate)
+            if numbered:
+                number = int(numbered.group(1))
+                piece = _title_fragment(numbered.group(2))
+                if piece:
+                    fragments.append(piece)
+                    started = True
+                continue
+            only = RE_HEADING_NUMBER_ONLY.match(candidate)
+            if only:
+                number = int(only.group(1))
+                continue
+            piece = _title_fragment(candidate)
+            if piece is None:
+                # Body text, or the verse. Everything after it belongs to the
+                # page, not to the heading.
+                if started:
+                    break
+                continue
+            fragments.append(piece)
+            started = True
+        title = re.sub(r'\s+', " ", " ".join(fragments)).strip(" .:-")
+        if number and 3 <= len(title) <= 90:
+            return number, title
+    return None, None
+
 
 def describe(path):
     """(board, class, subject, chapter) read out of the file's own path.
@@ -287,23 +393,33 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
         return 0, ("there was no readable text in it -- a scanned book needs "
                    "OCR before it can be searched")
 
-    title = title or os.path.splitext(os.path.basename(path))[0]
+    # The chapter's real name off its own first page, and the number it gives
+    # itself, which is better evidence than the one guessed from the filename.
+    heading_number, heading_title = chapter_heading(pages[0] if pages else "")
+    title = title or heading_title or os.path.splitext(os.path.basename(path))[0]
     language = "hi" if is_hindi(" ".join(text for _p, text in pieces)) else "en"
     source = os.path.relpath(os.path.abspath(path), BOOKS_DIR)
 
     # Replaced rather than added to. Re-running the ingest over a folder is the
     # normal way this is used -- drop in the chapters that were missing and run
     # it again -- and without this every run doubles every book already in.
+    _board, _class, _subject, from_name = describe(path)
+    number = heading_number
+    if number is None and from_name:
+        found = re.search(r'(\d{1,2})', from_name)
+        number = int(found.group(1)) if found else None
+
     book = store.query(
-        """INSERT INTO books (board, class, subject, title, language, source, pages)
-           VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """INSERT INTO books (board, class, subject, title, chapter, language,
+                              source, pages)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (source) DO UPDATE
              SET board = EXCLUDED.board, class = EXCLUDED.class,
                  subject = EXCLUDED.subject, title = EXCLUDED.title,
-                 language = EXCLUDED.language, pages = EXCLUDED.pages,
-                 added_at = now()
+                 chapter = EXCLUDED.chapter, language = EXCLUDED.language,
+                 pages = EXCLUDED.pages, added_at = now()
            RETURNING id""",
-        (board, klass, subject, title, language, source, len(pages)),
+        (board, klass, subject, title, number, language, source, len(pages)),
         fetch="one")
     if not book:
         return 0, "the database would not take it"
@@ -311,7 +427,7 @@ def ingest_file(path, board=None, klass=None, subject=None, title=None):
     store.query("DELETE FROM book_chunks WHERE book_id = %s", (book_id,),
                 fetch="none")
 
-    _board, _class, _subject, chapter = describe(path)
+    chapter = (f"Chapter {number}" if number else from_name)
     written = 0
     for page, text in pieces:
         config = text_config(text)
@@ -485,11 +601,98 @@ def search(question, klass=None, board=None, subject=None, limit=None):
 
 
 def cite(row):
-    """How a passage is named when she is told where it came from."""
+    """How a passage is named when she is told where it came from.
+
+    The chapter's NAME as well as its number, so that a question about what a
+    chapter is called is answered by the shelf rather than from memory.
+    """
     parts = [f"Class {row['class']} {row['subject']}"]
     if row.get("chapter"):
         parts.append(row["chapter"])
+    if row.get("title") and row["title"].lower() not in (row.get("chapter") or "").lower():
+        parts.append(row["title"])
     return ", ".join(parts)
+
+
+def contents(klass=None, board=None, subject=None):
+    """The table of contents of what is on the shelf, a row per chapter."""
+    where, params = [], []
+    if klass is not None:
+        where.append("class = %s")
+        params.append(klass)
+    if board:
+        where.append("board ILIKE %s")
+        params.append(board)
+    if subject:
+        where.append("subject ILIKE %s")
+        params.append(f"%{subject}%")
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    return store.query(
+        f"""SELECT board, class, subject, chapter, title, language
+              FROM books{clause}
+             ORDER BY subject, language, chapter NULLS LAST, title""",
+        tuple(params)) or []
+
+
+# How much of the contents list may go into the prompt. It sits in the
+# CACHEABLE part of the prompt -- it is the same for every question this
+# student asks -- so it is billed once per student rather than once per turn,
+# which is what makes a list this size affordable at all.
+CONTENTS_MAX_CHARS = int(os.getenv("BOOK_CONTENTS_CHARS", "1600"))
+
+
+def contents_block(profile=None):
+    """What is actually in this student's books, as a prompt section. "" if none.
+
+    This is NOT the passage search. That answers "what does the book say about
+    photosynthesis"; this answers "what is chapter 4 called", "how many
+    chapters are there", "what comes after magnets" -- questions about the
+    SHAPE of the book, which no amount of full-text search over its body will
+    ever answer, and which she was answering from memory of a book that is no
+    longer the book.
+    """
+    profile = profile or {}
+    raw_class = str(profile.get("class") or "").strip()
+    if raw_class.upper() == "KG":
+        return ""
+    try:
+        klass = int(raw_class)
+    except ValueError:
+        return ""
+    try:
+        rows = contents(klass=klass, board=profile.get("board"))
+    except Exception as exc:
+        print(f"[BOOKS] Could not read the contents ({exc}).", flush=True)
+        return ""
+    if not rows:
+        return ""
+
+    lines, used = [], 0
+    for subject in sorted({row["subject"] for row in rows}):
+        chapters = [row for row in rows if row["subject"] == subject]
+        listed = ", ".join(
+            f"{row['chapter']}. {row['title']}" if row["chapter"]
+            else row["title"] for row in chapters)
+        line = f"Class {klass} {subject}: {listed}."
+        if used + len(line) > CONTENTS_MAX_CHARS:
+            break
+        used += len(line)
+        lines.append(line)
+    if not lines:
+        return ""
+    return (
+        "### 1d. WHAT IS IN THEIR BOOKS\n"
+        "The chapters of the books on this device, in order, exactly as they are "
+        "named on the page. This is the CURRENT edition the student is holding -- "
+        "syllabuses change and chapters get replaced, so where this list and your "
+        "own memory of the book disagree, THIS LIST IS RIGHT and your memory is a "
+        "previous edition.\n"
+        "Asked which chapter is first, what chapter four is called, how many "
+        "chapters there are, or what comes after a chapter, answer from here and "
+        "NEVER from memory. A book or a class not listed here is one you do not "
+        "have, so say plainly that you do not have that book rather than "
+        "inventing its contents.\n"
+        + "\n".join(lines) + "\n\n")
 
 
 def book_context(question, profile=None):

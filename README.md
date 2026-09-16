@@ -193,6 +193,19 @@ already indexed rather than doubling it, so adding the chapters you were
 missing is drop-in-and-run-again. See `books/README.md` for the rest, including
 what to do with a scanned book.
 
+### Questions about the book itself
+
+Ingesting also reads each chapter's **own name off its first page**, so
+"what's the first chapter?", "what is chapter 9 called?" and "what comes after
+magnets?" are answered from the shelf rather than from memory. That matters
+more than it sounds: NCERT replaced the Class 6 Science book, and asked without
+this she answered "Food: Where Does It Come From?" — the first chapter of the
+edition that was *withdrawn*. The book on the device is *Curiosity*, and its
+first chapter is *The Wonderful World of Science*.
+
+A subject that has not been ingested is one she says she does not have, rather
+than one she invents the contents of.
+
 ### Checking what it found
 
 ```bash

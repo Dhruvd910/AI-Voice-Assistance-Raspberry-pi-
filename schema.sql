@@ -127,7 +127,13 @@ CREATE TABLE IF NOT EXISTS books (
     board    TEXT NOT NULL,             -- 'CBSE', 'ICSE', or whatever was ingested
     class    INT  NOT NULL CHECK (class BETWEEN 1 AND 12),
     subject  TEXT NOT NULL,
+    -- The chapter's OWN name, read off its first page -- "The Wonderful World
+    -- of Science", not the file it arrived in. Without it the index knew a
+    -- passage was in "Chapter 2" and nothing more, so a question about what a
+    -- chapter is CALLED had nothing to answer from and was answered out of the
+    -- model's memory of a book that has since been withdrawn.
     title    TEXT NOT NULL,
+    chapter  INT,
     language TEXT NOT NULL DEFAULT 'en',
     -- The file it was read from. UNIQUE so re-running the ingest over a folder
     -- replaces a book rather than doubling it, which is the normal way this is

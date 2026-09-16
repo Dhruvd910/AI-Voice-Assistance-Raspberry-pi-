@@ -1259,12 +1259,24 @@ def student_profile_block():
         # KG, or a class that failed to parse. KG students never reach this
         # prompt at all -- they are routed to the spelling and story screens.
         return ""
+    # THE BOARD IS STATED, because it was asked for when the student was set up
+    # and it is sitting right there in their profile. Without it here she asked
+    # for it out loud -- logs/liza.log: "Which education board does your school
+    # follow, like NCERT, ICSE, or something else?" -- of a child whose profile
+    # already said CBSE. Asking somebody for something they have already told
+    # you is the thing that makes a device feel like it is not listening.
+    board = (profile.get("board") or "").strip()
+    board_line = (f"Their school follows the {board} board, so that is the "
+                  f"syllabus, the terminology and the textbook to answer from. "
+                  f"You already know this: NEVER ask them which board, which "
+                  f"syllabus or which book they follow.\n" if board else "")
     # The whole section, header included, so that a device with no profile on it
     # emits nothing at all here rather than an empty heading -- see the caller.
     return (
         "### 1a. WHO YOU ARE TEACHING (CRITICAL OVERRIDE -- GOVERNS DEPTH, NOT BEHAVIOUR)\n"
         f"You are teaching {profile.get('name') or 'a student'}, "
         f"who is in Class {profile.get('class')}.\n"
+        f"{board_line}"
         f"{instruction}\n"
         "This sets HOW DEEP and HOW PLAIN the answer is. The mode below still decides HOW\n"
         "you teach -- explaining, asking, or examining -- and rule 5 still decides how you\n"
@@ -1272,7 +1284,23 @@ def student_profile_block():
         "still gets a one-line answer. NEVER mention the student's class, their year, or\n"
         "that you are adjusting anything; just answer at that level.\n\n"
         + learning_history_block(profile)
+        + _contents_block(profile)
     )
+
+
+def _contents_block(profile):
+    """What is in this student's books, for the questions search cannot answer.
+
+    Beside the profile rather than with the retrieved passages, because it is
+    the same for every question this student asks -- so it sits in the
+    CACHEABLE part of the prompt and is billed once per student rather than
+    once per turn. See the section-order note in prompts.py.
+    """
+    try:
+        return books.contents_block(profile)
+    except Exception as exc:
+        print(f"[BOOKS] Could not list the contents ({exc}).", flush=True)
+        return ""
 
 
 def _recent_work(user_id, limit=6):
