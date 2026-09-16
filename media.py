@@ -173,20 +173,27 @@ def _detect_hindi_play(text):
     """('video'|'music', query) for a Hindi play request, else (None, None)."""
     if not RE_DEVANAGARI_ANY.search(text) or not RE_HI_PLAY_VERB.search(text):
         return None, None
-    # Asked for something Liza draws or tells herself. Never media, whatever
-    # verb it was asked with -- see RE_HI_NOT_MEDIA.
-    if RE_HI_NOT_MEDIA.search(text):
-        print(f"[MEDIA] Not a play request -- they asked her to draw or tell it: "
-              f"{text!r}", flush=True)
-        return None, None
-    # The verb was SHOW or TELL and nothing in the sentence names a medium, so
-    # it is a request for the board or for her own voice, not for the speaker.
-    if RE_HI_SHOW_VERB.search(text) and not RE_HI_MEDIA_NOUN.search(text):
-        strong = RE_HI_SHOW_VERB.sub(" ", text)
-        if not RE_HI_PLAY_VERB.search(strong):
-            print(f"[MEDIA] Not a play request -- 'show'/'tell' with no medium "
-                  f"named: {text!r}", flush=True)
+    # NAMING THE MEDIUM SETTLES IT. "कहानी वाला वीडियो दिखाओ" -- show me a
+    # video of a story -- is a video request however many drawing or telling
+    # words are in it, so both guards below are skipped once the sentence has
+    # said out loud what it wants played.
+    names_medium = bool(RE_HI_MEDIA_NOUN.search(text))
+    if not names_medium:
+        # Asked for something Liza draws or tells herself. Never media,
+        # whatever verb it was asked with -- see RE_HI_NOT_MEDIA.
+        if RE_HI_NOT_MEDIA.search(text):
+            print(f"[MEDIA] Not a play request -- they asked her to draw or "
+                  f"tell it: {text!r}", flush=True)
             return None, None
+        # The verb was SHOW or TELL and nothing in the sentence names a medium,
+        # so it is a request for the board or for her own voice, not for the
+        # speaker. Unless a verb that can only mean "play" is in there too.
+        if RE_HI_SHOW_VERB.search(text):
+            strong = RE_HI_SHOW_VERB.sub(" ", text)
+            if not RE_HI_PLAY_VERB.search(strong):
+                print(f"[MEDIA] Not a play request -- 'show'/'tell' with no "
+                      f"medium named: {text!r}", flush=True)
+                return None, None
     kind = "video" if RE_HI_VIDEO.search(text) else "music"
     # Everything except the verb is potential search text -- Hindi routinely
     # trails a modifier after it ("...प्ले करो बॉलीवुड का"), so the tail is kept

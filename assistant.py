@@ -1604,7 +1604,13 @@ def ai_loop(ui, headless=False):
                     # When this stretch of standby began, so the loop below can
                     # tell a pause in a conversation from a device nobody has
                     # touched. See WAKE_COLD_AFTER_S.
-                    standby_since = time.time()
+                    #
+                    # A device that has not been used AT ALL since it started is
+                    # cold from the first second, not after two minutes. The
+                    # grace period is there to cover a pause inside a session
+                    # that is already happening, and at boot there is no such
+                    # session -- which is precisely when she was waking herself.
+                    standby_since = time.time() if state.used_since_start else 0.0
                     gone_cold = False
                     while not wake_event.is_set():
                         if kg_holds_microphone(ui):
@@ -1673,6 +1679,7 @@ def ai_loop(ui, headless=False):
                     # and would have her answering a child who only tapped a tile.
                     print("[STATE] A Kindergarten screen needs the microphone; "
                           "leaving standby.", flush=True)
+                    state.used_since_start = True
                     continue
 
                 # `mode_tapped` covers leaving by the checks above; the
@@ -1689,6 +1696,7 @@ def ai_loop(ui, headless=False):
                     # as being awake.
                     print("[STATE] A mode was chosen from standby; "
                           "announcing it.", flush=True)
+                    state.used_since_start = True
                     continue
 
                 wake_event.clear()
@@ -1698,6 +1706,9 @@ def ai_loop(ui, headless=False):
                 # while she answers.
                 ui.asleep = False
                 session_active = True
+                # Somebody is here. The wake bar can come back down for the
+                # rest of this run -- see the cold check above.
+                state.used_since_start = True
                 silence_counter = 0
 
             # --- LIZA IS SPEAKING: listen for somebody cutting in ---

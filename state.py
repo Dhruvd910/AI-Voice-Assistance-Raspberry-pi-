@@ -188,3 +188,16 @@ def note_spoken(text):
     global last_spoken_text, last_spoken_at
     last_spoken_text = f"{last_spoken_text} {text}"[-600:]
     last_spoken_at = time.time()
+
+
+# HAS ANYBODY USED HER SINCE THIS PROCESS STARTED?
+#
+# False until the first real wake -- a tap, the wake word, a Kindergarten screen
+# or a mode card. While it is False the standby wake bar stays at its strictest,
+# because a device that was switched on and left has no conversation to protect
+# and nothing to lose by being hard to wake. See WAKE_COLD_AFTER_S in config.py
+# and the cold check in ai_loop.
+#
+# A plain value, so it is read and written through the MODULE -- state.used_since_start
+# -- and never imported by name. See the note at the top of this file.
+used_since_start = False
