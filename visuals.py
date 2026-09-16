@@ -1027,6 +1027,822 @@ def describe(spec, values=None):
 
 
 # ---------------------------------------------------------------------------
+# the kinds a picture cannot be wrong about
+# ---------------------------------------------------------------------------
+# Everything from here to the end of this section is drawn ON THE PI and never
+# sent to Seedream, and that is the point of it rather than an oversight.
+#
+# An image model draws a convincing number line with the 7 missing and two 4s
+# on it, a times table whose products do not multiply, and a clock whose hands
+# say something other than the time underneath it. Those are not cosmetic
+# misses -- they are the answer being wrong, on the one channel a child trusts
+# more than the voice, and a six-year-old counting along a line has no way to
+# know the line is lying. So every kind below is one where the NUMBERS ARE THE
+# CONTENT, and every one of them is composed here where they are exact.
+#
+# See _ALL_KINDS: none of these names is in it, which is what keeps them local.
+_NUM = r'-?\d+(?:\.\d+)?(?:\s*/\s*\d+)?'
+
+
+def _value(text):
+    """A number written any of the ways a person says one. None if it is not one.
+
+    "1/2" has to work: a number line of halves is a Class 3 lesson, and the
+    model writes the step as the fraction rather than as 0.5.
+    """
+    text = (text or "").strip()
+    match = re.match(r'^(-?\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)$', text)
+    if match and float(match.group(2)):
+        return float(match.group(1)) / float(match.group(2))
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _tidy(value):
+    """4.0 -> "4", 2.5 -> "2.5". Numbers on a board are read, not computed."""
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return f"{value:g}"
+
+
+def _as_fraction(value, denominator):
+    """`value` written over `denominator`, reduced. "3/4", "1", "1 1/2"."""
+    numerator = round(value * denominator)
+    if denominator <= 1 or numerator % denominator == 0:
+        return _tidy(value)
+    sign = "-" if numerator < 0 else ""
+    numerator = abs(numerator)
+    common = math.gcd(numerator, int(denominator))
+    top, bottom = numerator // common, int(denominator) // common
+    whole, top = divmod(top, bottom)
+    if whole and top:
+        return f"{sign}{whole} {top}/{bottom}"
+    if whole:
+        return f"{sign}{whole}"
+    return f"{sign}{top}/{bottom}"
+
+
+def _number_line(payload):
+    """A ruler across the sheet, with the numbers written under the ticks.
+
+    The thing a Class 6 child asked for and did not get -- see the media.py
+    note about what happened to "नंबर लाइन का ग्राफ़ बनाकर दिखाओ" instead.
+
+    It is deliberately not a graph. A graph has two axes and a curve through
+    them; a number line is one axis, and what is taught ON it is where a number
+    sits, which numbers are being marked, and -- for addition and subtraction --
+    the HOP from one number to another. So it takes marks and jumps as well as
+    a range:
+
+        Number line; 0..10
+        Counting to ten; 0..10; mark 3; mark 7
+        Adding 2 and 3; 0..10; jump 0->2; jump 2->5
+        Halves; 0..2; step 1/2
+    """
+    parts = [p.strip() for p in re.split(r'[;|\n]', payload) if p.strip()]
+    title = None
+    low = high = None
+    step = None
+    marks, jumps = [], []
+
+    for index, part in enumerate(parts):
+        span = re.search(rf'({_NUM})\s*(?:\.\.\.?|→|->|\bto\b|\bसे\b)\s*({_NUM})',
+                         part, re.IGNORECASE)
+        jump = re.match(rf'^\s*(?:jump|hop|arrow|कूद)\s*[:= ]\s*({_NUM})\s*'
+                        rf'(?:\.\.\.?|→|->|\bto\b)\s*({_NUM})', part, re.IGNORECASE)
+        if jump:
+            start, end = _value(jump.group(1)), _value(jump.group(2))
+            if start is not None and end is not None:
+                jumps.append((start, end))
+            continue
+        marked = re.match(r'^\s*(?:mark|marks|show|point|दिखाओ)\s*[:= ]\s*(.+)$',
+                          part, re.IGNORECASE)
+        if marked:
+            marks += [v for v in (_value(t) for t in re.split(r'[, ]+', marked.group(1)))
+                      if v is not None]
+            continue
+        sized = re.match(rf'^\s*(?:step|gap|interval|by)\s*[:= ]\s*({_NUM})\s*$',
+                         part, re.IGNORECASE)
+        if sized:
+            step = _value(sized.group(1))
+            continue
+        if span and low is None:
+            low, high = _value(span.group(1)), _value(span.group(2))
+            continue
+        if index == 0:
+            title = part
+        else:
+            # A bare number this far down is a mark somebody wrote without the
+            # word. "0..10; 3; 7" is what half the models produce.
+            value = _value(part)
+            if value is not None:
+                marks.append(value)
+            elif title is None:
+                title = part
+
+    if low is None or high is None:
+        return None, "tell me where the number line should start and end"
+    if high < low:
+        low, high = high, low
+    if high == low:
+        high = low + 10
+
+    if not step or step <= 0:
+        # One tick per whole number as far as that stays readable, then coarser.
+        # 21 is what fits across 660px with the labels still legible at 17pt.
+        step = 1.0
+        while (high - low) / step > 20:
+            step *= 2 if step in (1.0, 5.0) else 2.5
+    ticks = int(round((high - low) / step))
+    if ticks > 60:                       # a step the model got badly wrong
+        return None, "that number line has too many marks to fit on the board"
+    # How the labels are written. A fractional step means fractions under every
+    # tick -- "0.25" under a line of quarters is the wrong lesson.
+    denominator = 1
+    if abs(step - round(step)) > 1e-9:
+        for candidate in (2, 3, 4, 5, 6, 8, 10, 12, 16):
+            if abs(step * candidate - round(step * candidate)) < 1e-9:
+                denominator = candidate
+                break
+
+    image, draw, top = _canvas(title)
+    left, right = 70, RENDER_W - 70
+    # A line with hops over it has to sit low enough to leave them room; a line
+    # with none sits in the middle of what is left, because a ruler pinned to
+    # the bottom of an otherwise empty sheet looks like a mistake.
+    axis = (max(top + 130, RENDER_H - 150) if jumps
+            else top + (RENDER_H - top) / 2 - 10)
+    at = lambda value: left + (right - left) * (value - low) / (high - low)
+
+    # The line itself, with an arrowhead at each end: a number line does not
+    # stop at 10, it carries on, and drawing it stopped is the commonest thing
+    # wrong with the ones in workbooks.
+    draw.line([(left - 22, axis), (right + 22, axis)], fill=INK, width=5)
+    for end, direction in ((left - 22, -1), (right + 22, 1)):
+        for side in (1, -1):
+            draw.line([(end, axis), (end - direction * 14, axis + side * 9)],
+                      fill=INK, width=5)
+
+    label_font = _font(18 if ticks <= 12 else 15)
+    small = _font(13)
+    for index in range(ticks + 1):
+        value = low + index * step
+        x = at(value)
+        draw.line([(x, axis - 13), (x, axis + 13)], fill=INK, width=4)
+        text = _as_fraction(value, denominator)
+        font = label_font if len(text) <= 4 else small
+        width = _text_size(draw, text, font)[0]
+        draw.text((x - width / 2, axis + 22), text, font=font, fill=INK)
+
+    for value in marks:
+        if not (low <= value <= high):
+            continue
+        x = at(value)
+        draw.ellipse([x - 13, axis - 13, x + 13, axis + 13],
+                     fill=STAGE_COLOURS[3], outline=PAPER, width=3)
+
+    # The hop, drawn as an arc OVER the line, which is how it is taught: you
+    # count the jump, you do not measure it.
+    for order, (start, end) in enumerate(jumps[:6]):
+        x0, x1 = at(start), at(end)
+        colour = STAGE_COLOURS[order % len(STAGE_COLOURS)]
+        height = 46 + 22 * (order % 2)
+        draw.arc([min(x0, x1), axis - height, max(x0, x1), axis + height],
+                 start=180, end=360, fill=colour, width=5)
+        # The head sits on the arc's own end, pointing the way it travelled.
+        tip = (x1, axis - 4)
+        _arrow(draw, (x1 - (6 if x1 > x0 else -6), axis - 22), tip, colour,
+               width=5, head=12)
+        count = _as_fraction(end - start, denominator)
+        note = f"+{count}" if end >= start else count
+        width = _text_size(draw, note, small)[0]
+        draw.text(((x0 + x1) / 2 - width / 2, axis - height - 20), note,
+                  font=small, fill=colour)
+    return image, ""
+
+
+def _table(payload):
+    """Rows and columns. Cells are separated by | and rows by ; -- the first row
+    is the heading.
+
+        Times table of 3; 3 x 1 | 3; 3 x 2 | 6; 3 x 3 | 9
+        Metals and non-metals; Metal | Non-metal; Iron | Sulphur
+
+    A table is where an image model does its most confident damage, so this one
+    is laid out by measurement: every column is as wide as its widest cell, the
+    text is shrunk until the whole grid fits, and nothing is ever cropped.
+    """
+    rows = [[cell.strip() for cell in row.split("|")]
+            for row in re.split(r'[;\n]', payload) if row.strip()]
+    title = None
+    if rows and len(rows[0]) == 1 and len(rows) > 1:
+        title = rows[0][0]
+        rows = rows[1:]
+    if len(rows) < 2:
+        return None, "a table needs a heading row and at least one row under it"
+    columns = max(len(row) for row in rows)
+    rows = [row + [""] * (columns - len(row)) for row in rows[:10]]
+
+    image, draw, top = _canvas(title)
+    left, right = 40, RENDER_W - 40
+    height = min(52, (RENDER_H - top - 30) / len(rows))
+    for size in (24, 21, 19, 17, 15, 13, 11):
+        font = _font(size)
+        widths = [max(_text_size(draw, row[c], font)[0] for row in rows) + 28
+                  for c in range(columns)]
+        if sum(widths) <= right - left:
+            break
+    spare = (right - left) - sum(widths)
+    widths = [w + spare / columns for w in widths]
+
+    y = top
+    for index, row in enumerate(rows):
+        x = left
+        for column, cell in enumerate(row):
+            box = (x, y, x + widths[column], y + height)
+            if index == 0:
+                draw.rectangle(box, fill=ACCENT_SOFT)
+            draw.rectangle(box, outline=RULE, width=2)
+            text_width, text_height = _text_size(draw, cell, font)
+            draw.text((x + (widths[column] - text_width) / 2,
+                       y + (height - text_height) / 2 - 2), cell, font=font,
+                      fill=ACCENT if index == 0 else INK)
+            x += widths[column]
+        y += height
+    # The heading is underlined heavily rather than boxed, so the eye takes the
+    # first row as a heading and not as data.
+    draw.line([(left, top + height), (right, top + height)], fill=ACCENT, width=4)
+    return image, ""
+
+
+def _timeline(payload):
+    """When things happened, along one line. "1947 = Independence".
+
+    Labels alternate above and below the line. Stacking them all on one side
+    means the long ones collide, and a history timeline is nearly all long
+    ones.
+    """
+    parts = _split_labels(payload, limit=12)
+    events, title = [], None
+    for index, part in enumerate(parts):
+        match = re.match(r'^\s*(-?\d{1,4}\s*(?:BC|BCE|AD|CE)?)\s*[=:–-]\s*(.+)$',
+                         part, re.IGNORECASE)
+        if match:
+            events.append((match.group(1).strip(), match.group(2).strip()))
+        elif index == 0:
+            title = part
+    if len(events) < 2:
+        return None, "a timeline needs at least two dates on it"
+
+    image, draw, top = _canvas(title)
+    left, right = 80, RENDER_W - 80
+    axis = (top + RENDER_H - 20) / 2
+    draw.line([(left - 20, axis), (right + 20, axis)], fill=RULE, width=6)
+    _arrow(draw, (right, axis), (right + 24, axis), RULE, width=6, head=14)
+
+    gap = (right - left) / max(len(events) - 1, 1)
+    year_font = _font(20 if len(events) <= 6 else 16)
+    for index, (year, label) in enumerate(events):
+        x = left + index * gap
+        colour = STAGE_COLOURS[index % len(STAGE_COLOURS)]
+        above = index % 2 == 0
+        draw.ellipse([x - 11, axis - 11, x + 11, axis + 11], fill=colour,
+                     outline=PAPER, width=3)
+        stem = 34 if above else 34
+        y = axis - stem if above else axis + stem
+        draw.line([(x, axis), (x, y)], fill=colour, width=3)
+        width = _text_size(draw, year, year_font)[0]
+        year_y = y - 26 if above else y + 4
+        draw.text((x - width / 2, year_y), year, font=year_font, fill=colour)
+        # The first and last captions are centred on an event that sits at the
+        # very end of the line, so half of each hangs off the sheet unless the
+        # centre is pulled back inside it. "First war of independence" under
+        # 1857 was losing its first two letters.
+        x = min(max(x, 30 + gap / 2), RENDER_W - 30 - gap / 2)
+        # The caption gets the room between this event and the next one, and is
+        # wrapped into it rather than trusted to be short.
+        font, lines, line_h = _fitted_lines(draw, label, gap + 24, 70,
+                                            (16, 15, 14, 13, 12))
+        text_y = year_y - 4 - line_h * len(lines) if above else year_y + 26
+        for line in lines:
+            width = _text_size(draw, line, font)[0]
+            draw.text((x - width / 2, text_y), line, font=font, fill=INK)
+            text_y += line_h
+    return image, ""
+
+
+def _compare(payload):
+    """Two overlapping circles: what each has, and what they share.
+
+        Plants and animals; A = Plant cell; B = Animal cell;
+        A: cell wall, chloroplast; B: centriole; both: nucleus, DNA
+    """
+    parts = _split_labels(payload, limit=12)
+    title, names, sides = None, {"A": "A", "B": "B"}, {"A": [], "B": [], "both": []}
+    for index, part in enumerate(parts):
+        named = re.match(r'^\s*([AB])\s*=\s*(.+)$', part, re.IGNORECASE)
+        if named:
+            names[named.group(1).upper()] = named.group(2).strip()
+            continue
+        listed = re.match(r'^\s*(A|B|both|common|shared|दोनों)\s*:\s*(.+)$', part,
+                          re.IGNORECASE)
+        if listed:
+            key = listed.group(1).upper()
+            key = "both" if key not in ("A", "B") else key
+            sides[key] += [item.strip() for item in listed.group(2).split(",")
+                           if item.strip()]
+            continue
+        if index == 0:
+            title = part
+    if not any(sides.values()):
+        return None, "tell me what goes in each side of the comparison"
+
+    image, draw, top = _canvas(title)
+    room = RENDER_H - top - 24
+    radius = min(150, room / 2)
+    centre_y = top + room / 2
+    # Overlapping by two thirds of a radius: enough of a lens to write two
+    # short lines in, and still two circles anybody can see are two circles.
+    left_x, right_x = RENDER_W / 2 - radius * 0.62, RENDER_W / 2 + radius * 0.62
+    for x, colour in ((left_x, STAGE_COLOURS[0]), (right_x, STAGE_COLOURS[1])):
+        draw.ellipse([x - radius, centre_y - radius, x + radius, centre_y + radius],
+                     outline=colour, width=5)
+
+    heading = _font(19)
+    for x, key, colour in ((left_x, "A", STAGE_COLOURS[0]),
+                           (right_x, "B", STAGE_COLOURS[1])):
+        text = names[key]
+        width = _text_size(draw, text, heading)[0]
+        anchor = x - radius * 0.55 if key == "A" else x + radius * 0.55
+        draw.text((anchor - width / 2, centre_y - radius - 30), text,
+                  font=heading, fill=colour)
+
+    def write(items, x, width_limit, colour):
+        """The items down the middle of one region of the diagram.
+
+        Five is the most a lens or a crescent holds at a size anybody reads
+        from across a room; anything past that belongs in what she SAYS.
+        """
+        items = items[:5]
+        if not items:
+            return
+        font = _font(16 if max((len(i) for i in items), default=0) < 14 else 13)
+        line_h = _text_size(draw, "Ag", font)[1] + 5
+        lines = [line for item in items
+                 for line in _wrap(draw, item, font, width_limit)[:2]]
+        y = centre_y - line_h * len(lines) / 2
+        for line in lines:
+            text_width = _text_size(draw, line, font)[0]
+            draw.text((x - text_width / 2, y), line, font=font, fill=colour)
+            y += line_h
+
+    write(sides["A"], left_x - radius * 0.45, radius * 0.95, INK)
+    write(sides["B"], right_x + radius * 0.45, radius * 0.95, INK)
+    write(sides["both"], RENDER_W / 2, radius * 0.9, ACCENT)
+    return image, ""
+
+
+def _tree(payload):
+    """A hierarchy, written as edges: "Living things > Plants".
+
+        Classification; Living things > Plants; Living things > Animals;
+        Animals > Vertebrates; Animals > Invertebrates
+    """
+    parts = _split_labels(payload, limit=16)
+    title, edges, order = None, [], []
+    for index, part in enumerate(parts):
+        if ">" in part or "→" in part:
+            parent, child = [p.strip()
+                             for p in re.split(r'>|→', part, maxsplit=1)[:2]]
+            if parent and child:
+                edges.append((parent, child))
+                for node in (parent, child):
+                    if node not in order:
+                        order.append(node)
+            continue
+        if index == 0:
+            title = part
+    if not edges:
+        return None, "a tree needs at least one line like parent > child"
+
+    children = {}
+    for parent, child in edges:
+        children.setdefault(parent, []).append(child)
+    has_parent = {child for _parent, child in edges}
+    roots = [node for node in order if node not in has_parent] or [order[0]]
+
+    # Breadth first, so every node lands on the row its depth says it should be
+    # on however the edges were written down.
+    levels, seen, frontier, depth = [], set(), roots, 0
+    while frontier and depth < 4:
+        row = [node for node in frontier if node not in seen]
+        if not row:
+            break
+        seen.update(row)
+        levels.append(row)
+        frontier = [child for node in row for child in children.get(node, [])]
+        depth += 1
+
+    image, draw, top = _canvas(title)
+    room = RENDER_H - top - 24
+    row_gap = room / max(len(levels), 1)
+    placed = {}
+    for depth, row in enumerate(levels):
+        y = top + row_gap * depth + row_gap / 2
+        width = min(210, (RENDER_W - 40) / max(len(row), 1) - 14)
+        for index, node in enumerate(row):
+            x = (RENDER_W / (len(row) + 1)) * (index + 1)
+            box = (x - width / 2, y - 28, x + width / 2, y + 28)
+            placed[node] = (x, y, box)
+    for parent, child in edges:
+        if parent in placed and child in placed:
+            draw.line([(placed[parent][0], placed[parent][2][3]),
+                       (placed[child][0], placed[child][2][1])],
+                      fill=RULE, width=3)
+    for depth, row in enumerate(levels):
+        colour = STAGE_COLOURS[depth % len(STAGE_COLOURS)]
+        for node in row:
+            _x, _y, box = placed[node]
+            _rounded(draw, box, 14, fill=PAPER, outline=colour, width=4)
+            _label_in_box(draw, box, node, INK, sizes=(19, 17, 15, 13, 11))
+    return image, ""
+
+
+def _grid(payload):
+    """Rows of dots: what "3 times 4" actually looks like.
+
+        Three fours; 3 x 4
+    """
+    parts = _split_labels(payload, limit=4)
+    title, rows, columns = None, None, None
+    for index, part in enumerate(parts):
+        match = re.search(r'(\d{1,2})\s*(?:x|×|\*|by|into)\s*(\d{1,2})', part,
+                          re.IGNORECASE)
+        if match:
+            rows, columns = int(match.group(1)), int(match.group(2))
+        elif index == 0:
+            title = part
+    if not rows or not columns:
+        return None, "tell me how many rows and how many in each row"
+    if rows * columns > 144:
+        return None, "that array is too big to count on the board"
+
+    image, draw, top = _canvas(title or f"{rows} rows of {columns}")
+    room_w, room_h = RENDER_W - 120, RENDER_H - top - 70
+    pitch = min(room_w / columns, room_h / rows)
+    radius = min(pitch * 0.32, 22)
+    x0 = (RENDER_W - pitch * (columns - 1)) / 2
+    y0 = top + (room_h - pitch * (rows - 1)) / 2
+    for row in range(rows):
+        for column in range(columns):
+            x, y = x0 + pitch * column, y0 + pitch * row
+            draw.ellipse([x - radius, y - radius, x + radius, y + radius],
+                         fill=STAGE_COLOURS[row % len(STAGE_COLOURS)])
+    sum_font = _font(26)
+    note = f"{rows} x {columns} = {rows * columns}"
+    width = _text_size(draw, note, sum_font)[0]
+    draw.text(((RENDER_W - width) / 2, RENDER_H - 48), note, font=sum_font,
+              fill=ACCENT)
+    return image, ""
+
+
+def _fraction(payload):
+    """One or two fractions, as circles cut into slices with the part filled.
+
+        Three quarters; 3/4
+        Which is bigger; 3/4; 2/3
+    """
+    parts = _split_labels(payload, limit=5)
+    title, fractions = None, []
+    for index, part in enumerate(parts):
+        for match in re.finditer(r'(\d{1,2})\s*/\s*(\d{1,2})', part):
+            top_number, bottom = int(match.group(1)), int(match.group(2))
+            if 0 < bottom <= 24 and top_number <= bottom:
+                fractions.append((top_number, bottom))
+        if index == 0 and not re.search(r'\d\s*/\s*\d', part):
+            title = part
+    if not fractions:
+        return None, "tell me the fraction, like three over four"
+    fractions = fractions[:2]
+
+    image, draw, top = _canvas(title)
+    room = RENDER_H - top - 30
+    radius = min(140, room / 2 - 26)
+    centres = ([RENDER_W / 2] if len(fractions) == 1
+               else [RENDER_W / 3, RENDER_W * 2 / 3])
+    centre_y = top + room / 2 - 14
+    label_font = _font(30)
+    for index, (top_number, bottom) in enumerate(fractions):
+        cx = centres[index]
+        box = [cx - radius, centre_y - radius, cx + radius, centre_y + radius]
+        colour = STAGE_COLOURS[index % len(STAGE_COLOURS)]
+        # Slices from twelve o'clock, clockwise, which is how a child is shown
+        # to shade them in.
+        for slice_index in range(bottom):
+            start = -90 + 360 * slice_index / bottom
+            end = -90 + 360 * (slice_index + 1) / bottom
+            draw.pieslice(box, start, end,
+                          fill=colour if slice_index < top_number else PAPER,
+                          outline=INK, width=3)
+        text = f"{top_number}/{bottom}"
+        width = _text_size(draw, text, label_font)[0]
+        draw.text((cx - width / 2, centre_y + radius + 12), text,
+                  font=label_font, fill=colour)
+    return image, ""
+
+
+def _clock(payload):
+    """A clock face reading the time it is labelled with. "quarter to four".
+
+        Quarter past three; 3:15
+    """
+    parts = _split_labels(payload, limit=4)
+    title, hour, minute = None, None, 0
+    for index, part in enumerate(parts):
+        match = re.search(r'(\d{1,2})\s*[:.]\s*(\d{2})', part)
+        if match:
+            hour, minute = int(match.group(1)), int(match.group(2))
+        elif index == 0:
+            title = part
+    if hour is None:
+        return None, "tell me the time to put on the clock"
+    hour, minute = hour % 12, minute % 60
+
+    image, draw, top = _canvas(title)
+    radius = min(150, (RENDER_H - top - 40) / 2)
+    cx, cy = RENDER_W / 2, top + radius + 10
+    draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                 fill=PAPER, outline=ACCENT, width=6)
+    number_font = _font(24)
+    for mark in range(60):
+        angle = math.radians(-90 + mark * 6)
+        outer = radius - 6
+        inner = radius - (20 if mark % 5 == 0 else 11)
+        draw.line([(cx + outer * math.cos(angle), cy + outer * math.sin(angle)),
+                   (cx + inner * math.cos(angle), cy + inner * math.sin(angle))],
+                  fill=INK if mark % 5 == 0 else RULE, width=4 if mark % 5 == 0 else 2)
+    for number in range(1, 13):
+        angle = math.radians(-90 + number * 30)
+        x = cx + (radius - 44) * math.cos(angle)
+        y = cy + (radius - 44) * math.sin(angle)
+        text = str(number)
+        width, height = _text_size(draw, text, number_font)
+        draw.text((x - width / 2, y - height / 2 - 2), text, font=number_font,
+                  fill=INK)
+    # The hour hand moves WITH the minutes. Drawn on the hour exactly, "3:45"
+    # shows a clock that a child reading it properly would call three o'clock.
+    hour_angle = math.radians(-90 + (hour + minute / 60) * 30)
+    minute_angle = math.radians(-90 + minute * 6)
+    draw.line([(cx, cy), (cx + radius * 0.52 * math.cos(hour_angle),
+                          cy + radius * 0.52 * math.sin(hour_angle))],
+              fill=INK, width=11)
+    draw.line([(cx, cy), (cx + radius * 0.78 * math.cos(minute_angle),
+                          cy + radius * 0.78 * math.sin(minute_angle))],
+              fill=STAGE_COLOURS[3], width=7)
+    draw.ellipse([cx - 9, cy - 9, cx + 9, cy + 9], fill=INK)
+    return image, ""
+
+
+def _angle(payload):
+    """Two rays from a point, opened by however many degrees it says.
+
+        A right angle; 90
+    """
+    parts = _split_labels(payload, limit=4)
+    title, degrees = None, None
+    for index, part in enumerate(parts):
+        match = re.search(r'(\d{1,3}(?:\.\d+)?)\s*(?:degrees?|deg|°)?', part)
+        if match and re.search(r'\d', part):
+            degrees = float(match.group(1))
+        elif index == 0:
+            title = part
+    if degrees is None or not 0 < degrees < 360:
+        return None, "tell me how many degrees the angle is"
+
+    image, draw, top = _canvas(title)
+    length = min(300, RENDER_H - top - 90)
+    vertex = (RENDER_W / 2 - length / 2, top + length + 20)
+    end_a = (vertex[0] + length, vertex[1])
+    radians = math.radians(degrees)
+    end_b = (vertex[0] + length * math.cos(-radians),
+             vertex[1] + length * math.sin(-radians))
+    for end in (end_a, end_b):
+        draw.line([vertex, end], fill=INK, width=6)
+        draw.ellipse([end[0] - 7, end[1] - 7, end[0] + 7, end[1] + 7], fill=INK)
+    arc_r = 70
+    if abs(degrees - 90) < 0.5:
+        # The square, not an arc. A right angle is marked with a box, and a
+        # picture that marks it with an arc is teaching the wrong notation.
+        draw.rectangle([vertex[0], vertex[1] - 34, vertex[0] + 34, vertex[1]],
+                       outline=STAGE_COLOURS[3], width=5)
+    else:
+        draw.arc([vertex[0] - arc_r, vertex[1] - arc_r,
+                  vertex[0] + arc_r, vertex[1] + arc_r],
+                 start=-degrees, end=0, fill=STAGE_COLOURS[3], width=5)
+    label = f"{_tidy(degrees)}°"
+    font = _font(30)
+    half = math.radians(degrees / 2)
+    draw.text((vertex[0] + (arc_r + 26) * math.cos(-half) - 10,
+               vertex[1] + (arc_r + 26) * math.sin(-half) - 16),
+              label, font=font, fill=STAGE_COLOURS[3])
+    draw.ellipse([vertex[0] - 8, vertex[1] - 8, vertex[0] + 8, vertex[1] + 8],
+                 fill=INK)
+    return image, ""
+
+
+# The shapes _shape can draw, as the fraction of a unit box each corner sits at.
+# Held as data rather than as a branch per shape so adding one is a line.
+_POLYGONS = {
+    "triangle":      [(0.5, 0.0), (1.0, 1.0), (0.0, 1.0)],
+    "right triangle": [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0)],
+    "square":        [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+    "rectangle":     [(0.0, 0.15), (1.0, 0.15), (1.0, 0.85), (0.0, 0.85)],
+    "rhombus":       [(0.5, 0.0), (1.0, 0.5), (0.5, 1.0), (0.0, 0.5)],
+    "parallelogram": [(0.22, 0.1), (1.0, 0.1), (0.78, 0.9), (0.0, 0.9)],
+    "trapezium":     [(0.22, 0.1), (0.78, 0.1), (1.0, 0.9), (0.0, 0.9)],
+    "pentagon":      [(0.5, 0.0), (1.0, 0.38), (0.81, 1.0), (0.19, 1.0), (0.0, 0.38)],
+    "hexagon":       [(0.25, 0.0), (0.75, 0.0), (1.0, 0.5), (0.75, 1.0),
+                      (0.25, 1.0), (0.0, 0.5)],
+    "octagon":       [(0.29, 0.0), (0.71, 0.0), (1.0, 0.29), (1.0, 0.71),
+                      (0.71, 1.0), (0.29, 1.0), (0.0, 0.71), (0.0, 0.29)],
+}
+_POLYGON_ALIASES = {
+    "equilateral triangle": "triangle", "isosceles triangle": "triangle",
+    "right angled triangle": "right triangle",
+    "right-angled triangle": "right triangle",
+    "trapezoid": "trapezium", "diamond": "rhombus", "quadrilateral": "square",
+    "पंचभुज": "pentagon", "षट्भुज": "hexagon", "त्रिभुज": "triangle",
+    "वर्ग": "square", "आयत": "rectangle",
+}
+
+
+# What a measurement is CALLED decides where it goes. Labelling the sides in
+# the order they were written put "base = 6 cm" on a triangle's right-hand edge
+# and "height = 4 cm" along its bottom -- both drawn beautifully, both on the
+# wrong line, which is a worse answer than no labels at all because it looks
+# authoritative. A child copying that into an exercise book copies it wrong.
+_SIDE_WORDS = {
+    "base": "bottom", "bottom": "bottom", "length": "bottom", "width": "bottom",
+    "आधार": "bottom",
+    "height": "height", "altitude": "height", "perpendicular": "height",
+    "ऊँचाई": "height", "ऊंचाई": "height",
+    "side": "side", "slant": "side", "hypotenuse": "side", "भुजा": "side",
+    "breadth": "left", "depth": "left",
+}
+
+
+def _measure_polygon(draw, points, notes, x0, y0, size):
+    """Write the measurements on the edges they name. Returns what is left over.
+
+    `height` is not an edge at all -- it is the perpendicular from the top of
+    the shape down to its base, and it is drawn as the dashed line a textbook
+    draws, because a triangle's height written along one of its sides is the
+    single commonest thing wrong with a hand-drawn diagram.
+    """
+    font = _font(20)
+    centre = (x0 + size / 2, y0 + size / 2)
+    # Which index is which edge, measured from the points themselves rather
+    # than assumed: the bottom edge is the one whose midpoint sits lowest.
+    edges = [(index, ((points[index][0] + points[(index + 1) % len(points)][0]) / 2,
+                      (points[index][1] + points[(index + 1) % len(points)][1]) / 2))
+             for index in range(len(points))]
+    bottom = max(edges, key=lambda edge: edge[1][1])[0]
+    used, leftover = {bottom: False}, []
+
+    def write_at(mid, text):
+        width, height = _text_size(draw, text, font)
+        away = (mid[0] - centre[0], mid[1] - centre[1])
+        span = math.hypot(*away) or 1
+        draw.text((mid[0] + away[0] / span * 26 - width / 2,
+                   mid[1] + away[1] / span * 26 - height / 2), text,
+                  font=font, fill=INK)
+
+    free = [index for index, _mid in edges if index != bottom]
+    for note in notes:
+        if "=" not in note:
+            leftover.append(note)
+            continue
+        name, _, value = note.partition("=")
+        name, value = name.strip().lower(), value.strip()
+        role = _SIDE_WORDS.get(re.sub(r'^(?:the|its)\s+', '', name))
+        if role == "height":
+            # Down from the highest corner to the base, dashed, with a right
+            # angle box where it lands.
+            apex = min(points, key=lambda point: point[1])
+            foot = (apex[0], y0 + size)
+            for step in range(int(apex[1]), int(foot[1]), 14):
+                draw.line([(apex[0], step), (apex[0], min(step + 7, foot[1]))],
+                          fill=INK_DIM, width=3)
+            draw.rectangle([foot[0], foot[1] - 14, foot[0] + 14, foot[1]],
+                           outline=INK_DIM, width=2)
+            draw.text((apex[0] + 12, (apex[1] + foot[1]) / 2), value, font=font,
+                      fill=INK_DIM)
+            continue
+        if role == "bottom" and not used[bottom]:
+            used[bottom] = True
+            write_at(edges[bottom][1], value)
+            continue
+        if free:
+            write_at(edges[free.pop(0)][1], value)
+        else:
+            leftover.append(note)
+    return leftover
+
+
+def _shape(payload):
+    """A flat shape, drawn big, with whatever measurements were given on it.
+
+        Triangle; base = 6 cm; height = 4 cm
+        Circle; radius = 5 cm
+        Hexagon
+
+    Measurements land on the sides in the order they are written, which is the
+    order a textbook writes them in. Anything that is not side = value is
+    written underneath instead of being dropped.
+    """
+    parts = _split_labels(payload, limit=8)
+    if not parts:
+        return None, "tell me which shape to draw"
+    wanted = re.sub(r'\s+', ' ', parts[0]).strip().lower().strip(".")
+    wanted = re.sub(r'^(?:a|an|the)\s+', '', wanted)
+    wanted = re.sub(r'\s*(?:shape|figure)$', '', wanted)
+    name = _POLYGON_ALIASES.get(wanted, wanted)
+    notes = parts[1:]
+    title = parts[0].strip()
+
+    image, draw, top = _canvas(title[:1].upper() + title[1:])
+    room_h = RENDER_H - top - (70 if notes else 30)
+    size = min(RENDER_W - 260, room_h)
+    x0 = (RENDER_W - size) / 2
+    y0 = top + (room_h - size) / 2
+    colour = STAGE_COLOURS[0]
+
+    if name in ("circle", "वृत्त"):
+        draw.ellipse([x0, y0, x0 + size, y0 + size], fill=ACCENT_SOFT,
+                     outline=colour, width=6)
+        centre = (x0 + size / 2, y0 + size / 2)
+        draw.line([centre, (x0 + size, centre[1])], fill=colour, width=4)
+        draw.ellipse([centre[0] - 6, centre[1] - 6, centre[0] + 6, centre[1] + 6],
+                     fill=colour)
+    elif name in ("oval", "ellipse"):
+        draw.ellipse([x0 - 60, y0 + size * 0.15, x0 + size + 60, y0 + size * 0.85],
+                     fill=ACCENT_SOFT, outline=colour, width=6)
+    elif name in ("semicircle", "half circle"):
+        draw.pieslice([x0, y0, x0 + size, y0 + size * 2], 180, 360,
+                      fill=ACCENT_SOFT, outline=colour, width=6)
+    elif name in _POLYGONS:
+        points = [(x0 + fx * size, y0 + fy * size) for fx, fy in _POLYGONS[name]]
+        draw.polygon(points, fill=ACCENT_SOFT, outline=colour)
+        # Pillow's polygon outline is one pixel whatever you ask, so the edges
+        # are drawn again as lines to get a width that reads on the board.
+        for index in range(len(points)):
+            draw.line([points[index], points[(index + 1) % len(points)]],
+                      fill=colour, width=6)
+        notes = _measure_polygon(draw, points, notes, x0, y0, size)
+    else:
+        return None, f"I have not learned to draw a {wanted} yet"
+
+    if notes:
+        note_font = _font(20)
+        text = "   ".join(notes)
+        width = _text_size(draw, text, note_font)[0]
+        draw.text(((RENDER_W - width) / 2, RENDER_H - 46), text, font=note_font,
+                  fill=INK_DIM)
+    return image, ""
+
+
+def _written(payload):
+    """The last resort: whatever they asked for, WRITTEN on the board.
+
+    Reached when a kind is not one this file knows and the network could not
+    draw it either -- see render_visual. It is not a good picture and it is not
+    meant to be one. It is the difference between a student who asked to see
+    something and got a card with the words on it, and a student who asked and
+    was told no; on a device whose whole promise is "ask for anything and it
+    goes on the board", the second one is the failure worth engineering away.
+    """
+    parts = _split_labels(payload, limit=8)
+    if not parts:
+        return None, "there was nothing to write on the board"
+    title, lines = (parts[0], parts[1:]) if len(parts) > 1 else (None, parts)
+    image, draw, top = _canvas(title)
+    if not lines:
+        return image, ""
+    box = (50, top, RENDER_W - 50, RENDER_H - 30)
+    height = (box[3] - box[1]) / len(lines)
+    for index, line in enumerate(lines):
+        y = box[1] + height * index
+        colour = STAGE_COLOURS[index % len(STAGE_COLOURS)]
+        draw.ellipse([box[0], y + height / 2 - 7, box[0] + 14, y + height / 2 + 7],
+                     fill=colour)
+        _label_in_box(draw, (box[0] + 30, y, box[2], y + height), line, INK,
+                      sizes=(26, 23, 20, 18, 16, 14))
+    return image, ""
+
+
+# ---------------------------------------------------------------------------
 # the one way in
 # ---------------------------------------------------------------------------
 KINDS = {
@@ -1034,6 +1850,44 @@ KINDS = {
     "graph": _graph, "plot": _graph, "chart": _graph, "bar": _graph,
     "equation": _equation, "formula": _equation, "maths": _equation,
     "picture": _picture, "photo": _picture, "image": _picture,
+    # Drawn here and never by Seedream -- see "the kinds a picture cannot be
+    # wrong about" above for why.
+    "number_line": _number_line, "numberline": _number_line,
+    "table": _table, "grid_table": _table,
+    "timeline": _timeline,
+    "compare": _compare, "venn": _compare,
+    "tree": _tree, "hierarchy": _tree, "classification": _tree,
+    "array": _grid, "grid": _grid, "dots": _grid,
+    "fraction": _fraction, "fractions": _fraction,
+    "clock": _clock, "time": _clock,
+    "angle": _angle,
+    "shape": _shape, "geometry": _shape, "figure": _shape,
+    # Not a picture of anything, just the words on a card. Never chosen by the
+    # model -- render_visual falls back to it when nothing else can draw the
+    # thing that was asked for.
+    "written": _written, "list": _written, "note": _written,
+}
+
+# What a student's own word for a drawing means here. The model is told the
+# names in KINDS, and then says "draw a bar diagram" or "show a flowchart"
+# anyway, because those are the words the textbook uses. Mapping them is a line
+# each; refusing them costs the student the picture.
+KIND_ALIASES = {
+    "numberline": "number_line", "number-line": "number_line",
+    "ruler": "number_line", "scale": "number_line",
+    "flowchart": "steps", "flow_chart": "steps", "process": "steps",
+    "stages": "steps", "sequence": "steps", "lifecycle": "cycle",
+    "life_cycle": "cycle", "circle_diagram": "cycle",
+    "bargraph": "graph", "bar_graph": "graph", "histogram": "graph",
+    "linegraph": "graph", "line_graph": "graph", "pie": "fraction",
+    "piechart": "fraction", "pie_chart": "fraction",
+    "venn_diagram": "compare", "comparison": "compare",
+    "family_tree": "tree", "mindmap": "tree", "map": "picture",
+    "drawing": "picture", "illustration": "picture", "sketch": "picture",
+    "triangle": "shape", "square": "shape", "rectangle": "shape",
+    "circle": "shape", "polygon": "shape", "solid": "shape",
+    "multiplication": "array", "times_table": "table",
+    "chart_table": "table", "data": "table",
 }
 
 
@@ -1048,6 +1902,31 @@ def _save(image):
         return False
 
 
+def resolve_kind(kind):
+    """The name in KINDS this request is really asking for.
+
+    An unknown word is NOT an error. "Draw me a kite", "show a food chain",
+    "make a poster of the water cycle" all arrive as a kind nobody wrote a
+    renderer for, and the honest answer to every one of them is a picture of
+    the thing -- which is a kind that exists. So anything unrecognised becomes
+    `picture`, and the payload is whatever they asked for.
+    """
+    kind = re.sub(r'[\s-]+', "_", (kind or "").strip().lower()).strip("_")
+    if kind in KINDS:
+        return kind
+    if kind in KIND_ALIASES:
+        return KIND_ALIASES[kind]
+    # "bar_chart", "venn_diagram_of_plants" -- the useful word is in there
+    # somewhere, so the longest known name that appears in it wins.
+    for name in sorted(list(KINDS) + list(KIND_ALIASES), key=len, reverse=True):
+        if name in kind:
+            return KIND_ALIASES.get(name, name)
+    if kind:
+        print(f"[VISUAL] No renderer called {kind!r}; drawing it as a picture.",
+              flush=True)
+    return "picture"
+
+
 def render_visual(kind, payload):
     """(path to a PNG, "") for one show_visual tag, or (None, why not).
 
@@ -1057,29 +1936,60 @@ def render_visual(kind, payload):
     Seedream first for every kind it is switched on for, and the local drawing
     underneath when it does not answer. Both ends of that are silent: the
     student is told a picture failed only when BOTH have failed.
+
+    ASKED FOR SOMETHING, THEY GET SOMETHING. Three things used to end in an
+    apology instead of a drawing: a kind with no renderer, a renderer that
+    could not read its payload, and one that threw. All three are now a fall
+    BACKWARDS -- to a picture of what they asked for, and past that to the
+    words on a card -- because "show me a number line" answered with "I do not
+    know how to draw a number_line" is the device failing at the one thing it
+    promises, and a plain drawing of roughly the right thing is not.
     """
-    kind = (kind or "").strip().lower()
-    handler = KINDS.get(kind)
-    if handler is None:
-        return None, f"I do not know how to draw a {kind}"
+    asked = (kind or "").strip().lower()
+    kind = resolve_kind(kind)
+    payload = payload or ""
     try:
-        drawn = _seedream(kind, payload or "")
+        drawn = _seedream(kind, payload)
     except Exception as exc:
         print(f"[VISUAL] Seedream blew up ({exc}); drawing it here.", flush=True)
         drawn = None
     if drawn is not None and _save(_fit_photo(drawn)):
         return VISUAL_PATH, ""
-    try:
-        image, reason = handler(payload or "")
-    except Exception as exc:
-        print(f"[VISUAL] {kind} failed: {exc}", flush=True)
-        return None, "that did not come out right"
-    if image is None:
-        return None, reason or "that did not come out right"
-    try:
-        os.makedirs(VISUAL_DIR, exist_ok=True)
-        image.save(VISUAL_PATH)
-    except Exception as exc:
-        print(f"[VISUAL] Could not save it ({exc}).", flush=True)
-        return None, "that did not come out right"
-    return VISUAL_PATH, ""
+
+    # Each attempt in turn, first one that draws wins. The reason from the
+    # FIRST attempt is the one worth speaking if every attempt fails: it is
+    # about the thing they actually asked for.
+    attempts = [(kind, payload)]
+    if kind != "picture":
+        # What they asked for, as a picture of it. The payload is turned back
+        # into a phrase -- a picture search cannot use semicolons.
+        subject = re.sub(r'\s*[;|]\s*', ", ", payload).strip(" ,.")
+        attempts.append(("picture", f"{subject or asked}"))
+    if kind != "written":
+        attempts.append(("written", payload))
+
+    first_reason = ""
+    for attempt_kind, attempt_payload in attempts:
+        handler = KINDS.get(attempt_kind)
+        if handler is None:
+            continue
+        try:
+            image, reason = handler(attempt_payload)
+        except Exception as exc:
+            print(f"[VISUAL] {attempt_kind} failed: {exc}", flush=True)
+            image, reason = None, ""
+        if image is None:
+            first_reason = first_reason or reason
+            if attempt_kind != attempts[-1][0]:
+                print(f"[VISUAL] {attempt_kind} could not draw it "
+                      f"({reason or 'no reason given'}); trying the next way.",
+                      flush=True)
+            continue
+        try:
+            os.makedirs(VISUAL_DIR, exist_ok=True)
+            image.save(VISUAL_PATH)
+        except Exception as exc:
+            print(f"[VISUAL] Could not save it ({exc}).", flush=True)
+            return None, "that did not come out right"
+        return VISUAL_PATH, ""
+    return None, first_reason or "that did not come out right"

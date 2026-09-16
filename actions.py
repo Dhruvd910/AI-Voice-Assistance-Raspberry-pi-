@@ -1126,6 +1126,11 @@ def show_visual_action(param):
         # the shape a model reaches for when it forgets the bar.
         kind, _, payload = (param or "").strip().partition(" ")
     kind, payload = kind.strip(), payload.strip()
+    # The model's word for the drawing, turned into one this device has a
+    # renderer for -- BEFORE the formula check below, so "line graph" reaches
+    # the live plotter as "graph" instead of falling through it to a PNG. See
+    # visuals.resolve_kind: nothing is rejected here, only renamed.
+    kind = visuals.resolve_kind(kind)
     # A FORMULA is not a picture. "y = x^2" comes back as a spec the screen
     # plots itself, with a slider for every number in it, because the answer to
     # that question is a thing to play with rather than a thing to look at --

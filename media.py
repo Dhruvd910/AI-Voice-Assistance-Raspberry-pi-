@@ -85,6 +85,36 @@ RE_HI_PLAY_VERB = re.compile(
     r'\s*(?:प्ले\s*(?:करो|कर|कीजिए|करिए|करदो)|बजाओ|बजा\s*दो|बजाइए|बजाए|'
     r'चलाओ|चला\s*दो|चलाइए|सुनाओ|सुना\s*दो|लगाओ|लगा\s*दो|दिखाओ|दिखा\s*दो)\s*',
     re.IGNORECASE)
+# The two verbs above that do NOT mean "play" on their own.
+#
+# "दिखाओ" is SHOW and "सुनाओ" is TELL, and both are the ordinary way to ask for
+# the things this device does instead of playing media: "नंबर लाइन का ग्राफ़
+# बनाकर दिखाओ" -- draw me the number line -- was read here as a music request
+# and answered by playing a YouTube lesson about line plots, with the drawing
+# never reached at all (logs/liza.log, "[MEDIA] music request: अच्छे, नंबर लाइन
+# का ग्राफ बनाकर"). "कहानी सुनाओ" went the same way.
+#
+# The other verbs are unambiguous -- nobody says बजाओ about a diagram -- so the
+# rule is only about these two: they count as a play request when the sentence
+# NAMES the medium ("वीडियो दिखाओ", "गाना सुनाओ"), and not otherwise.
+RE_HI_SHOW_VERB = re.compile(r'दिखाओ|दिखा\s*दो|सुनाओ|सुना\s*दो', re.IGNORECASE)
+# The medium, said out loud. Only these license the two verbs above.
+RE_HI_MEDIA_NOUN = re.compile(
+    r'वीडियो|विडियो|गाना|गान(?![ा-ौ])|गाने|गीत|म्यूजिक|म्यूज़िक|भजन|चालीसा|'
+    r'फ़िल्म|फिल्म|मूवी|कार्टून|राइम|कविता\s*वाला|'
+    r'\bvideo\b|\bsong\b|\bmusic\b|\bmovie\b|\brhyme\b',
+    re.IGNORECASE)
+# ...and the things that are emphatically NOT media however they are asked for,
+# which veto a play request outright. These are all things Liza does herself:
+# the board draws the first group and she tells the second out loud. Without
+# this "मुझे एक कहानी सुनाओ" searches YouTube for "एक" instead of telling a
+# story.
+RE_HI_NOT_MEDIA = re.compile(
+    r'ग्राफ़|ग्राफ|चित्र|तस्वीर|आरेख|डायग्राम|रेखा|नंबर\s*लाइन|लाइन\s*प्लॉट|'
+    r'बनाओ|बना\s*दो|बनाकर|बनाइए|खींचो|खींच\s*दो|लिखो|लिख\s*दो|हल\s*करो|'
+    r'कहानी|कहानियाँ|कहानियां|चुटकुला|चुटकुले|पहेली|पहाड़ा|सवाल|जवाब|'
+    r'समझाओ|बताओ|सिखाओ|पढ़ाओ',
+    re.IGNORECASE)
 # Words carrying no search value, dropped token by token. NOT done with \b
 # regexes: Devanagari vowel signs are combining marks rather than word
 # characters, so "गाना\b" fails while "गान\b" matches and leaves a stray "ा"
@@ -143,6 +173,20 @@ def _detect_hindi_play(text):
     """('video'|'music', query) for a Hindi play request, else (None, None)."""
     if not RE_DEVANAGARI_ANY.search(text) or not RE_HI_PLAY_VERB.search(text):
         return None, None
+    # Asked for something Liza draws or tells herself. Never media, whatever
+    # verb it was asked with -- see RE_HI_NOT_MEDIA.
+    if RE_HI_NOT_MEDIA.search(text):
+        print(f"[MEDIA] Not a play request -- they asked her to draw or tell it: "
+              f"{text!r}", flush=True)
+        return None, None
+    # The verb was SHOW or TELL and nothing in the sentence names a medium, so
+    # it is a request for the board or for her own voice, not for the speaker.
+    if RE_HI_SHOW_VERB.search(text) and not RE_HI_MEDIA_NOUN.search(text):
+        strong = RE_HI_SHOW_VERB.sub(" ", text)
+        if not RE_HI_PLAY_VERB.search(strong):
+            print(f"[MEDIA] Not a play request -- 'show'/'tell' with no medium "
+                  f"named: {text!r}", flush=True)
+            return None, None
     kind = "video" if RE_HI_VIDEO.search(text) else "music"
     # Everything except the verb is potential search text -- Hindi routinely
     # trails a modifier after it ("...प्ले करो बॉलीवुड का"), so the tail is kept
