@@ -10,7 +10,7 @@ A local-first, multimodal AI assistant designed for the Raspberry Pi. Liza combi
 * **Interactive Study Modes:**
   * **Tutor Mode:** Structured, expert-level explanations broken down by core principles, mechanisms, and real-world examples.
   * **Co-Tell Mode:** Collaborative partner mode that uses short prompts and asks follow-up questions to test your knowledge.
-  * **Re-Tell Mode:** Step-by-step active examiner mode that listens as you explain a topic, validates your statements, and offers feedback.
+  * **Re-Tell Mode:** Step-by-step active examiner mode that listens as you explain a topic, validates your statements, and offers feedback. Say "that's it" (or pause for 10 seconds) and she marks it: the topic and a score out of 10, your strong points, your weak points (mistakes, and the key ideas you left out, checked against what she taught you and your textbook), and the one thing to focus on next. A report card with the same points stays on the board, the result goes on the progress screen, and your next re-tell of that topic says whether you have fixed it. Ask "what did I miss?" straight afterwards and she explains it.
 * **Physical Hardware Support:** Designed for 5-inch touchscreens (XPT2046 SPI) and supports physical GPIO push-buttons for instant wake-up.
 * **Live Web Search Fallback:** Automatically queries DuckDuckGo for real-time technical answers when needed.
 * **Visuals on the Transcribe Board:** Ask her to show a diagram, an equation, a graph, a number line, a table or a picture and it appears on screen — see [Showing Things](#-showing-things-diagrams-equations-graphs--pictures) below.
@@ -109,13 +109,22 @@ again to close.
 | "show me the timeline of the freedom struggle" | Dates along a line |
 | "compare plant and animal cells" | Two overlapping circles |
 | "show me a toucan" | A real photograph |
+| "show me the balanced equation for burning methane" · "मीथेन के जलने की अभिक्रिया लिखकर दिखाओ" | The reaction, with subscripts, states, charges and conditions over the arrow — and a **Balanced** tick only when it really is |
+| "draw the structure of benzene" | The molecule's structure, with its formula |
+| "show me the equations of motion" | Several formulas, one per line |
+| "draw a free body diagram of a box pushed on the floor" | The object with its forces, and the net force when the forces have numbers |
+| "draw a circuit with a cell, a switch and two bulbs in series" | A circuit diagram: cells, resistors, bulbs, switches, meters, parallel branches |
 
 **She never refuses to draw something.** Anything without a shape of its own
 becomes a picture of whatever was asked for, and past that the words on a card.
 The number line, table, shape, angle, clock, fraction, array, timeline,
 comparison and tree are all drawn **on the Pi and never by an image model** —
 those are the ones where the numbers *are* the content, and an image model
-draws a convincing number line with the 7 missing.
+draws a convincing number line with the 7 missing. The same goes for
+reactions, molecules, force diagrams and circuits (`science.py`): an image
+model drew hydrogen burning *backwards*. Molecule structures need
+`.venv/bin/pip install rdkit`; a common one is drawn from a built-in list, and
+any other is looked up by name on PubChem.
 
 ### The live graph is different from everything else
 

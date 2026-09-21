@@ -21,7 +21,7 @@ from config import (AUDIO_OUTPUT_DEVICE, BYTES_PER_SEC, CARTESIA_MODEL,
                     CARTESIA_SAMPLE_RATE, CARTESIA_SPEED, CARTESIA_VOICE_ID,
                     VOICE_IDS, cartesia_client)
 from state import (audio_queue, caption_lock, caption_state, note_spoken,
-                   playback_active, stop_playback_event)
+                   playback_active, speaker_live, stop_playback_event)
 from uibridge import ui_call
 
 def cartesia_voice_id(language):
@@ -135,6 +135,33 @@ def caption_now(session):
         return shown, text
 
 
+# Every line of the response now playing, in the order it was queued -- the
+# same order its caption cues are stamped in, so the index caption_now() gives
+# is an index into this. Read by unspoken_lines() when barge-in cuts a reply.
+_response_lock = threading.Lock()
+_response = {"session": None, "lines": []}
+
+
+def unspoken_lines():
+    """The queue items of the playing response from the line that is audible
+    now to the end, that line included, since it was cut part-way through.
+
+    Lines still sitting on audio_queue, not yet picked up by the player, are
+    included too. Call it BEFORE interrupt_playback(), which throws them away.
+    """
+    with _response_lock:
+        session, lines = _response["session"], list(_response["lines"])
+    shown, _text = caption_now(session) if session is not None else (-1, None)
+    remaining = lines[max(shown, 0):]
+    with audio_queue.mutex:
+        waiting = list(audio_queue.queue)
+    for item in waiting:
+        if item is None or (not isinstance(item, tuple) and item == "[END_OF_RESPONSE]"):
+            break
+        remaining.append(item)
+    return remaining
+
+
 def audio_player_worker():
     while True:
         first_item = audio_queue.get()
@@ -153,6 +180,8 @@ def audio_player_worker():
         caption_open(this_caption)
         sentence_queue = queue.Queue()
         sentence_queue.put(first_item)
+        with _response_lock:
+            _response["session"], _response["lines"] = this_caption, [first_item]
 
         try:
             aplay_proc = subprocess.Popen(
@@ -200,6 +229,10 @@ def audio_player_worker():
                             if not clock["start"]:
                                 clock["start"] = time.time()
                                 caption_clock_start(this_caption, clock["start"])
+                                # Her voice exists from here on, not from when
+                                # playback_active went up. See state.speaker_live.
+                                state.speaker_live_at = clock["start"]
+                                speaker_live.set()
                                 ui_call(lambda: state.ui_instance.set_state("speaking"))
 
                             try:
@@ -265,6 +298,8 @@ def audio_player_worker():
                     break
 
                 sentence_queue.put(sentence)
+                with _response_lock:
+                    _response["lines"].append(sentence)
                 audio_queue.task_done()
 
             sentence_queue.put(None)
@@ -279,6 +314,7 @@ def audio_player_worker():
             # Re-stamped at the true end of playback, so the echo window is
             # measured from when sound actually stopped.
             state.last_spoken_at = time.time()
+            speaker_live.clear()
             playback_active.clear()
 
 

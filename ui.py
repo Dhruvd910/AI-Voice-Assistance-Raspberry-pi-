@@ -25,6 +25,7 @@ import os
 import queue
 import random
 import re
+import signal
 import threading
 import time
 import tkinter as tk
@@ -977,6 +978,7 @@ class TutorUI:
         self._build_mode_cards()
         self._build_transcript_panel()
         self._build_buttons()
+        self._build_exit_button()
         self._build_profile_chip()
         self._refresh_cards()
         self.set_now_playing(None)
@@ -1798,6 +1800,44 @@ class TutorUI:
             self._press_feedback(tag, item, face, handlers[label])
             self.buttons[label] = tag
 
+    # Two taps, because this panel reports stray touches on its own (see
+    # tap_to_wake) and one of those should not be able to shut her down.
+    EXIT_CONFIRM_MS = 4000
+
+    def _build_exit_button(self):
+        """The way off the screen: she is fullscreen, with no title bar and no
+        keyboard, so without this only the Stop Liza desktop icon (which she
+        covers) or `liza stop` from another machine could close her."""
+        x0, y0, x1, y1 = 660, BTN_Y0 + 14, 784, BTN_Y0 + BTN_H - 14
+        self._exit_armed = None
+        self._exit_box = self._round_rect(x0, y0, x1, y1, 18, fill="#1E293B",
+                                          outline="#FFFFFF", width=2, tags="btnEXIT")
+        self._exit_label = self.canvas.create_text(
+            (x0 + x1) // 2, (y0 + y1) // 2, text="✕  EXIT",
+            font=self._font(13, True), fill="#FFFFFF", tags="btnEXIT")
+        self.canvas.tag_bind("btnEXIT", "<ButtonPress-1>", self._exit_tapped)
+
+    def _exit_tapped(self, event=None):
+        if self._exit_armed is None:
+            self.canvas.itemconfigure(self._exit_box, fill="#DC2626")
+            self.canvas.itemconfigure(self._exit_label, text="Tap again",
+                                      font=self._font(11, True))
+            self._exit_armed = self.root.after(self.EXIT_CONFIRM_MS, self._disarm_exit)
+            return "break"
+        self.root.after_cancel(self._exit_armed)
+        self.canvas.itemconfigure(self._exit_label, text="Closing…")
+        print("[UI] Exit tapped twice. Closing Liza...", flush=True)
+        # SIGTERM, not root.destroy(): assistant._cleanup_and_exit is what
+        # releases the microphone and stops mpv, exactly as `liza stop` does.
+        self.root.after(150, lambda: os.kill(os.getpid(), signal.SIGTERM))
+        return "break"
+
+    def _disarm_exit(self):
+        self._exit_armed = None
+        self.canvas.itemconfigure(self._exit_box, fill="#1E293B")
+        self.canvas.itemconfigure(self._exit_label, text="✕  EXIT",
+                                  font=self._font(13, True))
+
     # ---------- runtime ----------
     def _animate(self):
         label, colour, activity = STATE_STYLE.get(self.current_state, STATE_STYLE["idle"])
@@ -1916,7 +1956,8 @@ class TutorUI:
     def set_media_progress(self, pos, dur, paused):
         self.media.update({"pos": pos or 0.0, "dur": dur or 0.0, "paused": bool(paused)})
         bx0, bx1, by = self._progress_span
-        fraction = (pos / dur) if dur else 0.0
+        # mpv reports no position for a moment at the start of a stream.
+        fraction = ((pos or 0.0) / dur) if dur else 0.0
         fraction = max(0.0, min(1.0, fraction))
         x = bx0 + (bx1 - bx0) * fraction
 
@@ -2871,6 +2912,10 @@ class TutorUI:
         those as a wake would put her straight back to listening. Asleep,
         only the Speak button or the wake word count.
         """
+        if "btnEXIT" in self.canvas.gettags("current"):
+            # Returning "break" from the Exit button's own binding does not
+            # stop this root binding, and arming Exit must not start the mic.
+            return
         if self.asleep or self.overlay:
             # An overlay owns the whole screen, and every control on it is a
             # canvas item with its own binding. This handler is bound to the
@@ -3558,6 +3603,7 @@ class TutorUI:
         "order":    ("Alphabet order",    "#D97706"),
         "test":     ("Tests taken",       "#0EA5E9"),
         "lesson":   ("Topics learned",    "#0F766E"),
+        "retell":   ("Topics re-told",    "#BE185D"),
     }
 
     def show_progress(self):

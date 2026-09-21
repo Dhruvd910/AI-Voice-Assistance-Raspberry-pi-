@@ -132,13 +132,22 @@ RE_CLOSE_FILE_PHRASE = re.compile(
 # be searched for, what may be killed, and when it actually happens.
 RE_ACTION_TAG = re.compile(r'\[\s*ACTION\s*:\s*([a-z_]+)\s*(?::\s*([^\]]*))?\]',
                            re.IGNORECASE)
+# The same, allowing one level of balanced [...] inside the payload: a reaction
+# condition (CaCO3 ->[heat] CaO + CO2) or a LaTeX root (\sqrt[3]{x}). With the
+# plain pattern the tag ended at that first "]" and the rest of the payload --
+# the products of the reaction -- was lost. Tried first; the plain pattern is
+# the fallback for a payload with an unmatched "[".
+RE_ACTION_TAG_NESTED = re.compile(
+    r'\[\s*ACTION\s*:\s*([a-z_]+)\s*(?::\s*((?:[^\[\]]|\[[^\[\]]*\])*))?\]',
+    re.IGNORECASE)
 
 def parse_action(text):
     """(name, param) for the FIRST tag in a reply, or (None, None).
 
     One action per reply is a prompt rule, and enforcing it here as well means a
     model that ignores it opens one file instead of five."""
-    matches = list(RE_ACTION_TAG.finditer(text or ""))
+    matches = (list(RE_ACTION_TAG_NESTED.finditer(text or ""))
+               or list(RE_ACTION_TAG.finditer(text or "")))
     if not matches:
         return None, None
     if len(matches) > 1:
@@ -1154,10 +1163,18 @@ def show_visual_action(param):
     # flat pixels with nothing addressable in it, so the only way to show which
     # stage she is explaining is to keep the list of stages beside the image and
     # light one of them up underneath it. See state.current_visual.
-    state.current_visual = {"kind": kind, "title": None,
+    # What a science board SAYS goes into ON_BOARD with it, so "explain it"
+    # can walk through the reaction or the circuit actually drawn rather than
+    # guessing at "a reaction".
+    title = payload[:200] if kind in DESCRIBED_KINDS else None
+    state.current_visual = {"kind": kind, "title": title,
                             "steps": visual_steps(kind, payload)}
     ui_invoke("show_visual", path, state.current_visual["steps"])
     return "ok", ""
+
+
+DESCRIBED_KINDS = {"equation", "formula", "maths", "reaction", "molecule", "report",
+                   "forces", "circuit"}
 
 
 # Kinds made of stages. A photograph has none and an equation is one thing, so
@@ -1327,6 +1344,7 @@ def _recent_work(user_id, limit=6):
                      "letters": f"the letter {topic}",
                      "test": f"a test on {topic.lower()}",
                      "order": "putting letters in order",
+                     "retell": f"re-telling {topic} to me",
                      }.get(row.get("kind"), topic.lower()))
     return ", ".join(said[:5])
 

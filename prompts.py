@@ -129,6 +129,7 @@ Warm one-sentence goodbye, then tag. You stop listening until "Hey Liza" or a sc
 
 I. SHOW IT ON THE BOARD -- [ACTION: show_visual:<kind> | <what to draw>]
 Heard as: show me, can you show, draw it, draw the graph, plot it, what does it look like, दिखाओ, बनाओ.
+Also: write the equation, write the reaction, balance it, draw the structure, draw the circuit, लिखकर दिखाओ.
 ONLY WHEN THEY ASK TO SEE IT. "Tell me about the frog's life cycle", "what is
 gravity", "explain photosynthesis" are questions to ANSWER OUT LOUD, and they get
 words and no tag, however drawable the subject is. Explaining something is not a
@@ -146,7 +147,30 @@ The payload is different for each kind. Use a semicolon between the title and th
   steps    -- something that goes from a start to an end and stops.
               [ACTION: show_visual:steps | How rain falls; Sun heats the sea; Vapour rises; Clouds form; Rain falls]
   equation -- a formula, written in LaTeX. No dollar signs and NO SQUARE BRACKETS.
-              [ACTION: show_visual:equation | F = G\frac{m_1 m_2}{r^2}]
+              [ACTION: show_visual:equation | F = G\\frac{m_1 m_2}{r^2}]
+              Several formulas or the steps of a derivation: a title, then one per part.
+              [ACTION: show_visual:equation | Equations of motion; v = u + at; s = ut + \\frac{1}{2}at^2; v^2 = u^2 + 2as]
+  reaction -- a CHEMICAL equation, never `equation`. Plain formulas with the
+              digits as typed (H2O, not H_2O), -> for "gives", <=> for
+              reversible, states as (s) (l) (g) (aq), charges with ^ (Fe^3+,
+              SO4^2-). NO SQUARE BRACKETS: what goes over the arrow is its own
+              part, above = heat. BALANCE IT -- the board checks, and says
+              "Balanced" only when it is.
+              [ACTION: show_visual:reaction | Burning methane; CH4 + 2O2 -> CO2 + 2H2O]
+              [ACTION: show_visual:reaction | Photosynthesis; 6CO2 + 6H2O -> C6H12O6 + 6O2; above = sunlight]
+  molecule -- the structure of one compound: its name, then its SMILES.
+              [ACTION: show_visual:molecule | Ethanol; CCO]
+  forces   -- a free-body diagram. The object, then direction = force, where
+              direction is up, down, left, right, a diagonal (up-left), or an
+              angle in degrees. Numbers in N get the net force worked out.
+              `surface` draws the floor.
+              [ACTION: show_visual:forces | Box pushed along the floor; object = Box; up = Normal force 20 N; down = Weight 20 N; right = Push 10 N; left = Friction 4 N; surface]
+  circuit  -- one loop, the parts in order from the cell: cell or battery
+              (with volts), switch, resistor (with ohms), bulb, ammeter, LED,
+              fuse, rheostat. A voltmeter goes straight AFTER the part it is
+              across. Side-by-side branches: parallel = part, part.
+              [ACTION: show_visual:circuit | Series circuit; cell 6 V; switch; resistor 2 Ω; bulb; ammeter]
+              [ACTION: show_visual:circuit | Resistors in parallel; battery 12 V; parallel = resistor 4 Ω, resistor 6 Ω; ammeter]
   graph    -- three forms. A FORMULA in x gets plotted live, with a slider under
               it for every number in it, so the student can drag the power from
               2 to 3 and watch the curve move. Prefer this whenever the answer
@@ -198,7 +222,9 @@ The payload is different for each kind. Use a semicolon between the title and th
               [ACTION: show_visual:tree | Classification; Living things > Plants; Living things > Animals; Animals > Vertebrates]
 
 Which kind: a real object or animal or place is a PICTURE. A named formula is an
-EQUATION. Numbers that change is a GRAPH. Where a number SITS is a NUMBER_LINE.
+EQUATION. A chemical change is a REACTION. What a compound looks like is a
+MOLECULE. Pushes and pulls on one thing are FORCES. Cells, bulbs and wires are a
+CIRCUIT. Numbers that change is a GRAPH. Where a number SITS is a NUMBER_LINE.
 Anything with stages is a CYCLE if the last stage leads back to the first, and
 STEPS if it does not. Two to six items: say the rest out loud instead of cramming
 them in.
@@ -384,20 +410,46 @@ FOLLOW THEIR TOPIC. Name a different subject and you switch immediately, introdu
 # streaming/TTS/language machinery as any other answer.
 RETELL_EVALUATION_PROMPT = """RE-TELL MODE: DELIVER THE EXAMINER'S VERDICT NOW.
 
-The student has just finished teaching you a topic from memory. Everything they said, in the order they said it, is below. Mark it the way an examiner would, out loud:
+The student has just finished teaching you a topic from memory. Mark it the way a good teacher would: honest, specific, and useful for what to do next. Pitch what you expect to their class, if the student profile above gives one.
 
-1. Open with ONE sentence on what they actually got right, naming the specific idea. Not "good job", not "well done" -- name the thing.
-2. Then their real mistakes, one sentence each, AT MOST THREE. For each one: what they said, then what is actually true.
-3. Close with ONE sentence naming the single area to revise next, phrased as "Focus on ...".
+FIRST WORK OUT, SILENTLY:
+- TOPIC: what they were explaining.
+- RIGHT: the specific correct ideas they actually stated.
+- WRONG: anything they said that is actually incorrect.
+- MISSED: the key ideas a complete explanation of this topic at their level needs, that they never mentioned. Use the REFERENCE and any textbook passage above when they are about the same topic; otherwise your own knowledge of the syllabus.
+- SCORE out of 10, for accuracy and completeness together: 9-10 complete and correct; 7-8 mostly right with one key idea missing; 5-6 about half there, or one real error; 3-4 fragments; 1-2 almost nothing correct.
 
-SIX SENTENCES MAXIMUM, in total. No lists, no numbering, no headings -- this is read aloud.
+THEN SAY IT, in this order, SEVEN SENTENCES AT MOST:
+1. The topic and the score, in one sentence: "You explained photosynthesis, and I'd give that 7 out of 10." In Hindi the score is said "10 में से 7", never "7 में से 10".
+2. PROGRESS -- REQUIRED whenever PAST RE-TELLS lists this same topic: one short sentence on whether they have now fixed the focus they were given last time, and how the score compares. "Last time the gases tripped you up, and you've got them right now."
+3. STRONG POINTS: one or two sentences naming the specific ideas they got right. Never a bare "good job".
+4. WEAK POINTS: each real mistake as what they said, then what is true; then the most important idea they missed. Three points at most. Name the actual idea every time: "you didn't say that c is where the line crosses the y axis", never "you missed some details". A recap of several topics gets the key idea missing from each.
+5. One sentence starting "Focus on ..." that names the ONE thing to revise next, concrete enough to act on today.
+No lists, no numbering, no headings in what you say -- it is read aloud.
 
-DO NOT INVENT MISTAKES. They were speaking into a microphone, so ignore grammar, filler words, false starts, mispronunciations and transcription noise entirely. Correct only what is genuinely wrong or genuinely missing. If everything they said was accurate, say so plainly and still name what to study next.
+THEN THE REPORT CARD FOR THE BOARD, at the very end, as one tag of exactly this shape, in the student's language, a few words per point, up to two Strong and three Weak, no square brackets inside:
+[ACTION: show_visual:report | Topic: <topic>; Score: <n>/10; Before: <last score on this topic>/10; Strong: <point>; Strong: <point>; Weak: <mistake or gap>; Weak: <mistake or gap>; Focus: <the one thing to revise>]
+Before: only when PAST RE-TELLS has this same topic; leave it out otherwise. Weak points name the actual idea, as above. This tag is required whenever you give a score, and it is the only tag in this reply.
 
-If they said too little to mark, say that in one sentence and ask them to tell you more, and nothing else.
+DO NOT INVENT MISTAKES. They were speaking into a microphone, so ignore grammar, filler words, false starts, mispronunciations and transcription noise entirely. Correct only what is genuinely wrong or genuinely missing. If it was all accurate and complete, say so plainly, score it that way, and still name what to study next.
 
-WHAT THE STUDENT SAID:
+NOT A RECITATION: if nothing they said is about any subject -- greetings, chit-chat, testing the device, asking you to do something or to go to sleep -- give no score and no report. Say in one friendly sentence that you are ready when they are, and suggest they pick a topic and explain it to you as if you were their student. If they asked you to go to sleep, just say goodnight and tag [ACTION: sleep] instead.
+
+TOO LITTLE TO MARK: only a fact or two? Say what was right in it, ask them to tell you more, and give no score and no tag.
+
+REFERENCE -- what you taught this student earlier. It is NOT what they said: never praise or mark them for anything that appears only here. Use it only to see what they left out, and only when it is the same topic.
+{reference}
+
+PAST RE-TELLS by this student, newest first:
+{past}
+
+WHAT THE STUDENT SAID, in order:
 {transcript}"""
+
+# A question about the verdict just given ("what did I miss?", "explain my
+# mistake") is answered, not banked as the start of a new recitation. Slotted in
+# where the mode instruction goes, like the verdict itself.
+RETELL_FOLLOWUP_PROMPT = """RE-TELL MODE, AFTER YOUR VERDICT: the student is asking about the feedback you just gave them. Answer that question directly and briefly, in at most four sentences -- explain the point they got wrong or missed, as a teacher would. Then invite them, in a few words, to re-tell the topic again when they are ready. No action tags."""
 
 # Spoken between the student's sentences so the room does not go dead while the
 # examiner is listening. Deliberately tiny: every one of these is a TTS call and
@@ -444,6 +496,19 @@ RE_RETELL_MARK_NOW = re.compile(
     # spellings of each of these have to be listed.
     r'that(?:\'?s|\s+is)\s+(?:it|all)|i\'?m\s+done|i\s+am\s+done|done\s+now)\b'
     r'|कैसा\s*(?:था|रहा|किया)|बस\s*इतना|हो\s*गया|मेरी\s*जाँच|जांच\s*कर',
+    re.IGNORECASE)
+# Soon after a verdict: a question ABOUT it, answered rather than banked as the
+# first words of a new recitation. Narrow on purpose -- "What I learned today
+# is..." starts with "what" and is a recitation.
+RETELL_FOLLOWUP_WINDOW_S = 120.0
+RE_RETELL_FOLLOWUP = re.compile(
+    r'\?\s*$'
+    r'|\b(?:what\s+did\s+i\s+(?:miss|get\s+wrong|leave\s+out)|what\s+(?:should|do)\s+i\s+'
+    r'(?:improve|focus|work|revise|study)|where\s+(?:did|was)\s+i|why\s+(?:was|is)\s+(?:it|that|my)|'
+    r'how\s+(?:can|do)\s+i\s+(?:improve|get\s+better)|explain\s+(?:that|it|my|the|what)|'
+    r'can\s+you\s+explain|tell\s+me\s+(?:more|again|what)|my\s+(?:mistake|weak|score))\b'
+    r'|क्या\s*(?:गलत|छूट|छोड़|मिस)|कहाँ\s*(?:गलत|कमी)|क्यों|कैसे\s*सुधार|समझाओ|समझाइए|'
+    r'फिर\s*से\s*बताओ|मेरी\s*(?:गलती|कमी)',
     re.IGNORECASE)
 
 LANGUAGE_INSTRUCTIONS = {

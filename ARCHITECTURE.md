@@ -17,6 +17,7 @@ make.
 | `media.py` | 666 | music and video |
 | `config.py` | 869 | **the .env, and every number worth tuning** |
 | `books.py` | 883 | the textbooks: fetching, indexing and searching them |
+| `science.py` | 1,059 | reactions, molecules, force diagrams, circuits, multi-line equations on the board |
 | `kg_content.py` | 1,380 | the alphabets, the words, the stories |
 | `actions.py` | 1,438 | what she can do on the device |
 | `speech.py` | 1,731 | the microphone, the voice detector, Whisper |
@@ -33,7 +34,9 @@ not easier.
 **1. Leaves import nothing of ours.** `config`, `state`, `uibridge`, `prompts`,
 `media`, `profiles`, `store`, `visuals`, `kg_content` and `books` never import
 the assistant. You can open a shell, import one, and poke at it. (`books`
-imports `store`, which is itself a leaf; that is as deep as it goes.)
+imports `store`, which is itself a leaf; that is as deep as it goes. `visuals`
+imports `science`, which reaches back into `visuals`' drawing helpers only
+inside its functions, at call time.)
 
 **2. A module that the assistant imports FROM, and that also calls back, binds
 the back-reference at the FOOT of the file.**

@@ -57,6 +57,23 @@ last_spoken_at = 0.0
 # this; see BARGE_IN_LEAD_S.
 playback_started_at = 0.0
 
+# Set when the first chunk of a reply's AUDIO has been handed to aplay, and
+# cleared with playback_active. playback_active goes up the moment a reply is
+# picked off the queue, while Cartesia is still being asked for its first chunk,
+# and that gap is a silent room. The barge-in detector used to measure "how loud
+# is her own voice" across it -- measured on this Pi, the room reads 300-440 and
+# her voice through the microphone 5,000-13,000 -- so the reference came out at
+# room level, her first real word was 12x over the bar, and she "interrupted"
+# herself. Worst on the FIRST reply of a run, whose TTS request and dmix are
+# cold. The detector starts its reference on this instead; see _track_barge_in.
+speaker_live = threading.Event()
+speaker_live_at = 0.0
+
+# What was left of a reply when barge-in cut it, so it can be finished if the
+# "interruption" turns out to have been nothing: her own voice coming back, or
+# a noise with no words in it. None otherwise. See resume_cut_reply().
+cut_reply = None
+
 # Word-timestamped subtitles. The session number is what stops a torn-down
 # response captioning the one that replaced it.
 caption_lock = threading.Lock()

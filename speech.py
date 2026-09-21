@@ -44,7 +44,8 @@ from config import (BARGE_IN_DEBUG, BARGE_IN_ENABLED, BARGE_IN_LEAD_S,
                     WAKE_BARE_NAME_MAX_WORDS, WAKE_LISTEN_TIMEOUT_S, WAKE_MAX_LEAD_WORDS,
                     WAKE_PHRASE_LIMIT_S, WAKE_SEED_PROMPT, WAKE_SEED_PROMPT_ASLEEP,
                     WAKE_SLEEP_MAX_WORDS, WAKE_STT_MODEL)
-from state import audio_queue, media_active, media_ducked, playback_active
+from state import (audio_queue, media_active, media_ducked, playback_active,
+                   speaker_live)
 
 def wake_word_match(text, pattern, asleep=False):
     """The regex hit, but only when it sits where a real wake word sits.
@@ -576,6 +577,10 @@ class VoiceListener:
         self._audible_frames = 0
         self._seeding = True
         self._playing_since = 0.0
+        # The empty room's level, learned from unvoiced frames while nothing is
+        # playing. Seeding only counts a frame as her voice when it is clearly
+        # above this; see _track_barge_in.
+        self._ambient = 0.0
         # Audio the student had already spoken when their interruption cut the
         # reply off; see hold_barge_in().
         self._carry = []
@@ -785,7 +790,11 @@ class VoiceListener:
             carry = buf[whole * VAD_FRAME_BYTES:]
             if not whole:
                 continue
-            speaking = playback_active.is_set()
+            # Her voice, not her intention to speak: until the first chunk of
+            # audio reaches aplay the speaker is silent, and a reference
+            # measured across that silence is the room's level, not hers. See
+            # state.speaker_live.
+            speaking = playback_active.is_set() and speaker_live.is_set()
             # A track turned down for a wake check counts as NOT playing. If it
             # counted, the reference slid down to the ducked level over the check,
             # the song coming back at full volume was "a voice louder than the
@@ -824,6 +833,11 @@ class VoiceListener:
         reference the student has to clear -- adaptive rather than constant,
         because that reference moves the moment anyone touches the volume."""
         if not playing:
+            if not voiced and level > 0:
+                # Slow, and only on frames nobody is speaking in, so it follows
+                # the fan and the traffic and not the student.
+                self._ambient = (level if not self._ambient
+                                 else 0.97 * self._ambient + 0.03 * level)
             self._was_playing = False
             self._playing_since = 0.0
             self._echo_level = 0.0
@@ -874,7 +888,11 @@ class VoiceListener:
             self._echo_level = max(self._echo_level, float(level))
             self._loud_run_ms = 0.0
             self._quiet_run_ms = 0.0
-            if level >= MIN_SPEECH_RMS:
+            # Clearly above the ROOM, not just above MIN_SPEECH_RMS. On this Pi
+            # the quiet room alone reads 300-440 against a MIN_SPEECH_RMS of 360,
+            # so half of all silent frames used to count as "her voice has been
+            # heard" and seeding could finish before she had said a word.
+            if level >= max(MIN_SPEECH_RMS, 2.5 * self._ambient):
                 self._audible_frames += 1
             if (time.time() - self._playing_since >= BARGE_IN_LEAD_S
                     and self._audible_frames >= BARGE_IN_WARMUP_FRAMES):

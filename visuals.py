@@ -32,6 +32,11 @@ import time
 
 from PIL import Image, ImageDraw, ImageFilter
 
+# Chemistry and physics: reactions, molecules, force diagrams, circuits, and
+# equations over several lines. A leaf that reaches back into this module's
+# drawing helpers only at call time; see its header.
+import science
+
 # The size everything is drawn at. The board shows it scaled down and the
 # full-screen view shows it nearly one-to-one, so one render serves both and the
 # big one is not a blow-up of a thumbnail.
@@ -409,42 +414,12 @@ def _equation(payload):
     mathtext rather than a real LaTeX install: it needs no system packages,
     handles everything a school equation contains, and draws it as an image
     instead of as characters a proportional font would space wrongly.
-    """
-    latex = _repair_latex(payload).strip().strip("$").strip()
-    if not latex:
-        return None, "there was no equation to write"
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception as exc:
-        return None, f"the maths renderer is not available ({exc})"
 
-    for size in (46, 40, 34, 28, 24):
-        figure = plt.figure(figsize=(RENDER_W / 100, RENDER_H / 100), dpi=100)
-        try:
-            figure.text(0.5, 0.5, f"${latex}$", fontsize=size, ha="center",
-                        va="center", color=INK)
-            buffer = io.BytesIO()
-            figure.savefig(buffer, format="png", facecolor=PAPER,
-                           bbox_inches="tight", pad_inches=0.35)
-        except Exception as exc:
-            plt.close(figure)
-            # A malformed expression is the model's mistake, not the student's.
-            # The reason is SPOKEN, so the parser's own complaint -- newlines, a
-            # caret pointing at a column, the exception class -- cannot go in
-            # it. That belongs in the log, where somebody can read it.
-            print(f"[VISUAL] Bad LaTeX {latex!r}: {exc}", flush=True)
-            return None, "I could not write that equation out"
-        plt.close(figure)
-        buffer.seek(0)
-        drawn = Image.open(buffer).convert("RGB")
-        if drawn.width <= RENDER_W and drawn.height <= RENDER_H:
-            sheet = Image.new("RGB", (RENDER_W, RENDER_H), PAPER)
-            sheet.paste(drawn, ((RENDER_W - drawn.width) // 2,
-                                (RENDER_H - drawn.height) // 2))
-            return sheet, ""
-    return None, "that equation is too long to fit on the board"
+    Drawn by science.equation, which also takes several lines (a derivation,
+    the equations of motion) and hands a payload that is really a chemical
+    reaction to the reaction renderer -- the model often calls one an equation.
+    """
+    return science.equation(payload)
 
 
 def _fit_photo(source):
@@ -1843,6 +1818,169 @@ def _written(payload):
 
 
 # ---------------------------------------------------------------------------
+# the RE-TELL report card
+# ---------------------------------------------------------------------------
+# What the examiner said, left on the board to be read back: the topic, a
+# score, what they did well, what to work on, and the one thing to revise
+# next. Spoken feedback is gone the moment it is said; a student deciding what
+# to study tonight needs it written down.
+_REPORT_KEYS = {
+    "topic": "topic", "subject": "topic", "विषय": "topic",
+    "score": "score", "marks": "score", "अंक": "score",
+    "strong": "strong", "good": "strong", "right": "strong", "strength": "strong",
+    "अच्छा": "strong", "मज़बूत": "strong", "मजबूत": "strong",
+    "weak": "weak", "wrong": "weak", "mistake": "weak", "missed": "weak",
+    "missing": "weak", "gap": "weak", "improve": "weak", "कमज़ोर": "weak",
+    "कमजोर": "weak", "गलती": "weak", "छूटा": "weak",
+    "focus": "focus", "next": "focus", "revise": "focus", "ध्यान": "focus",
+    "before": "before", "last": "before", "previous": "before", "पिछली": "before",
+}
+_DEVANAGARI_FONT = {True: "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
+                    False: "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"}
+_MIXED_FONT = "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf"
+
+
+def parse_report(payload):
+    """{topic, score, out_of, strong: [], weak: [], focus} from the tag's
+    "Topic: ...; Score: 7/10; Strong: ...; Weak: ...; Focus: ..." payload."""
+    report = {"topic": "", "score": None, "out_of": 10, "strong": [], "weak": [],
+              "focus": "", "before": None}
+    for part in science._parts(payload or ""):
+        key, sep, value = part.partition(":")
+        if not sep:
+            key, sep, value = part.partition("=")
+        key = key.strip().lower() if sep else ""
+        name = _REPORT_KEYS.get(key) or _REPORT_KEYS.get(key.rstrip("s"))
+        value = value.strip() if sep else part.strip()
+        if not name:
+            if not report["topic"]:
+                report["topic"] = value
+            continue
+        if name in ("score", "before"):
+            numbers = re.findall(r'\d+(?:\.\d+)?', value)
+            if numbers:
+                out_of = float(numbers[1]) if len(numbers) > 1 else 10.0
+                score = max(0.0, min(out_of, float(numbers[0])))
+                # Always kept out of 10, so the progress log can compare them.
+                report[name] = round(score * 10 / out_of) if out_of else None
+        elif name in ("strong", "weak"):
+            if value:
+                report[name].append(value)
+        elif value:
+            report[name] = value
+    report["strong"], report["weak"] = report["strong"][:2], report["weak"][:3]
+    return report
+
+
+def _script_font(text, size, bold=True):
+    """A face that can draw `text`: DejaVu has no Devanagari at all, the Noto
+    Devanagari faces have no Latin, and Lohit has both. See ui.py's note."""
+    from PIL import ImageFont
+    has_hindi = any("ऀ" <= ch <= "ॿ" for ch in text)
+    if not has_hindi:
+        return _font(size, bold)
+    has_latin = re.search(r'[A-Za-z]', text) is not None
+    path = _MIXED_FONT if has_latin and os.path.exists(_MIXED_FONT) else _DEVANAGARI_FONT[bold]
+    try:
+        return ImageFont.truetype(path, size)
+    except Exception:
+        return _font(size, bold)
+
+
+def _report_text(draw, text, box, colour, sizes, bold=True):
+    """Wrap `text` into box at the largest size that fits; returns the y after it."""
+    x0, y0, x1, y1 = box
+    for size in sizes:
+        font = _script_font(text, size, bold)
+        lines = _wrap(draw, text, font, x1 - x0)
+        line_h = int(size * 1.3)
+        if line_h * len(lines) <= y1 - y0 or size == sizes[-1]:
+            break
+    y = y0
+    for line in lines:
+        if y + line_h > y1 + 2:
+            break
+        draw.text((x0, y), line, font=font, fill=colour)
+        y += line_h
+    return y
+
+
+def _report(payload):
+    """[ACTION: show_visual:report | Topic: ...; Score: 7/10; Strong: ...;
+    Weak: ...; Focus: ...] -- the verdict of a RE-TELL, as a card."""
+    report = parse_report(payload)
+    if not report["topic"] and not (report["strong"] or report["weak"]):
+        return None, "there was no report to show"
+    good, work, next_ = "#15803D", "#B45309", ACCENT
+    image = Image.new("RGB", (RENDER_W, RENDER_H), PAPER)
+    draw = ImageDraw.Draw(image)
+
+    # Header: the topic, and the score on the right.
+    draw.text((34, 16), "RE-TELL REPORT", font=_font(18), fill=INK_DIM)
+    _report_text(draw, report["topic"] or "Your re-tell", (34, 40, RENDER_W - 260, 108),
+                 ACCENT, (34, 30, 26, 22))
+    if report["score"] is not None:
+        score = report["score"]
+        colour = good if score >= 8 else work if score >= 5 else "#1D4ED8"
+        # Clear of the top-right corner, where the board puts its enlarge button.
+        cx, cy, r = RENDER_W - 200, 58, 44
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=colour)
+        number = str(score)
+        w, h = _text_size(draw, number, _font(44))
+        draw.text((cx - w / 2 - 12, cy - h / 2 - 16), number, font=_font(44), fill="#FFFFFF")
+        draw.text((cx + w / 2 - 8, cy + 2), "/10", font=_font(18), fill="#FFFFFF")
+        if report["before"] is not None:
+            # Progress since their last re-tell of this topic, under the badge.
+            change = score - report["before"]
+            note = (f"up from {report['before']}" if change > 0 else
+                    f"was {report['before']}" if change < 0 else "same as last time")
+            w = _text_size(draw, note, _font(15))[0]
+            draw.text((cx - w / 2, cy + r + 1), note, font=_font(15),
+                      fill=good if change > 0 else INK_DIM)
+    draw.line([(34, 122), (RENDER_W - 34, 122)], fill=RULE, width=2)
+
+    # Two columns: what went well, and what to work on.
+    focus_h = 70 if report["focus"] else 0
+    top, bottom = 132, RENDER_H - 18 - focus_h - (10 if focus_h else 0)
+    columns = [("What you did well", report["strong"], good),
+               ("Work on", report["weak"], work)]
+    col_w = (RENDER_W - 34 * 2 - 24) / 2
+    for index, (heading, items, colour) in enumerate(columns):
+        x0 = 34 + index * (col_w + 24)
+        _rounded(draw, (x0, top, x0 + col_w, bottom), 14, "#F8FAFC", RULE, width=2)
+        draw.text((x0 + 16, top + 10), heading, font=_font(21), fill=colour)
+        y = top + 44
+        items = items or (["Nothing to add"] if index else ["Keep going"])
+        room = (bottom - y - 8) / len(items)
+        # One size for the whole column -- the largest every item fits at --
+        # so a long point is not set smaller than the short one beside it.
+        for size in (22, 20, 18, 16, 14):
+            if all(len(_wrap(draw, item, _script_font(item, size, False), col_w - 54))
+                   * int(size * 1.3) <= room - 6 for item in items):
+                break
+        for item in items:
+            # The bullet is drawn, not typed: the Devanagari faces have no ✓.
+            if index == 0:
+                draw.line([(x0 + 16, y + 12), (x0 + 22, y + 19), (x0 + 33, y + 5)],
+                          fill=colour, width=4)
+            else:
+                draw.ellipse([x0 + 18, y + 7, x0 + 30, y + 19], fill=colour)
+            _report_text(draw, item, (x0 + 42, y, x0 + col_w - 12, y + room - 6),
+                         INK, (size,), bold=False)
+            y += room
+
+    if report["focus"]:
+        box = (34, RENDER_H - 18 - focus_h, RENDER_W - 34, RENDER_H - 18)
+        _rounded(draw, box, 14, ACCENT_SOFT, next_, width=2)
+        label = "Focus next:"
+        draw.text((box[0] + 16, box[1] + 10), label, font=_font(21), fill=next_)
+        lx = box[0] + 24 + _text_size(draw, label, _font(21))[0]
+        _report_text(draw, report["focus"], (lx, box[1] + 8, box[2] - 14, box[3] - 6),
+                     INK, (22, 20, 18, 16))
+    return image, ""
+
+
+# ---------------------------------------------------------------------------
 # the one way in
 # ---------------------------------------------------------------------------
 KINDS = {
@@ -1862,6 +2000,14 @@ KINDS = {
     "clock": _clock, "time": _clock,
     "angle": _angle,
     "shape": _shape, "geometry": _shape, "figure": _shape,
+    # Chemistry and physics, in science.py. Never Seedream, never a generated
+    # picture: see that file's header for the reaction an image model drew
+    # backwards.
+    "reaction": science.reaction, "molecule": science.molecule,
+    "forces": science.forces, "circuit": science.circuit,
+    # The RE-TELL verdict, written out. Asked for by the verdict prompt, never
+    # chosen for a question.
+    "report": _report,
     # Not a picture of anything, just the words on a card. Never chosen by the
     # model -- render_visual falls back to it when nothing else can draw the
     # thing that was asked for.
@@ -1888,7 +2034,27 @@ KIND_ALIASES = {
     "circle": "shape", "polygon": "shape", "solid": "shape",
     "multiplication": "array", "times_table": "table",
     "chart_table": "table", "data": "table",
+    "chemical_reaction": "reaction", "chemical_equation": "reaction",
+    "balanced_equation": "reaction", "word_equation": "reaction",
+    "reactions": "reaction", "chemistry": "reaction",
+    "structure": "molecule", "molecular_structure": "molecule",
+    "structural_formula": "molecule", "chemical_structure": "molecule",
+    "lewis_structure": "molecule", "compound": "molecule", "molecules": "molecule",
+    "force": "forces", "force_diagram": "forces", "free_body": "forces",
+    "free_body_diagram": "forces", "fbd": "forces",
+    "circuit_diagram": "circuit", "electric_circuit": "circuit",
+    "electrical_circuit": "circuit", "circuits": "circuit",
+    # No renderer of its own yet; a picture is closer than a flow diagram,
+    # which is where the word "diagram" in it would otherwise send it.
+    "ray_diagram": "picture",
+    "report_card": "report", "feedback": "report", "verdict": "report",
+    "scorecard": "report",
 }
+
+# Kinds whose failure must not fall back to a generated picture: an image model
+# gets a reaction, a force diagram or a circuit wrong in ways a student cannot
+# see. They fall back to the words on a card instead.
+NO_PICTURE_FALLBACK = {"reaction", "forces", "circuit", "report"}
 
 
 def _save(image):
@@ -1948,6 +2114,10 @@ def render_visual(kind, payload):
     asked = (kind or "").strip().lower()
     kind = resolve_kind(kind)
     payload = payload or ""
+    # "Show me the equation for burning hydrogen" arrives as an equation. It is
+    # a reaction, and decided here, before Seedream, so it is never sent there.
+    if kind in ("equation", "formula", "maths") and science.looks_like_reaction(payload):
+        kind = "reaction"
     try:
         drawn = _seedream(kind, payload)
     except Exception as exc:
@@ -1960,7 +2130,7 @@ def render_visual(kind, payload):
     # FIRST attempt is the one worth speaking if every attempt fails: it is
     # about the thing they actually asked for.
     attempts = [(kind, payload)]
-    if kind != "picture":
+    if kind != "picture" and kind not in NO_PICTURE_FALLBACK:
         # What they asked for, as a picture of it. The payload is turned back
         # into a phrase -- a picture search cannot use semicolons.
         subject = re.sub(r'\s*[;|]\s*', ", ", payload).strip(" ,.")
