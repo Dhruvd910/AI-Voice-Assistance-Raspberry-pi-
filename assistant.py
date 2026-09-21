@@ -27,6 +27,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 import profiles
 import kg_content
 import store
+# A leaf: the RE-TELL verdict reads its report card with visuals.parse_report.
+import visuals
 
 
 # .env loading and the tunables it feeds live in config.py, which reads the
@@ -49,7 +51,8 @@ from config import (BARGE_IN_NEAR_MISS, KG_BARGE_IN_ENABLED,
                     STT_SEED_PROMPT, VAD_AGGRESSIVENESS, VAD_ENABLED,
                     VAD_FRAME_BYTES, VAD_FRAME_MS, VAD_MIN_RMS,
                     VAD_PREROLL_MS, VAD_RATE, VAD_START_MS,
-                    VAD_TAIL_MS, WAKE_LISTEN_TIMEOUT_S, WAKE_PHRASE_LIMIT_S,
+                    VAD_TAIL_MS, WAKE_COLD_AFTER_S, WAKE_LISTEN_TIMEOUT_S,
+                    WAKE_PHRASE_LIMIT_S,
                     WAKE_SEED_PROMPT, WAKE_SEED_PROMPT_ASLEEP, WAKE_STT_MODEL)
 
 # The screen. ui.py imports THIS module back, and that cycle is safe only
@@ -83,14 +86,17 @@ from actions import (ACTION_DATA_PREFIX, CLOSED_FILE_ACKS, FILE_CANCEL_ACKS,
                      RE_CONFIRM_YES, action_failure_sentence, device_state_block,
                      execute_action, file_query_topic, find_files,
                      note_learning, open_file_action, parse_action,
-                     phrase_action_result, student_profile_block)
+                     phrase_action_result, student_profile_block,
+                     textbook_block)
 # Everything she is told to be, and every fixed line she says. A leaf: it
 # imports nothing but re, so this only goes one way.
 from prompts import (AGENTIC_ACTIONS, ASSISTANT_SCOPE, EMOTION_PERSONA,
                      LANGUAGE_INSTRUCTIONS, LLM_BUSY, LLM_UNREACHABLE,
                      MODE_INSTRUCTIONS, RETELL_ACKS, RETELL_EVALUATE_AFTER_S,
-                     RETELL_EVALUATION_PROMPT, RETELL_MIN_LISTEN_S, RETELL_NUDGES,
-                     RETELL_NUDGE_AFTER_S, RETELL_PHRASE_LIMIT_S, RE_RETELL_MARK_NOW,
+                     RETELL_EVALUATION_PROMPT, RETELL_FOLLOWUP_PROMPT,
+                     RETELL_FOLLOWUP_WINDOW_S, RETELL_MIN_LISTEN_S, RETELL_NUDGES,
+                     RETELL_NUDGE_AFTER_S, RETELL_PHRASE_LIMIT_S, RE_RETELL_FOLLOWUP,
+                     RE_RETELL_MARK_NOW,
                      SEARCH_NOTICES, SLEEP_ACKS, UNIVERSAL_SYSTEM_PROMPT)
 # The voice. audio.py reads two names back through this module at call time.
 # The Kindergarten flow. kg.py reads a few names back through this module at
@@ -109,7 +115,8 @@ from kg import (KG_DOUBT_PAUSE_S, KG_DOUBT_PHRASE_S, KG_DOUBT_WAIT_S,
                 kg_asking_stopped, kg_cancel_listen, kg_capture_utterance,
                 kg_handle_doubt, kg_holds_microphone, kg_listen_waiting,
                 kg_serve_listen)
-from audio import audio_player_worker, list_cartesia_voices
+from audio import (audio_player_worker, list_cartesia_voices, spoken_parts,
+                   unspoken_lines)
 from config import (BYTES_PER_SEC, CARTESIA_API_KEY, CARTESIA_MODEL,
                     CARTESIA_SAMPLE_RATE, CARTESIA_SPEED, CARTESIA_VOICE_ID,
                     VOICE_IDS, cartesia_client)
@@ -121,7 +128,8 @@ from state import (kg_ask_cancel, kg_ask_event,
                    _kg_listen_lock, _kg_listen_next, _kg_listen_valid_from, audio_queue,
                    caption_lock, caption_state, device_state_lock, kg_active,
                    kg_listen_requests, kg_listen_results, media_active, playback_active,
-                   sleep_event, stop_playback_event, subprocess_lock, wake_event)
+                   sleep_event, speaker_live, stop_playback_event, subprocess_lock,
+                   wake_event)
 
 from ui import HeadlessUI, TutorUI
 # Suppress ONNX Runtime warnings
@@ -300,6 +308,20 @@ MEDIA_BARGE_IN_COOLDOWN_S = float(os.getenv("MEDIA_BARGE_IN_COOLDOWN_S", "5.0"))
 # Pushing the next chance five seconds out is what turns "Liza, stop" into
 # saying it four times.
 MEDIA_RETRY_COOLDOWN_S = float(os.getenv("MEDIA_RETRY_COOLDOWN_S", "0.6"))
+# Whether a SUSPECTED voice turns the track down before the wake check (1), or the
+# check listens over the track as it is (0, the default).
+#
+# Off since 2026-09-19. Reported: "even in a silent room, when music or a video
+# plays, she turns the volume low and high by herself" -- in one session the first
+# song was ducked six times with nobody talking, and every one of those checks
+# transcribed near-silence ('Bye.', '.', 'Thank you.'). The level path arms on the
+# track's own loud moments and on any small sound in the room, and each false arm
+# was an audible dip. On this Pi the microphone hears the speaker only faintly
+# (measured: quiet room ~200, the track adds ~400, a voice runs 280-1600), so
+# Whisper picks a wake word out of the undimmed track well enough, and the only
+# thing the duck still bought was a noticeable dip for nothing. A confirmed wake
+# word still PAUSES the track below, so the command after it is heard in quiet.
+MEDIA_DUCK_ON_SUSPICION = os.getenv("MEDIA_DUCK_ON_SUSPICION", "0") == "1"
 # No wake-word check at all for this long after a player comes up.
 #
 # Observed, and reported as "it opens the file but after 1-2 seconds it closes
@@ -689,7 +711,11 @@ RE_EMOTION_TAG = re.compile(r'^[ \t]*EMOTION:.*\n?', re.IGNORECASE | re.MULTILIN
 # The closing bracket is optional on purpose: sentences are handed to the voice
 # as they stream in, so a tag can arrive split down the middle, and half a tag
 # is just as unspeakable as a whole one.
-RE_ACTION_TAG_STRIP = re.compile(r'\[\s*ACTION\s*:[^\]]*\]?', re.IGNORECASE)
+# A payload may hold one level of [...] of its own (->[heat], \sqrt[3]{x}); see
+# RE_ACTION_TAG_NESTED in actions.py. Without that, the strip ended at the inner
+# "]" and she read the products of a reaction aloud.
+RE_ACTION_TAG_STRIP = re.compile(r'\[\s*ACTION\s*:(?:[^\[\]]|\[[^\[\]]*\]?)*\]?',
+                                 re.IGNORECASE)
 # The mood she reports on the first line, for the chip under her face. Tolerant
 # of the brackets the model sometimes adds around it.
 RE_EMOTION_LINE = re.compile(r'EMOTION:\s*\[?\s*([A-Za-z]+)', re.IGNORECASE)
@@ -891,6 +917,130 @@ def interrupt_playback():
     audio_queue.put("[END_OF_RESPONSE]")
 
     stop_playback_event.clear()
+
+
+def her_voice_just_started():
+    """True until her voice has been coming out of the speaker for
+    BARGE_IN_LEAD_S. Counted from the first chunk of AUDIO, not from when the
+    reply was picked up -- see state.speaker_live -- so the wait for Cartesia's
+    first chunk is not spent as if she had been talking all along."""
+    return (not speaker_live.is_set()
+            or time.time() - state.speaker_live_at < BARGE_IN_LEAD_S)
+
+
+# How long after a barge-in the reply it cut can still be picked back up. Past
+# this, finishing an old answer would be the stranger thing to do.
+CUT_REPLY_RESUME_S = 20.0
+# When a reply was last picked back up. A reply that is cut AGAIN soon after
+# being resumed is not resumed a second time: whatever keeps cutting it (a
+# radio, a crowd) would otherwise have her start the same answer over and over.
+_resumed_at = [0.0]
+
+
+def remember_cut_reply():
+    """Called as barge-in cuts a reply, BEFORE interrupt_playback()."""
+    if time.time() - _resumed_at[0] < CUT_REPLY_RESUME_S:
+        state.cut_reply = None
+        return
+    state.cut_reply = (time.time(), unspoken_lines())
+
+
+def resume_cut_reply(why):
+    """Finish a reply that barge-in cut, when what cut it turns out not to have
+    been the student: her own voice coming back (the echo guard caught it), a
+    noise, or nothing at all. True if the rest of the reply was queued again.
+
+    Without this, a false barge-in cost the student the whole answer: it was on
+    the board, she never said it, and she sat listening to the room -- and
+    answered whatever she heard there instead. Reported as "she goes to
+    thinking, then back to listening without speaking, then listens to random
+    things". The line that was cut is said again from its start.
+    """
+    cut, state.cut_reply = state.cut_reply, None
+    if not cut:
+        return False
+    cut_at, lines = cut
+    fillers = {line for options in THINKING_FILLERS.values() for line in options}
+    lines = [line for line in lines if spoken_parts(line)[0] not in fillers]
+    if not lines or time.time() - cut_at > CUT_REPLY_RESUME_S:
+        return False
+    print(f"[BARGE-IN] That was {why}, not the student; finishing the reply.",
+          flush=True)
+    _resumed_at[0] = time.time()
+    for line in lines:
+        audio_queue.put(line)
+    audio_queue.put("[END_OF_RESPONSE]")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# RE-TELL: what the examiner is given, and what is kept of the verdict
+# ---------------------------------------------------------------------------
+RETELL_REFERENCE_CHARS = 1800   # billed on the verdict turn only, never after
+
+
+def retell_reference(chat_history, turns=6):
+    """What she taught earlier, newest last, for finding what they left OUT.
+
+    The verdict request is deliberately cut down to the system prompt and the
+    request -- with the whole history attached it marked the earlier CO-TELL
+    conversation instead of the recitation. So this is handed over separately,
+    labelled in the prompt as reference and never as something they said.
+    Without it the examiner could only say what was right in a recitation,
+    never what was missing from it, which is the half a student asked for:
+    "tell me what I missed".
+    """
+    taught = []
+    for message in reversed(chat_history or []):
+        if message.get("role") != "assistant":
+            continue
+        content = RE_ACTION_TAG_STRIP.sub("", RE_EMOTION_TAG.sub("", message.get("content") or ""))
+        content = content.replace("ANSWER:", " ").strip()
+        if content:
+            taught.append(content[:420])
+        if len(taught) >= turns:
+            break
+    text = "\n".join(f"- {t}" for t in reversed(taught))[-RETELL_REFERENCE_CHARS:]
+    return text or "None: nothing was taught earlier in this conversation."
+
+
+def retell_past(user_id, limit=3):
+    """Their last few re-tell results, for "have they fixed last time's focus"."""
+    try:
+        rows = [r for r in (store.recent_activities(user_id, limit=60) or [])
+                if r.get("kind") == "retell"][:limit]
+    except Exception:
+        rows = []
+    if not rows:
+        return "None: this is their first re-tell."
+    lines = []
+    for row in rows:
+        score = (f"{row['score']}/{row.get('out_of') or 10}"
+                 if row.get("score") is not None else "no score")
+        lines.append(f"- {row.get('topic')}: {score}; focus was: {row.get('detail') or '-'}")
+    return "\n".join(lines)
+
+
+def is_report_tag(name, param):
+    return (name or "").lower() == "show_visual" and \
+        visuals.resolve_kind((param or "").partition("|")[0]) == "report"
+
+
+def record_retell(param, language):
+    """Write the verdict's report card into the progress log."""
+    report = visuals.parse_report((param or "").partition("|")[2])
+    if not report["topic"]:
+        return
+    focus = report["focus"] or "; ".join(report["weak"][:2]) or None
+    try:
+        store.record_activity(active_user_id(), "retell", report["topic"],
+                              detail=focus, score=report["score"],
+                              out_of=report["out_of"] if report["score"] is not None else None,
+                              language=language)
+        print(f"[RE-TELL] Recorded: {report['topic']} "
+              f"{report['score']}/{report['out_of']}, focus: {focus}", flush=True)
+    except Exception as exc:
+        print(f"[RE-TELL] Could not record the result ({exc}).", flush=True)
 
 # ==========================================
 # Language Routing (Hindi / English / Hinglish)
@@ -1326,6 +1476,7 @@ def ai_loop(ui, headless=False):
     retell_silence_from = 0.0   # when the current silence began; 0 = not counting yet
     retell_nudged = False       # the "still listening" reminder has already gone out
     retell_ack_index = 0        # rotates RETELL_ACKS so she does not repeat herself
+    retell_verdict_at = 0.0     # when the last verdict was given; see RE_RETELL_FOLLOWUP
     if not headless:
         # With the VAD running there is no blocking read left to time, so what
         # gets watched is the opposite: audio having STOPPED arriving. See
@@ -1439,7 +1590,7 @@ def ai_loop(ui, headless=False):
                     and listener.available
                     and playback_active.is_set() and not kg_listen_waiting()):
                 # Her own first syllables are not an interruption of themselves.
-                if time.time() - state.playback_started_at < BARGE_IN_LEAD_S:
+                if her_voice_just_started():
                     time.sleep(0.05)
                     continue
                 if not listener.barge_in_ready():
@@ -1507,6 +1658,8 @@ def ai_loop(ui, headless=False):
         # to be marked; makes this pass of the loop a verdict rather than a
         # normal question-and-answer turn.
         is_retell_eval = False
+        # A question about the verdict just given, answered rather than banked.
+        is_retell_followup = False
         # True when phrase_time_limit cut the student off rather than them
         # actually pausing. Only the microphone path can tell.
         phrase_truncated = False
@@ -1599,6 +1752,17 @@ def ai_loop(ui, headless=False):
                 if WAKE_WORD_ENABLED:
                     print(f"[STATE] In {'Sleep' if ui.asleep else 'Standby'} Mode. "
                           f"Say 'Hey Liza' or tap Speak...", flush=True)
+                    # When this stretch of standby began, so the loop below can
+                    # tell a pause in a conversation from a device nobody has
+                    # touched. See WAKE_COLD_AFTER_S.
+                    #
+                    # A device that has not been used AT ALL since it started is
+                    # cold from the first second, not after two minutes. The
+                    # grace period is there to cover a pause inside a session
+                    # that is already happening, and at boot there is no such
+                    # session -- which is precisely when she was waking herself.
+                    standby_since = time.time() if state.used_since_start else 0.0
+                    gone_cold = False
                     while not wake_event.is_set():
                         if kg_holds_microphone(ui):
                             kg_took_the_microphone = True
@@ -1606,6 +1770,23 @@ def ai_loop(ui, headless=False):
                         if state.pending_mode_intro:
                             mode_tapped = True
                             break
+                        # THE WAKE BAR RISES ON A DEVICE NOBODY IS USING.
+                        #
+                        # This is the "she wakes up by herself a few minutes
+                        # after booting" report. Nothing had gone wrong with the
+                        # microphone: standby uses the LOOSE pattern and seeds
+                        # Whisper with "Hey Liza.", which is documented two
+                        # files away as the one thing guaranteed to make room
+                        # noise transcribe as the wake phrase. Awake that is a
+                        # fair trade. On a device that was switched on and left,
+                        # there is no turn to discard -- she just starts talking
+                        # to an empty room.
+                        cold = time.time() - standby_since > WAKE_COLD_AFTER_S
+                        if cold and not gone_cold:
+                            gone_cold = True
+                            print("[WAKE] Nobody has used her for a while; "
+                                  "listening for the full 'Hey Liza' only.",
+                                  flush=True)
                         # Timed like every other read. Standby is where the
                         # device spends most of its life, so a wedge here is the
                         # single most likely one -- and it was the one place the
@@ -1616,6 +1797,13 @@ def ai_loop(ui, headless=False):
                         try:
                             woke, pending_question, pending_language = listen_for_wake_word(
                                 recognizer, mic_device, asleep=ui.asleep, listener=listener,
+                                # Cold: the sleep pattern and NO seed. Not
+                                # asleep=True as well -- that also caps the
+                                # whole utterance at six words, and "Hey Liza,
+                                # what is a number line" is seven. The two
+                                # changes that matter here are the two above.
+                                pattern=(RE_WAKE_WORD_ASLEEP if cold else None),
+                                seed=(WAKE_SEED_PROMPT_ASLEEP if cold else None),
                                 # A screen that opens mid-read, a Speak tap or a
                                 # mode tap all get the device back within a frame
                                 # or two, instead of after the ten-second window
@@ -1642,6 +1830,7 @@ def ai_loop(ui, headless=False):
                     # and would have her answering a child who only tapped a tile.
                     print("[STATE] A Kindergarten screen needs the microphone; "
                           "leaving standby.", flush=True)
+                    state.used_since_start = True
                     continue
 
                 # `mode_tapped` covers leaving by the checks above; the
@@ -1658,6 +1847,7 @@ def ai_loop(ui, headless=False):
                     # as being awake.
                     print("[STATE] A mode was chosen from standby; "
                           "announcing it.", flush=True)
+                    state.used_since_start = True
                     continue
 
                 wake_event.clear()
@@ -1667,6 +1857,9 @@ def ai_loop(ui, headless=False):
                 # while she answers.
                 ui.asleep = False
                 session_active = True
+                # Somebody is here. The wake bar can come back down for the
+                # rest of this run -- see the cold check above.
+                state.used_since_start = True
                 silence_counter = 0
 
             # --- LIZA IS SPEAKING: listen for somebody cutting in ---
@@ -1714,7 +1907,7 @@ def ai_loop(ui, headless=False):
                 # sentence that CAUSED this reply. Without this they read as an
                 # immediate interruption of it, and she cuts herself off before
                 # finishing a word.
-                if time.time() - state.playback_started_at < BARGE_IN_LEAD_S:
+                if her_voice_just_started():
                     time.sleep(0.05)
                     continue
                 if not listener.barge_in_ready():
@@ -1728,6 +1921,8 @@ def ai_loop(ui, headless=False):
                 # on the next pass like any other turn.
                 print("[BARGE-IN] Student spoke over the reply; stopping.", flush=True)
                 listener.hold_barge_in()
+                # Kept in case it was NOT the student -- see resume_cut_reply.
+                remember_cut_reply()
                 interrupt_playback()
                 ui_call(lambda: state.ui_instance.set_state("listening"))
                 session_active = True
@@ -1865,6 +2060,9 @@ def ai_loop(ui, headless=False):
                     # still hands Whisper a clip recorded into a nearly quiet
                     # room, which is the whole point of doing it here. The track
                     # is only really PAUSED once a wake word is confirmed below.
+                    print("[MEDIA] A voice may be over the track; listening for the wake word"
+                          + (" with it turned down." if MEDIA_DUCK_ON_SUSPICION
+                             else " (volume left alone)."), flush=True)
                     suspected = True
                 elif time.time() < media_listen_after:
                     # Poll fast when the VAD can arm the path above, so a voice
@@ -1890,7 +2088,10 @@ def ai_loop(ui, headless=False):
                 # worse odds on a clean transcription, but it is only the
                 # backstop now, and the path above is the one that carries a
                 # real voice.
-                ducked_volume = media_duck_volume() if suspected else None
+                # Only when asked to: see MEDIA_DUCK_ON_SUSPICION. The volume is not
+                # touched until a wake word is actually confirmed.
+                ducked_volume = (media_duck_volume()
+                                 if suspected and MEDIA_DUCK_ON_SUSPICION else None)
                 try:
                     # NOT the strict from-sleep pattern. That one requires a
                     # greeting before the name, so "Liza, stop" -- which is what
@@ -2150,6 +2351,7 @@ def ai_loop(ui, headless=False):
                         # let the loop reach the pending intro.
                         if (sleep_event.is_set() or state.pending_mode_intro
                                 or kg_holds_microphone(ui)):
+                            state.cut_reply = None
                             continue
 
                         heard_seconds = audio_seconds(audio)
@@ -2169,6 +2371,7 @@ def ai_loop(ui, headless=False):
                         # an invented sentence, which then gets replied to as if
                         # the student had spoken.
                         if not is_probably_speech(audio, "STT", endpointed):
+                            resume_cut_reply("a noise")
                             continue
                         # Flipped here, not after transcribe()+media-detection below:
                         # the mic has already closed (recognizer.listen() returned), so
@@ -2267,6 +2470,7 @@ def ai_loop(ui, headless=False):
                             if user_words:
                                 if sounds_like_echo(lower_text, state.last_spoken_text):
                                     print(f"[ECHO DETECTED] Ignoring speaker bleed: {text}", flush=True)
+                                    resume_cut_reply("her own voice")
                                     continue
 
                                 # "STOP" IS AN INSTRUCTION, NOT THE NEXT QUESTION.
@@ -2285,6 +2489,7 @@ def ai_loop(ui, headless=False):
                                 # "stop" is a word in a sentence like any other.
                                 if RE_STOP_TALKING.match(lower_text):
                                     print(f"[STOP] Told to stop: {text!r}", flush=True)
+                                    state.cut_reply = None
                                     interrupt_playback()
                                     ui_call(lambda: state.ui_instance.set_state("idle"))
                                     # Awake and listening, not answering. Saying
@@ -2334,12 +2539,18 @@ def ai_loop(ui, headless=False):
 
                         print(f"[TRANSCRIPT] {text if text else '[empty]'}", flush=True)
                         if text:
+                            # A real interruption: the cut reply stays cut.
+                            state.cut_reply = None
                             ui_call(lambda t=text: state.ui_instance.set_transcript(t, "user"))
-                        if not text: continue
-                
+                        if not text:
+                            resume_cut_reply("a sound with no words in it")
+                            continue
+
                     except sr.WaitTimeoutError:
                         listen_started[:] = [0.0, 0.0]
                         clamp_energy(recognizer)
+                        if resume_cut_reply("silence"):
+                            continue
                         if playback_active.is_set() or not audio_queue.empty():
                             continue
                         # A cancelled read, not a silent room. Straight back to
@@ -2628,7 +2839,16 @@ def ai_loop(ui, headless=False):
         # is banked and answered with at most a few words, and the marking happens
         # once, from the whole thing, when they stop -- see the silence branch in
         # the WaitTimeoutError handler above.
-        if in_retell and not is_retell_eval:
+        # "What did I miss?" straight after a verdict is a question ABOUT it,
+        # not the first words of a new recitation. Banked, it got "Go on." and
+        # the student was left without the answer they asked for.
+        if (in_retell and not is_retell_eval and not retell_buffer
+                and time.time() - retell_verdict_at < RETELL_FOLLOWUP_WINDOW_S
+                and RE_RETELL_FOLLOWUP.search(text)):
+            is_retell_followup = True
+            print("[RE-TELL] A question about the verdict; answering it.", flush=True)
+
+        if in_retell and not is_retell_eval and not is_retell_followup:
             retell_language = detect_user_language(text, stt_language)
 
             # "That's it, how did I do?" -- an explicit request to be marked, so
@@ -2667,7 +2887,12 @@ def ai_loop(ui, headless=False):
             # Cleared before the call, not after: if the request fails, the next
             # silence must not re-submit the same recitation forever.
             retell_buffer, retell_silence_from, retell_nudged = [], 0.0, False
-            mode_instruction = RETELL_EVALUATION_PROMPT.format(transcript=text)
+            mode_instruction = RETELL_EVALUATION_PROMPT.format(
+                transcript=text, reference=retell_reference(chat_history),
+                past=retell_past(active_user_id()))
+            retell_verdict_at = time.time()
+        elif is_retell_followup:
+            mode_instruction = RETELL_FOLLOWUP_PROMPT
         else:
             mode_instruction = MODE_INSTRUCTIONS.get(ui.current_mode, MODE_INSTRUCTIONS["TUTOR"])
 
@@ -2707,6 +2932,11 @@ def ai_loop(ui, headless=False):
             # keeps the whole fixed prefix cacheable across a mode change. See
             # the section-order note above UNIVERSAL_SYSTEM_PROMPT.
             grade_guidelines=student_profile_block(),
+            # What their own textbook says about THIS question, or "". Read on
+            # the turn and placed at the very bottom of the prompt: it is the
+            # most volatile section there is, so it must not sit in front of
+            # anything cacheable -- see the section-order note in prompts.py.
+            textbook_context=textbook_block(text),
             domain_guidelines=mode_instruction,
             language_guidelines=LANGUAGE_INSTRUCTIONS[user_language],
             # Volatile, so it sits at the very bottom with the clock -- see the
@@ -2988,7 +3218,17 @@ def ai_loop(ui, headless=False):
         # Closing early costs nothing: there is no focus to steal from a window
         # that is going away, and nothing of hers to cut off.
         action_name, action_param = pending_action
-        if action_name and not is_retell_eval:
+        # A verdict carries exactly one action: its report card. It is written
+        # down in the progress log as well as put on the board, which is what
+        # lets the next re-tell say whether the weak point has been fixed.
+        report = is_retell_eval and is_report_tag(action_name, action_param)
+        if report:
+            record_retell(action_param, user_language)
+        # A verdict may also end in sleep, when "you can go to sleep" is all
+        # they said; saying goodnight and then not sleeping would be a lie.
+        verdict_sleep = is_retell_eval and (action_name or "").lower() == "sleep"
+        if action_name and (report or verdict_sleep
+                            or not (is_retell_eval or is_retell_followup)):
             if action_name not in IMMEDIATE_ACTIONS:
                 deadline = time.time() + 15
                 while (playback_active.is_set() or not audio_queue.empty()) and time.time() < deadline:

@@ -170,6 +170,27 @@ WAKE_SEED_PROMPT = "Hey Liza."
 # Set WAKE_SEED_ASLEEP to a prompt to put the old behaviour back.
 WAKE_SEED_PROMPT_ASLEEP = os.getenv("WAKE_SEED_ASLEEP", "")
 
+# HOW LONG A DEVICE NOBODY HAS TOUCHED STAYS AT THE SLEEP BAR.
+#
+# Standby and sleep are the same silence with two different wake bars, and the
+# reason the awake bar is the loose one is worth reading back: "a spurious wake
+# while she is already listening costs a discarded turn". That argument holds
+# for a device somebody is USING. It does not hold for one that was switched on
+# and left, which is the failure actually reported -- she boots, the room talks
+# about something else, and a few minutes later she is answering nobody.
+#
+# From a cold start nothing has been discarded, because there is no
+# conversation to discard from; she simply starts talking to an empty room. So
+# an untouched standby is treated as sleep: no seed prompt seeding Whisper with
+# the phrase it is listening for, and the strict pattern that wants a real
+# greeting in front of an unambiguously spelled name. The moment anybody uses
+# her, the loose bar comes back for the rest of the session.
+#
+# Two minutes because it has to clear a real session's pauses -- a student
+# reading a page before their next question -- while still being up long
+# before "a few minutes".
+WAKE_COLD_AFTER_S = float(os.getenv("WAKE_COLD_AFTER_S", "120"))
+
 # The one thing that makes a BARE name unambiguous, wherever it is heard: a
 # command to stop, immediately behind it. "Liza, stop the video" is four words
 # and the bare-name guard in wake_word_match allows three, so without this the

@@ -25,6 +25,7 @@ import time
 
 import profiles
 import state
+import books
 import store
 import visuals
 from config import MPV_AUDIO_DEVICE
@@ -131,13 +132,22 @@ RE_CLOSE_FILE_PHRASE = re.compile(
 # be searched for, what may be killed, and when it actually happens.
 RE_ACTION_TAG = re.compile(r'\[\s*ACTION\s*:\s*([a-z_]+)\s*(?::\s*([^\]]*))?\]',
                            re.IGNORECASE)
+# The same, allowing one level of balanced [...] inside the payload: a reaction
+# condition (CaCO3 ->[heat] CaO + CO2) or a LaTeX root (\sqrt[3]{x}). With the
+# plain pattern the tag ended at that first "]" and the rest of the payload --
+# the products of the reaction -- was lost. Tried first; the plain pattern is
+# the fallback for a payload with an unmatched "[".
+RE_ACTION_TAG_NESTED = re.compile(
+    r'\[\s*ACTION\s*:\s*([a-z_]+)\s*(?::\s*((?:[^\[\]]|\[[^\[\]]*\])*))?\]',
+    re.IGNORECASE)
 
 def parse_action(text):
     """(name, param) for the FIRST tag in a reply, or (None, None).
 
     One action per reply is a prompt rule, and enforcing it here as well means a
     model that ignores it opens one file instead of five."""
-    matches = list(RE_ACTION_TAG.finditer(text or ""))
+    matches = (list(RE_ACTION_TAG_NESTED.finditer(text or ""))
+               or list(RE_ACTION_TAG.finditer(text or "")))
     if not matches:
         return None, None
     if len(matches) > 1:
@@ -1087,6 +1097,10 @@ def execute_action(name, param, language="en"):
         reason, detail = show_visual_action(param)
     elif name == "hide_visual":
         reason, detail = hide_visual_action()
+    elif name == "enlarge_visual":
+        reason, detail = enlarge_visual_action(True)
+    elif name == "shrink_visual":
+        reason, detail = enlarge_visual_action(False)
     else:
         print(f"[ACTION] Unknown action {name!r}.", flush=True)
 
@@ -1110,7 +1124,8 @@ def execute_action(name, param, language="en"):
 # holding the picture back until the sentence describing it has finished is the
 # whole of the delay. Drawing it costs about a twentieth of a second, so it
 # lands while she is still on her first word.
-IMMEDIATE_ACTIONS = {"stop_media", "close_file", "show_visual", "hide_visual"}
+IMMEDIATE_ACTIONS = {"stop_media", "close_file", "show_visual", "hide_visual",
+                     "enlarge_visual", "shrink_visual"}
 
 
 def show_visual_action(param):
@@ -1121,6 +1136,11 @@ def show_visual_action(param):
         # the shape a model reaches for when it forgets the bar.
         kind, _, payload = (param or "").strip().partition(" ")
     kind, payload = kind.strip(), payload.strip()
+    # The model's word for the drawing, turned into one this device has a
+    # renderer for -- BEFORE the formula check below, so "line graph" reaches
+    # the live plotter as "graph" instead of falling through it to a PNG. See
+    # visuals.resolve_kind: nothing is rejected here, only renamed.
+    kind = visuals.resolve_kind(kind)
     # A FORMULA is not a picture. "y = x^2" comes back as a spec the screen
     # plots itself, with a slider for every number in it, because the answer to
     # that question is a thing to play with rather than a thing to look at --
@@ -1143,10 +1163,18 @@ def show_visual_action(param):
     # flat pixels with nothing addressable in it, so the only way to show which
     # stage she is explaining is to keep the list of stages beside the image and
     # light one of them up underneath it. See state.current_visual.
-    state.current_visual = {"kind": kind, "title": None,
+    # What a science board SAYS goes into ON_BOARD with it, so "explain it"
+    # can walk through the reaction or the circuit actually drawn rather than
+    # guessing at "a reaction".
+    title = payload[:200] if kind in DESCRIBED_KINDS else None
+    state.current_visual = {"kind": kind, "title": title,
                             "steps": visual_steps(kind, payload)}
     ui_invoke("show_visual", path, state.current_visual["steps"])
     return "ok", ""
+
+
+DESCRIBED_KINDS = {"equation", "formula", "maths", "reaction", "molecule", "report",
+                   "forces", "circuit"}
 
 
 # Kinds made of stages. A photograph has none and an equation is one thing, so
@@ -1176,6 +1204,21 @@ def hide_visual_action():
     state.current_visual = None
     state.current_graph = None
     ui_invoke("clear_visual")
+    return "ok", ""
+
+def enlarge_visual_action(bigger):
+    """Open the board picture to full screen, or put it back.
+
+    There is a control on the picture for this, and a child on a device they
+    answer by talking to will ask out loud long before they go looking for one.
+
+    Silent when there is nothing on the board: the state block already tells her
+    what is up there, so reaching this with an empty board is her having
+    misread it, and a spoken complaint would only make that louder.
+    """
+    if state.current_visual is None and state.current_graph is None:
+        return "already", ""
+    ui_invoke("enlarge_current" if bigger else "shrink_current")
     return "ok", ""
 
 def device_state_block():
@@ -1233,12 +1276,24 @@ def student_profile_block():
         # KG, or a class that failed to parse. KG students never reach this
         # prompt at all -- they are routed to the spelling and story screens.
         return ""
+    # THE BOARD IS STATED, because it was asked for when the student was set up
+    # and it is sitting right there in their profile. Without it here she asked
+    # for it out loud -- logs/liza.log: "Which education board does your school
+    # follow, like NCERT, ICSE, or something else?" -- of a child whose profile
+    # already said CBSE. Asking somebody for something they have already told
+    # you is the thing that makes a device feel like it is not listening.
+    board = (profile.get("board") or "").strip()
+    board_line = (f"Their school follows the {board} board, so that is the "
+                  f"syllabus, the terminology and the textbook to answer from. "
+                  f"You already know this: NEVER ask them which board, which "
+                  f"syllabus or which book they follow.\n" if board else "")
     # The whole section, header included, so that a device with no profile on it
     # emits nothing at all here rather than an empty heading -- see the caller.
     return (
         "### 1a. WHO YOU ARE TEACHING (CRITICAL OVERRIDE -- GOVERNS DEPTH, NOT BEHAVIOUR)\n"
         f"You are teaching {profile.get('name') or 'a student'}, "
         f"who is in Class {profile.get('class')}.\n"
+        f"{board_line}"
         f"{instruction}\n"
         "This sets HOW DEEP and HOW PLAIN the answer is. The mode below still decides HOW\n"
         "you teach -- explaining, asking, or examining -- and rule 5 still decides how you\n"
@@ -1246,7 +1301,52 @@ def student_profile_block():
         "still gets a one-line answer. NEVER mention the student's class, their year, or\n"
         "that you are adjusting anything; just answer at that level.\n\n"
         + learning_history_block(profile)
+        + _contents_block(profile)
     )
+
+
+def _contents_block(profile):
+    """What is in this student's books, for the questions search cannot answer.
+
+    Beside the profile rather than with the retrieved passages, because it is
+    the same for every question this student asks -- so it sits in the
+    CACHEABLE part of the prompt and is billed once per student rather than
+    once per turn. See the section-order note in prompts.py.
+    """
+    try:
+        return books.contents_block(profile)
+    except Exception as exc:
+        print(f"[BOOKS] Could not list the contents ({exc}).", flush=True)
+        return ""
+
+
+def _recent_work(user_id, limit=6):
+    """The last few things they finished, as one phrase. "" when there are none.
+
+    Deliberately short and undated. This goes into a prompt that is billed by
+    the token on every turn, and the useful part of it is WHAT they have been
+    doing, not when -- she is being given a memory of the student, not a report
+    to read out.
+    """
+    try:
+        rows = store.recent_activities(user_id, limit=limit) or []
+    except Exception:
+        return ""
+    said, seen = [], set()
+    for row in rows:
+        topic = (row.get("topic") or "").strip()
+        key = (row.get("kind"), topic.lower())
+        if not topic or key in seen:
+            continue
+        seen.add(key)
+        said.append({"story": f"the story {topic}",
+                     "spelling": f"spelling {topic}",
+                     "letters": f"the letter {topic}",
+                     "test": f"a test on {topic.lower()}",
+                     "order": "putting letters in order",
+                     "retell": f"re-telling {topic} to me",
+                     }.get(row.get("kind"), topic.lower()))
+    return ", ".join(said[:5])
 
 
 # How confusion is spotted, for deciding whether a concept goes down as met or
@@ -1256,6 +1356,20 @@ RE_STUCK = re.compile(
     r"\b(i don'?t (understand|get|know)|i'?m confused|makes no sense|"
     r"still don'?t|can'?t do|too hard|explain again|didn'?t understand)\b",
     re.IGNORECASE)
+
+
+def textbook_block(question):
+    """The passages from this student's own books for THIS question, or "".
+
+    Here rather than in ai_loop for the same reason student_profile_block is:
+    the active profile is read live, on the turn, so switching student changes
+    which shelf is searched without a restart.
+    """
+    try:
+        return books.book_context(question, profiles.get_active_profile())
+    except Exception as exc:
+        print(f"[BOOKS] Could not look in the books ({exc}).", flush=True)
+        return ""
 
 
 # The concept of the turn being answered right now. Set by note_learning, which
@@ -1283,6 +1397,15 @@ def note_learning(text):
         _current_concept = slug
         if store.record_concept(user_id, slug, outcome):
             print(f"[LEARN] {slug} ({outcome})", flush=True)
+        # And into the progress log beside it, which is the half a parent can
+        # read: student_concepts is a running confidence with no dates in it,
+        # so it cannot answer "what did they work on this week". See the
+        # activities table in schema.sql.
+        concept = store.concept_by_slug(slug) or {}
+        store.record_activity(
+            user_id, "lesson", concept.get("name") or slug.replace("-", " "),
+            detail=("Asked about it and found it hard" if outcome == "struggling"
+                    else "Asked about it and we went through it"))
     except Exception as exc:
         print(f"[LEARN] Could not record the concept ({exc}).", flush=True)
 
@@ -1298,16 +1421,27 @@ def learning_history_block(profile):
     if not user_id:
         return ""
     recent = store.student_summary(user_id, limit=6)
-    if not recent:
+    # What they DID, beside what she believes they know. A child can have spent
+    # a week on the spelling and story screens and have nothing at all in
+    # student_concepts, because only the graded conversation flow writes to it
+    # -- so without this she meets a regular student as a stranger every time.
+    done = _recent_work(user_id)
+    if not recent and not done:
         return ""
-    seen = ", ".join(f"{row['name'].lower()} ({row['status']})" for row in recent)
-    lines = [
-        "### 1b. WHAT THIS STUDENT HAS ALREADY WORKED ON WITH YOU",
-        f"Recently, most recent first: {seen}.",
+    lines = ["### 1b. WHAT THIS STUDENT HAS ALREADY WORKED ON WITH YOU"]
+    if recent:
+        seen = ", ".join(f"{row['name'].lower()} ({row['status']})"
+                         for row in recent)
+        lines.append(f"Ideas you have been through, most recent first: {seen}.")
+    if done:
+        lines.append(f"Things they have finished on the device lately: {done}.")
+    lines.append(
         "Connect new ideas back to the ones they are confident about -- that is what a "
         "teacher who remembers them would do. NEVER read this list aloud, never say you "
-        "have a record of them, and never open with what they did last time.",
-    ]
+        "have a record of them, and never open with what they did last time. "
+        "Asked outright -- \"what have I been learning?\", \"what did we do "
+        "last time?\" -- answer it from this, warmly and in one or two "
+        "sentences, naming two or three things and no more.")
 
     # The gap query. Asked about whatever the CURRENT question is about, falling
     # back to whatever they are struggling with -- a student who has just asked

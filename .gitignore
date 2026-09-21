@@ -33,3 +33,10 @@ history/
 # Custom KG pictures are local content, but keep the README that explains them.
 pictures/*
 !pictures/README.md
+history/*.progress.json
+
+# Textbooks are large, and they are somebody else's copyright. Only the
+# catalogue that names every NCERT book, and the README, are kept in git.
+books_new/**
+!books_new/README.md
+!books_new/ncert-catalogue.json

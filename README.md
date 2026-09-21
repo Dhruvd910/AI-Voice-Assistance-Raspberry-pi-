@@ -10,10 +10,12 @@ A local-first, multimodal AI assistant designed for the Raspberry Pi. Liza combi
 * **Interactive Study Modes:**
   * **Tutor Mode:** Structured, expert-level explanations broken down by core principles, mechanisms, and real-world examples.
   * **Co-Tell Mode:** Collaborative partner mode that uses short prompts and asks follow-up questions to test your knowledge.
-  * **Re-Tell Mode:** Step-by-step active examiner mode that listens as you explain a topic, validates your statements, and offers feedback.
+  * **Re-Tell Mode:** Step-by-step active examiner mode that listens as you explain a topic, validates your statements, and offers feedback. Say "that's it" (or pause for 10 seconds) and she marks it: the topic and a score out of 10, your strong points, your weak points (mistakes, and the key ideas you left out, checked against what she taught you and your textbook), and the one thing to focus on next. A report card with the same points stays on the board, the result goes on the progress screen, and your next re-tell of that topic says whether you have fixed it. Ask "what did I miss?" straight afterwards and she explains it.
 * **Physical Hardware Support:** Designed for 5-inch touchscreens (XPT2046 SPI) and supports physical GPIO push-buttons for instant wake-up.
 * **Live Web Search Fallback:** Automatically queries DuckDuckGo for real-time technical answers when needed.
-* **Visuals on the Transcribe Board:** Ask her to show a diagram, an equation, a graph or a picture and it appears on screen — see [Showing Things](#-showing-things-diagrams-equations-graphs--pictures) below.
+* **Visuals on the Transcribe Board:** Ask her to show a diagram, an equation, a graph, a number line, a table or a picture and it appears on screen — see [Showing Things](#-showing-things-diagrams-equations-graphs--pictures) below.
+* **Her Textbooks:** Put the child's own CBSE or ICSE books on the device and she answers out of the chapter they are actually taught from — see [Her Textbooks](#-her-textbooks) below.
+* **Progress:** Every story heard, word spelled and test taken is kept per student, shown on a **My progress** screen, and remembered by her.
 
 ---
 
@@ -98,7 +100,31 @@ again to close.
 | "what's the equation for gravity" *(just told, not drawn — see below)* | Spoken only |
 | "show me the equation for gravity" | The formula, typeset properly |
 | "show me y equals x squared" | A **live** graph, with a slider under every number in it |
+| "draw a number line from 1 to 10" | A ruler with the numbers under it |
+| "show me 2 plus 3 on the number line" | The same, with the hops drawn over it |
+| "show me the three times table" | A table |
+| "draw a triangle with base 6 and height 4" | The figure, measurements on the right edges |
+| "show me three quarters" | Shaded circles |
+| "put quarter past three on a clock" | A clock face reading that time |
+| "show me the timeline of the freedom struggle" | Dates along a line |
+| "compare plant and animal cells" | Two overlapping circles |
 | "show me a toucan" | A real photograph |
+| "show me the balanced equation for burning methane" · "मीथेन के जलने की अभिक्रिया लिखकर दिखाओ" | The reaction, with subscripts, states, charges and conditions over the arrow — and a **Balanced** tick only when it really is |
+| "draw the structure of benzene" | The molecule's structure, with its formula |
+| "show me the equations of motion" | Several formulas, one per line |
+| "draw a free body diagram of a box pushed on the floor" | The object with its forces, and the net force when the forces have numbers |
+| "draw a circuit with a cell, a switch and two bulbs in series" | A circuit diagram: cells, resistors, bulbs, switches, meters, parallel branches |
+
+**She never refuses to draw something.** Anything without a shape of its own
+becomes a picture of whatever was asked for, and past that the words on a card.
+The number line, table, shape, angle, clock, fraction, array, timeline,
+comparison and tree are all drawn **on the Pi and never by an image model** —
+those are the ones where the numbers *are* the content, and an image model
+draws a convincing number line with the 7 missing. The same goes for
+reactions, molecules, force diagrams and circuits (`science.py`): an image
+model drew hydrogen burning *backwards*. Molecule structures need
+`.venv/bin/pip install rdkit`; a common one is drawn from a built-in list, and
+any other is looked up by name on PubChem.
 
 ### The live graph is different from everything else
 
@@ -134,6 +160,85 @@ drawn on-device.
 
 ---
 
+## 📚 Her Textbooks
+
+Put the child's own books on the device and every question is searched against
+them before it is answered. "Explain the water cycle" has one answer in a Class
+6 chapter and another in a Class 9 one, and a child revising for Friday's test
+needs the first — so where the book answers the question, she answers from the
+book: its definition, its wording, its examples. Where it does not, she answers
+as she always did.
+
+She never says she looked it up, never names a chapter, and never reads a page
+number aloud. She is a teacher who knows the book, not a search engine reading
+it out.
+
+### Getting the books
+
+The books live in `books_new/`, one folder per class and one per subject inside
+it — `books_new/VI/science/`, `books_new/XII/physics/`. Classes 6 to 12 are kept;
+physical education, arts, Hindi-language and Sanskrit books are skipped for now.
+
+```bash
+liza books repair       # re-fetch any NCERT PDF whose download was cut off
+liza books zips         # unpack zips, or fetch the book a broken zip was meant to hold
+liza books ingest       # read everything into the index
+liza books status
+```
+
+A PDF or zip that will not open is usually one still being copied in — check
+its size a minute apart first. One that really is cut off can be fetched again
+by `repair` or `zips`, which work from the NCERT file names and replace a broken
+copy only once the new one opens.
+
+**ICSE books cannot be fetched.** CISCE does not publish them; they are
+commercial books from Selina, Frank and others and there is no legal download.
+Supply your own copies instead — drop the PDFs into
+`books_new/ICSE/IX/Physics/` and run `liza books ingest`. Until then an ICSE
+student is answered from the NCERT passages for their class, and told plainly
+that it is not their own book.
+
+The folder layout **is** the manifest:
+
+    books_new/<class>/<subject>/<anything>.pdf
+
+Class and subject are read out of the path — Roman numerals and hand-typed
+folder names like `Social_science_i` are understood — so nothing has to be
+registered anywhere. Re-running `ingest` replaces what is already indexed rather
+than doubling it. See `books_new/README.md` for the rest.
+
+### Questions about the book itself
+
+Ingesting also reads each chapter's **own name off its first page**, so
+"what's the first chapter?", "what is chapter 9 called?" and "what comes after
+magnets?" are answered from the shelf rather than from memory. That matters
+more than it sounds: NCERT replaced the Class 6 Science book, and asked without
+this she answered "Food: Where Does It Come From?" — the first chapter of the
+edition that was *withdrawn*. The book on the device is *Curiosity*, and its
+first chapter is *The Wonderful World of Science*.
+
+A subject that has not been ingested is one she says she does not have, rather
+than one she invents the contents of.
+
+### Checking what it found
+
+```bash
+liza books search "how do we separate sand from water" --class 6
+```
+
+Searching is Postgres full text, not embeddings: the index is already on the
+device, it answers in single-digit milliseconds over a whole shelf, and a
+school question is full of exactly the rare nouns — "photosynthesis",
+"trigonometry", "Mughal" — that lexical search is best at. A passage that only
+weakly matches is thrown away rather than shown to her, because the one thing
+worse than having no book on the device is having the wrong page of it quoted
+at a child.
+
+With no books ingested, or with PostgreSQL down, this whole feature is simply
+absent and she answers exactly as she did before.
+
+---
+
 ## ⚙️ Optional Settings
 
 Set these in `.env`:
@@ -150,6 +255,10 @@ Set these in `.env`:
 | `BARGE_MIN_LOGPROB` | `-0.75` | Reject a barge-in capture below this confidence |
 | `FAL_KEY` | *(unset)* | Enables AI-drawn visuals via Seedream 4. Free key at [fal.ai](https://fal.ai/dashboard/keys). Without it, diagrams are drawn locally on the Pi instead |
 | `VISUAL_SEEDREAM_KINDS` | all kinds | Comma-separated list to limit which visual types use Seedream, e.g. `picture,photo,image,cycle,steps` to keep equations/graphs drawn locally (more reliably correct, less pretty) |
+| `BOOK_CONTEXT_PASSAGES` | `3` | How many textbook passages may go into one answer |
+| `BOOK_CLASS_BACK` | `4` | How many classes BELOW the student's own to search. A Class 8 child asking about fractions is asking about a Class 5 chapter |
+| `BOOK_RANK_RELATIVE` | `0.25` | How good a passage must be, relative to the best hit, to be used at all |
+| `WAKE_COLD_AFTER_S` | `120` | Standby this long with nobody touching her drops to the stricter sleep-time wake bar, so room noise cannot wake her on a device that was switched on and left |
 
 > **Why those last three exist:** the microphone sits next to the speaker, so
 > anything it hears past a playing track is mostly the track itself, and Whisper

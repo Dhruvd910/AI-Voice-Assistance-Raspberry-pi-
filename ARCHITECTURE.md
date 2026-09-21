@@ -1,6 +1,6 @@
 # How the code is laid out
 
-`assist.py` used to be one 10,622-line file. It is now fourteen, and this is the
+`assist.py` used to be one 10,622-line file. It is now seventeen, and this is the
 map. Start with the table: it says which file to open for the change you want to
 make.
 
@@ -8,19 +8,22 @@ make.
 |---|---|---|
 | `assist.py` | 22 | nothing — it only starts the program |
 | `uibridge.py` | 40 | how another thread calls the screen |
-| `state.py` | 143 | the state the parts share |
-| `audio.py` | 285 | how she speaks, and the subtitles |
-| `profiles.py` | 360 | who is using the device |
-| `kg.py` | 365 | the Kindergarten flow under the screens |
-| `store.py` | 352 | the database and the knowledge graph |
-| `prompts.py` | 376 | **what she is told to be, and every fixed line she says** |
-| `media.py` | 611 | music and video |
-| `config.py` | 640 | **the .env, and every number worth tuning** |
-| `kg_content.py` | 712 | the alphabets, the words, the stories |
-| `actions.py` | 1,246 | what she can do on the device |
-| `speech.py` | 1,452 | the microphone, the voice detector, Whisper |
-| `ui.py` | 3,399 | **everything that draws** |
-| `assistant.py` | 2,607 | `ai_loop` — the turn-by-turn state machine |
+| `state.py` | 190 | the state the parts share |
+| `audio.py` | 290 | how she speaks, and the subtitles |
+| `profiles.py` | 365 | who is using the device |
+| `kg.py` | 475 | the Kindergarten flow under the screens |
+| `store.py` | 529 | the database, the knowledge graph, the progress log |
+| `prompts.py` | 573 | **what she is told to be, and every fixed line she says** |
+| `media.py` | 666 | music and video |
+| `config.py` | 869 | **the .env, and every number worth tuning** |
+| `books.py` | 883 | the textbooks: fetching, indexing and searching them |
+| `science.py` | 1,059 | reactions, molecules, force diagrams, circuits, multi-line equations on the board |
+| `kg_content.py` | 1,380 | the alphabets, the words, the stories |
+| `actions.py` | 1,438 | what she can do on the device |
+| `speech.py` | 1,731 | the microphone, the voice detector, Whisper |
+| `visuals.py` | 1,995 | everything drawn on the board |
+| `ui.py` | 5,794 | **everything that draws** |
+| `assistant.py` | 3,161 | `ai_loop` — the turn-by-turn state machine |
 
 `ai_loop` is 1,442 of `assistant.py`'s lines. It stays whole on purpose: it is
 one state machine, and cutting it into pieces would make it harder to follow,
@@ -29,8 +32,11 @@ not easier.
 ## Two rules that keep it untangled
 
 **1. Leaves import nothing of ours.** `config`, `state`, `uibridge`, `prompts`,
-`media`, `profiles`, `store` and `kg_content` never import the assistant. You
-can open a shell, import one, and poke at it.
+`media`, `profiles`, `store`, `visuals`, `kg_content` and `books` never import
+the assistant. You can open a shell, import one, and poke at it. (`books`
+imports `store`, which is itself a leaf; that is as deep as it goes. `visuals`
+imports `science`, which reaches back into `visuals`' drawing helpers only
+inside its functions, at call time.)
 
 **2. A module that the assistant imports FROM, and that also calls back, binds
 the back-reference at the FOOT of the file.**
