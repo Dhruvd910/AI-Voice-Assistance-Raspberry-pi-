@@ -1297,7 +1297,9 @@ def transcribe(wav_data, prompt, language=None, model=None, attempts=2, keep=Non
             time.sleep(0.4)
     # Outside the retry loop, so a failed second reading is not mistaken for a
     # failure of this one.
-    if (verify_prompt and prompt_read_back(text, prompt) >= PROMPT_READ_BACK_SHARE
+    if (verify_prompt
+            and (prompt_read_back(text, prompt) >= PROMPT_READ_BACK_SHARE
+                 or prompt_vocabulary_share(text, prompt) >= PROMPT_VOCAB_SHARE)
             and not heard_without_prompt(wav_data, text, language, model)):
         text = ""
     return (text, spoken_language, logprob) if scored else (text, spoken_language)
@@ -1332,6 +1334,28 @@ def transcribe(wav_data, prompt, language=None, model=None, attempts=2, keep=Non
 PROMPT_READ_BACK_RUN = 3        # a run of the prompt this long is not chance
 PROMPT_READ_BACK_SHARE = 0.6    # this much of the transcript in such runs
 PROMPT_REREAD_AGREEMENT = 0.5   # this much of it must survive the re-read
+
+
+# The same read-back, SHUFFLED. Whisper does not only continue the seed word
+# for word; out of silence it also strings its vocabulary together in a new
+# order -- "Biology, electron, chromosome, photosynthesis, ribosome" -- which no
+# run of three matches. So a transcript whose words are nearly all in the
+# prompt is re-read without it as well. The re-read is what keeps a real
+# question: "explain photosynthesis and respiration" is mostly prompt words
+# too, and it is still there when read with no prompt.
+PROMPT_VOCAB_SHARE = 0.8        # this much of its distinct words are in the prompt
+PROMPT_VOCAB_MIN_WORDS = 5      # and it has at least this many distinct words
+
+
+def prompt_vocabulary_share(text, prompt):
+    """The share of `text`'s distinct words that appear anywhere in `prompt`.
+    0.0 when there are fewer than PROMPT_VOCAB_MIN_WORDS of them."""
+    tokenise = assistant.RE_ECHO_TOKEN.findall
+    heard = set(tokenise((text or "").lower()))
+    primed = set(tokenise((prompt or "").lower()))
+    if len(heard) < PROMPT_VOCAB_MIN_WORDS or not primed:
+        return 0.0
+    return len(heard & primed) / len(heard)
 
 
 def prompt_read_back(text, prompt):
@@ -1616,7 +1640,21 @@ def is_repeated_hallucination(text, threshold=3):
     words = (text or "").split()
     if len(words) >= threshold and len(set(words)) == 1:
         return True
+    # ONE WORD STUCK ON REPEAT at the end of an otherwise ordinary line -- the
+    # other shape the loop takes. Out of a silent room on 30 Sep: "नमस्ते लीज़ा,
+    # यह concept समझाओ। Biology, electron, chromosome, photosynthesis, ribosome,
+    # electron, radical, radical, radical, radical, radical, radical, radical,
+    # radical, radical." Neither test above sees it (many chunks, many words),
+    # and she answered it. Five in a row, because a child does say "no no no".
+    tokens = [t for t in re.findall(r"[\w\u0900-\u097F']+", (text or "").lower())]
+    run = 1
+    for a, b in zip(tokens, tokens[1:]):
+        run = run + 1 if a == b else 1
+        if run >= WORD_LOOP_RUN:
+            return True
     return False
+
+WORD_LOOP_RUN = 5
 
 # "Liza stop" comes back from Whisper as "Lisa's top": the S of the command is
 # heard as a possessive on her name, so stripping the name leaves "'s top" --

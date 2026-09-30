@@ -867,6 +867,48 @@ def mode_card_face(fname):
         _mode_faces[fname] = card
     return _mode_faces[fname]
 
+# How far the chosen card's glow reaches past its edge.
+MODE_GLOW_PAD = 10
+_mode_marks = {}
+
+def mode_chosen_marks(size, accent):
+    """(glow, ring) for the chosen mode card, as RGBA the card's size plus
+    MODE_GLOW_PAD all round.
+
+    The glow goes BEHIND the card and the ring and tick ON it, so the card art
+    is never touched and the press animation keeps working on it unchanged.
+    Both in the mode's own colour: purple, teal or orange is the one thing a
+    child who cannot read "CO-TELL" can still match to the card.
+
+    Not the ring that was rejected before. That was a thin line around the
+    card with nothing else, and it read as a stray rectangle behind it; this
+    lights the card up from behind and puts a tick on it, which reads as
+    "this one is on"."""
+    key = (size, accent)
+    if key not in _mode_marks:
+        w, h = size
+        g = MODE_GLOW_PAD
+        box = (g, g, g + w - 1, g + h - 1)
+        rgb = _rgb(accent)
+
+        glow = Image.new("RGBA", (w + 2 * g, h + 2 * g), rgb + (0,))
+        mask = Image.new("L", glow.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (box[0] - 3, box[1] - 3, box[2] + 3, box[3] + 3), 14, fill=230)
+        glow.putalpha(mask.filter(ImageFilter.GaussianBlur(4)))
+
+        ring = Image.new("RGBA", glow.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(ring)
+        draw.rounded_rectangle(box, 11, outline=rgb + (255,), width=3)
+        # The tick, on the top-right corner where the artwork has nothing.
+        cx, cy, r = box[2] - 3, box[1] + 3, 9
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=rgb + (255,),
+                     outline=(255, 255, 255, 255), width=2)
+        draw.line((cx - 4, cy, cx - 1, cy + 3, cx + 4, cy - 3),
+                  fill=(255, 255, 255, 255), width=2, joint="curve")
+        _mode_marks[key] = (glow, ring)
+    return _mode_marks[key]
+
 def _pressed_image(image):
     """The same button face, dimmed, for the moment a finger is on it.
 
@@ -967,8 +1009,13 @@ class TutorUI:
         self._kg_listening = False
 
         self.font_family = self._pick_font()
+        # NO POINTER. This is a touch screen, and X draws the arrow wherever the
+        # last finger landed and leaves it there, over her face or the board.
+        # Set on the root and the canvas; the chat panes and everything else
+        # inside inherit it, because Tk leaves a widget's cursor unset.
+        root.configure(cursor="none")
         self.canvas = tk.Canvas(root, width=UI_W, height=UI_H, bd=0,
-                                highlightthickness=0, bg=COL_BG)
+                                highlightthickness=0, bg=COL_BG, cursor="none")
         self.canvas.place(x=0, y=0)
 
         print("[MASCOT] Loading character animations...", flush=True)
@@ -1625,10 +1672,19 @@ class TutorUI:
                     text=MODE_BLURBS[mode], anchor="center",
                     width=MODE_BLURB_BOX, justify="center",
                     font=self._font(9), fill=COL_TEXT, tags=tag)
+                # The chosen card's glow and tick, hidden on the other two. The
+                # card's own tag, so they dip with it under a finger and a tap
+                # on the ring still lands on the card.
+                glow_img, ring_img = mode_chosen_marks(art.size, accent)
+                at = (MODE_CARD_X0 - MODE_GLOW_PAD, y0 - MODE_GLOW_PAD)
+                glow = self._place_asset(glow_img, *at, tags=(tag,))
+                ring = self._place_asset(ring_img, *at, tags=(tag,))
+                blurb = self.canvas.find_withtag(tag)[1]
                 self._press_feedback(tag, item, art,
-                                     lambda e, idx=i: self.set_mode(idx))
-                self.cards.append({"body": None, "title": None, "blurb": None,
+                                     lambda e, idx=i: self._mode_tapped(e, idx))
+                self.cards.append({"body": None, "title": None, "blurb": blurb,
                                    "chevron": None, "item": item,
+                                   "glow": glow, "ring": ring,
                                    "accent": accent, "tint": MODE_TINTS[mode]})
                 continue
             body = self._round_rect(MODE_CARD_X0, y0, MODE_CARD_X1, y1, 12,
@@ -1657,7 +1713,7 @@ class TutorUI:
                                             font=self._font(7), fill=COL_TEXT_DIM, tags=tag)
             for item in glyph:
                 self.canvas.itemconfig(item, tags=tag)
-            self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.set_mode(idx))
+            self.canvas.tag_bind(tag, "<Button-1>", lambda e, idx=i: self._mode_tapped(e, idx))
             self.cards.append({"body": body, "title": title, "blurb": blurb,
                                "chevron": chevron, "item": None,
                                "accent": accent, "tint": MODE_TINTS[mode]})
@@ -1914,10 +1970,17 @@ class TutorUI:
             chosen = i == self.current_mode_index
             accent = card["accent"]
             if card.get("body") is None:
-                # An artwork card. Nothing to restyle: all three are shown at
-                # full strength, and neither of the two ways of marking the
-                # chosen one survived review. Only the drawn fallback below,
-                # which builds its card out of Tk items, can still be recoloured.
+                # An artwork card. The card itself is never restyled -- all
+                # three stay at full strength, since washing the other two out
+                # read as blur -- the chosen one is lit from behind and ticked.
+                shown = "normal" if chosen else "hidden"
+                self.canvas.itemconfigure(card["glow"], state=shown)
+                self.canvas.itemconfigure(card["ring"], state=shown)
+                if chosen:
+                    # Under all three cards, so it glows round the edge of its
+                    # own card without covering either neighbour.
+                    self.canvas.tag_lower(card["glow"], self.cards[0]["item"])
+                    self.canvas.tag_raise(card["ring"], card["blurb"])
                 continue
             self.canvas.itemconfig(card["body"],
                                    fill=_mix(card["tint"], "#FFFFFF", 0.35) if chosen else card["tint"],
@@ -3294,6 +3357,17 @@ class TutorUI:
         self.current_mode_index = index
         self.current_mode = self.modes[index]
         self._refresh_cards()
+        if self.asleep:
+            # ASLEEP MEANS ASLEEP. The intro below is what wakes her: ai_loop
+            # speaks it and then opens a session, because a tap on a mode card
+            # was taken as proof somebody is there. Tapped after Sleep, that put
+            # her back to listening to an empty room behind a screen that still
+            # looked asleep, and on 30 Sep she answered a sentence Whisper had
+            # made up out of the silence. The card's highlight says which mode it
+            # is, which is all a sleeping device needs to say.
+            print(f"[MODE] Now in {self.current_mode} mode (asleep, so not "
+                  f"announced).", flush=True)
+            return
 
         # Deliberately does NOT call interrupt_playback() here. This runs on the
         # Tk thread, which can fire while ai_loop has the microphone open inside
@@ -3328,6 +3402,14 @@ class TutorUI:
         if playback_active.is_set() or not audio_queue.empty():
             stop_playback_event.set()
         app_state.pending_mode_intro = MODE_INTROS[self.current_mode]
+
+    def _mode_tapped(self, event, index):
+        """A mode card. Not also a wake: set_mode hands ai_loop the intro, and
+        that handler opens the session itself -- the same tap reaching
+        tap_to_wake as well cut the intro off as "Speak tapped during the
+        reply" (logs/liza.log, 30 Sep)."""
+        self._tap_handled = event.serial
+        self.set_mode(index)
 
     def cycle_mode(self, event=None):
         self.set_mode((self.current_mode_index + 1) % len(self.modes))
