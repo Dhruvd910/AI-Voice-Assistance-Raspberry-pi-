@@ -1,0 +1,10 @@
+# Core: 3D, science, UI. Tested on Raspberry Pi 5 (Raspberry Pi OS, Python 3.13) with these versions.
+numpy>=2.0
+scipy>=1.13
+vtk>=9.3
+pyvista>=0.44
+trimesh>=4.4          # GLB/GLTF read/write with named nodes
+rdkit>=2024.3
+PySide6-Essentials>=6.7
+requests>=2.31
+sounddevice>=0.4      # microphone capture for voice input

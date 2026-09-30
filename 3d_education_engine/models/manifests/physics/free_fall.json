@@ -1,0 +1,64 @@
+{
+  "id": "physics.mechanics.free_fall",
+  "name": "Free Fall",
+  "domain": "physics",
+  "subject": "mechanics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "free_fall",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.free_fall",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "free fall",
+      "gravity",
+      "acceleration due to gravity"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "No air resistance. Ghost balls show the position every 0.2 s: the gaps grow because the ball speeds up."
+  },
+  "aliases": [
+    "free fall",
+    "falling ball",
+    "dropping a ball",
+    "falling object"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "z = h − ½·g·t²",
+    "v = g·t",
+    "time to fall t = √(2h / g)",
+    "impact speed v = √(2gh)"
+  ]
+}

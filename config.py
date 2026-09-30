@@ -81,6 +81,16 @@ AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE", "plug:'dmix:CARD=Device_1
 # Same device, but mpv prefixes ALSA names with "alsa/".
 MPV_AUDIO_DEVICE = os.getenv("MPV_AUDIO_DEVICE", "alsa/plug:'dmix:CARD=Device_1,DEV=0'")
 
+# The speaker's level, set on the output card at every start (audio.py,
+# set_speaker_volume). 55%, down from the 85% the card had been left at, and
+# for barge-in rather than for comfort: with no echo canceller the student has
+# to be louder at the microphone than her own voice coming back (see the
+# BARGE-IN block below), and at 85% nobody got through a reply all evening
+# ("the loudest voice reached 1.27x the bar"). 55% is 8.4dB down, which by the
+# measurements below puts a normal voice over her at roughly 1.8x her echo,
+# above BARGE_IN_MARGIN. Empty leaves the card however it was left.
+SPEAKER_VOLUME = os.getenv("SPEAKER_VOLUME", "55%")
+
 
 # 2. The Voice (Cartesia API)
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
@@ -209,6 +219,13 @@ RE_STOP_TAIL = (
 NAME_LATIN = (r'(?:liza|lisa|leeza|leesa|lizza|lyza|eliza|elisa|lija|leza'
               r'|laiza|liesa|lizah|luiza)')
 NAME_DEVANAGARI = r'(?:लीज़ा|लिज़ा|लीजा|लिजा|लीसा)'
+# "Hey Liza" run together into one word, the greeting included -- so it counts
+# as greeted wherever a greeting is required. Seen in logs/liza.log as
+# 'Heliza, stop the video.', 'Healyza stop.' and 'Helica', each ignored.
+NAME_MERGED = r'(?:he[ae]?l(?:iza|isa|yza|ica|eeza|ieza))'
+# Greetings, and what Whisper writes for them on a two-word clip ("Huy Liza",
+# "Hai Liza"). Punctuation may sit between greeting and name: "Hey, Elisa."
+GREETING_LATIN = r'(?:hey|hi|hello|ok|okay|hay|huy|hai)'
 
 RE_WAKE_WORD = re.compile(
     # FIRST, so that it wins. Alternatives are tried left to right at the same
@@ -216,15 +233,16 @@ RE_WAKE_WORD = re.compile(
     # own -- so with this last, "Liza stop the video" matched WITHOUT the
     # stopword group, the guard in wake_word_match saw a bare name in a
     # four-word sentence, and threw the command away. Order is the whole fix.
-    r'(?:\b' + NAME_LATIN + r'\b|' + NAME_DEVANAGARI + NAME_END + r')' + RE_STOP_TAIL +
+    r'(?:\b(?:' + NAME_LATIN + r'|' + NAME_MERGED + r')\b|' + NAME_DEVANAGARI + NAME_END + r')' + RE_STOP_TAIL +
     # English spellings Whisper produces for the name.
     # "a" was in this list and never belonged: it is an ordinary English article,
     # and the whole group is optional anyway, so it added no reachable match
     # beyond the bare name while turning "a Lisa" in any sentence into a wake.
-    r'|\b(?:hey|hi|hello|ok|okay|hay)?\s*'
+    r'|\b' + GREETING_LATIN + r'?[\s,.!]*'
     # Spellings observed from Whisper for the same spoken name. None of these is
     # an ordinary English word, so a bare match is safe without a greeting.
     + NAME_LATIN + r'\b'
+    r'|\b' + NAME_MERGED + r'\b'
     # Devanagari. The seed prompt is bilingual, so Whisper often writes the name
     # in Devanagari, and its spelling varies far more than a fixed list can cover
     # -- "हे लागा", "हे लगा" and "हे लाजा" were all observed for "Hey Liza". The
@@ -284,8 +302,8 @@ RE_SLEEP_PHRASE = re.compile(
 #     observed waking her from sleep on 'हे लागा' out of an empty room.
 # Both branches still cover every way the wake word is actually advertised.
 RE_WAKE_WORD_ASLEEP = re.compile(
-    r'\b(?:hey|hi|hello|ok|okay|hay)\s+'
-    r'(?:liza|lisa|leeza|leesa|lizza|lyza|eliza|elisa|lija|leza|laiza|liesa|lizah|luiza)\b'
+    r'\b' + GREETING_LATIN + r'[\s,.!]+' + NAME_LATIN + r'\b'
+    r'|\b' + NAME_MERGED + r'\b'
     # The greeting is REQUIRED here, not optional. It was written with a `?`,
     # which made this branch match a bare "लिज़ा" anywhere -- the exact hole the
     # comment above claims is closed, and the one RE_WAKE_WORD_OVER_MEDIA was
@@ -728,6 +746,9 @@ RE_HALLUCINATION = re.compile(
     r'(?:thanks|thank\s+you)\s+for\s+watching|'
     r'(?:don\'?t\s+forget\s+to\s+|please\s+|like\s+and\s+)subscribe|'
     r'see\s+you\s+(?:in\s+the\s+)?next\s+(?:time|video)|'
+    # A subtitle credit, from the same training data. It used to be thrown away
+    # only because the echo guard happened to match it against her old replies.
+    r'amara\.org|subtitles\s+by\s+the|'
     r'सब्सक्राइब करें|वीडियो पसंद आया|अगले वीडियो में',
     re.IGNORECASE
 )
@@ -808,6 +829,19 @@ RE_IMPOSSIBLE_SCRIPT = re.compile(
 # Every drop is logged with its score, so if this ever starts eating real speech
 # the log says so immediately and the number can be moved from .env.
 STT_MIN_LOGPROB = float(os.getenv("STT_MIN_LOGPROB", "-0.70"))
+# ...except for the wake phrase itself. Those measurements were on sentences;
+# a two-word clip scores lower, and the real "Hey Liza." in logs/liza.log came
+# back at -0.74 to -0.99 -- clean text, thrown away at -0.70, twenty-odd times,
+# which is her "not waking up by the wake word". A transcript that IS the wake
+# phrase is kept down to this. Room tone is still stopped before Whisper by
+# is_probably_speech, and a looped phrase by is_repeated_hallucination.
+WAKE_MIN_LOGPROB = float(os.getenv("WAKE_MIN_LOGPROB", "-1.00"))
+# The same rescue on the Kindergarten screens, for an answer that IS the one
+# the screen was waiting for. logs/liza.log, 15:37:11: a child's 'Rabbit.' was
+# dropped at -0.71 -- one hundredth under the bar -- and they were told "Not
+# quite". A child's voice in an Indian accent scores lower than an adult's
+# sentence; only a transcript that matches the expected answer is let through.
+KG_MIN_LOGPROB = float(os.getenv("KG_MIN_LOGPROB", "-1.20"))
 
 
 # Whether "Hey Liza" is listened for DURING a Kindergarten lesson. On, but it

@@ -1,0 +1,65 @@
+{
+  "id": "chemistry.molecule.hydrogen_chloride",
+  "name": "Hydrogen Chloride",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid313_3d.sdf",
+    "smiles": "Cl",
+    "pubchem_cid": 313,
+    "formula": "ClH",
+    "representation": "ball_and_stick"
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/313",
+    "source_id": "313",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Hydrochloric Acid (CID 313)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "hydrogen chloride"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "ClH",
+    "hcl",
+    "hydrochloric acid",
+    "hydrochloric acid gas"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid313_3d.sdf": "c3b953ddbad2e0a6b453db71e1442c782f7769315869ea79c28ee9cd7d8db82c",
+    "original/pubchem_cid313_properties.json": "53a3d073ac248780bb803c1051ea96936479f297e4bbfdcb7044ae7f9a7248d0"
+  },
+  "generated_on": "2026-09-25"
+}

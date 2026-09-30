@@ -1,0 +1,4 @@
+# Optional: on-device speech recognition and wake word (~300 MB installed).
+faster-whisper>=1.0
+openwakeword>=0.6
+onnxruntime>=1.17

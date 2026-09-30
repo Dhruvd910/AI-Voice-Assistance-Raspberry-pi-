@@ -1,0 +1,138 @@
+{
+  "id": "biology.organelle.nucleus",
+  "name": "Nucleus",
+  "domain": "biology",
+  "subject": "organelle",
+  "kind": "procedural",
+  "generator": {
+    "name": "biology.cells.nucleus"
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "biology.cells.nucleus",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on textbook descriptions of the cell nucleus.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "scale_level": "organelle",
+    "topics": [
+      "nucleus",
+      "cell nucleus",
+      "nuclear envelope",
+      "chromatin",
+      "nucleolus",
+      "cell organelles"
+    ],
+    "disclaimer": "Educational model — not to scale. About 6 µm across; ribosomes and pores drawn larger than real."
+  },
+  "aliases": [
+    "nucleus",
+    "cell nucleus",
+    "the nucleus",
+    "nuclei",
+    "nucleus of the cell",
+    "kendrak",
+    "केंद्रक",
+    "केन्द्रक"
+  ],
+  "parts": {
+    "outer_membrane": {
+      "name": "Outer nuclear membrane",
+      "aliases": [
+        "outer membrane",
+        "nuclear envelope",
+        "nuclear membrane",
+        "envelope"
+      ],
+      "description": "The outer of the two membranes of the nuclear envelope. It runs on into the rough ER, and like the ER it carries ribosomes."
+    },
+    "inner_membrane": {
+      "name": "Inner nuclear membrane",
+      "aliases": [
+        "inner membrane"
+      ],
+      "description": "The inner membrane of the nuclear envelope. It holds the chromatin in place from inside."
+    },
+    "nuclear_pores": {
+      "name": "Nuclear pores",
+      "aliases": [
+        "pores",
+        "pore",
+        "nuclear pore"
+      ],
+      "description": "Channels through both membranes. mRNA and ribosome parts leave the nucleus through them, and proteins come in."
+    },
+    "nucleoplasm": {
+      "name": "Nucleoplasm",
+      "aliases": [
+        "nuclear sap",
+        "karyoplasm"
+      ],
+      "description": "The jelly-like fluid inside the nucleus, in which the chromatin and nucleolus sit."
+    },
+    "chromatin": {
+      "name": "Chromatin (DNA + proteins)",
+      "aliases": [
+        "dna",
+        "chromosomes",
+        "chromatin threads",
+        "genetic material"
+      ],
+      "description": "Long threads of DNA wound round proteins. When the cell divides they coil up tightly into chromosomes."
+    },
+    "nucleolus": {
+      "name": "Nucleolus",
+      "aliases": [
+        "nucleoli"
+      ],
+      "description": "A dense region of the nucleus, not surrounded by a membrane, where ribosomes are put together."
+    },
+    "rough_er": {
+      "name": "Rough endoplasmic reticulum",
+      "aliases": [
+        "er",
+        "rough er",
+        "endoplasmic reticulum"
+      ],
+      "description": "Folded membranes joined to the outer nuclear membrane, covered in ribosomes; proteins are made and folded there."
+    },
+    "ribosomes": {
+      "name": "Ribosomes (enlarged)",
+      "aliases": [
+        "ribosome"
+      ],
+      "description": "Tiny particles that make proteins, following the instructions copied from DNA. Drawn far larger than real."
+    }
+  },
+  "relationships": {
+    "parent": "biology.cell.animal_cell",
+    "scale_up_to": "biology.cell.animal_cell"
+  },
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "explode",
+    "focus",
+    "label",
+    "measure"
+  ]
+}

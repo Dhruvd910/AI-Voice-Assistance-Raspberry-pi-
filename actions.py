@@ -26,6 +26,7 @@ import time
 import profiles
 import state
 import books
+import friend_memory
 import store
 import visuals
 from config import MPV_AUDIO_DEVICE
@@ -35,6 +36,10 @@ from state import (device_state_lock, get_device_state, media_active,
 from uibridge import ui_call, ui_invoke
 
 CLOSED_FILE_ACKS = {"en": "Closed.", "hi": "बंद कर दिया।", "hinglish": "बंद कर दिया।"}
+# A 3D-model command done by the engine. Its own reply ("I've cut it open
+# from front to back") is English; in Hindi she just says it is done and the
+# screen shows the rest.
+MODEL3D_DONE_ACKS = {"hi": "ठीक है, देखो।", "hinglish": "ठीक है, देखो।"}
 
 # "Is there a file about gravity?" is a QUESTION, and it was being answered by
 # opening the file -- the model saw anything mentioning a file as an instruction
@@ -130,7 +135,10 @@ RE_CLOSE_FILE_PHRASE = re.compile(
 # sentences, and the model is already reading that sentence. What Python owns
 # instead is everything the model must never be trusted with -- where a file may
 # be searched for, what may be killed, and when it actually happens.
-RE_ACTION_TAG = re.compile(r'\[\s*ACTION\s*:\s*([a-z_]+)\s*(?::\s*([^\]]*))?\]',
+# Digits in the name: model3d_do. With [a-z_]+ every one of her model3d_do tags
+# failed to match and was dropped without a word, while she told the student
+# she was highlighting the part.
+RE_ACTION_TAG = re.compile(r'\[\s*ACTION\s*:\s*([a-z0-9_]+)\s*(?::\s*([^\]]*))?\]',
                            re.IGNORECASE)
 # The same, allowing one level of balanced [...] inside the payload: a reaction
 # condition (CaCO3 ->[heat] CaO + CO2) or a LaTeX root (\sqrt[3]{x}). With the
@@ -138,7 +146,7 @@ RE_ACTION_TAG = re.compile(r'\[\s*ACTION\s*:\s*([a-z_]+)\s*(?::\s*([^\]]*))?\]',
 # the products of the reaction -- was lost. Tried first; the plain pattern is
 # the fallback for a payload with an unmatched "[".
 RE_ACTION_TAG_NESTED = re.compile(
-    r'\[\s*ACTION\s*:\s*([a-z_]+)\s*(?::\s*((?:[^\[\]]|\[[^\[\]]*\])*))?\]',
+    r'\[\s*ACTION\s*:\s*([a-z0-9_]+)\s*(?::\s*((?:[^\[\]]|\[[^\[\]]*\])*))?\]',
     re.IGNORECASE)
 
 def parse_action(text):
@@ -963,6 +971,15 @@ def run_command_action(command):
     return "command_output", output
 
 ACTION_FAILURES = {
+    # The 3D engine refused an instruction and said why ("the septum is not a
+    # separate part of this model"); its reason is already a sentence.
+    "model3d_refused": {"en": "{d}",
+                        "hi": "यह इस 3D मॉडल पर नहीं हो सकता।",
+                        "hinglish": "Yeh is 3D model par nahi ho sakta."},
+    # A 3D model was asked for and there is none, so a picture went up.
+    "model3d_picture": {"en": "I don't have a 3D model of that yet, so this is a picture.",
+                        "hi": "इसका 3D मॉडल अभी मेरे पास नहीं है, इसलिए यह तस्वीर है।",
+                        "hinglish": "इसका 3D model अभी मेरे पास नहीं है, इसलिए यह picture है।"},
     # The reason comes up from visuals.render_visual already worded as
     # something a person would say -- "I could not find a picture of that" --
     # so it is spoken as it arrives rather than looked up. {d} IS the sentence.
@@ -1101,6 +1118,8 @@ def execute_action(name, param, language="en"):
         reason, detail = enlarge_visual_action(True)
     elif name == "shrink_visual":
         reason, detail = enlarge_visual_action(False)
+    elif name == "model3d_do":
+        reason, detail = model3d_do_action(param)
     else:
         print(f"[ACTION] Unknown action {name!r}.", flush=True)
 
@@ -1125,7 +1144,7 @@ def execute_action(name, param, language="en"):
 # whole of the delay. Drawing it costs about a twentieth of a second, so it
 # lands while she is still on her first word.
 IMMEDIATE_ACTIONS = {"stop_media", "close_file", "show_visual", "hide_visual",
-                     "enlarge_visual", "shrink_visual"}
+                     "enlarge_visual", "shrink_visual", "model3d_do"}
 
 
 def show_visual_action(param):
@@ -1156,9 +1175,27 @@ def show_visual_action(param):
                                 "steps": []}
         ui_invoke("show_graph", spec)
         return "ok", ""
+    wanted_3d = kind == "model3d"
+    if kind == "model3d":
+        shown = _show_model3d(payload)
+        if isinstance(shown, tuple):
+            return shown
+        # No 3D model: the flat drawing of the molecule if the 3D side is not
+        # installed, or a picture of the thing if there is no model of it.
+        kind = shown
     path, why = visuals.render_visual(kind, payload)
     if path is None:
         return "no_visual", why
+    if wanted_3d and kind == "picture":
+        # Said out loud, and written into ON_BOARD. Her reply has usually
+        # promised "here's the 3D model" already, and a silent picture under
+        # it had her promise it again and again: "But it's just a picture,
+        # not a 3D model."
+        state.current_visual = {"kind": "picture", "steps": [],
+                                "title": f"{payload[:120]} -- a flat picture: "
+                                         f"there is no 3D model of it on this device"}
+        ui_invoke("show_visual", path, [])
+        return "model3d_picture", ""
     # THE STRUCTURE IS KEPT, not just the picture. A Seedream diagram arrives as
     # flat pixels with nothing addressable in it, so the only way to show which
     # stage she is explaining is to keep the list of stages beside the image and
@@ -1174,7 +1211,97 @@ def show_visual_action(param):
 
 
 DESCRIBED_KINDS = {"equation", "formula", "maths", "reaction", "molecule", "report",
-                   "forces", "circuit"}
+                   "forces", "circuit", "model3d"}
+
+
+def _show_model3d(payload):
+    """A 3D model on the screen: ("ok", "") -- or, when there is none, the
+    kind of flat visual to show instead: "molecule" if the 3D side is not
+    installed, "picture" if nothing on the device can model this thing.
+
+    The scene is built here, on the action's thread, because it can go to
+    PubChem for a name the school table does not have. The screen gets plain
+    data and hands it to viewer3d's worker; see TutorUI.show_model3d.
+    """
+    try:
+        import importlib.util
+        import viewer3d
+        if importlib.util.find_spec("pyvista") is None:
+            print("[3D] PyVista is not installed; drawing it flat.", flush=True)
+            return "molecule"
+    except Exception as exc:
+        print(f"[3D] The 3D viewer is not available ({exc}); drawing it flat.", flush=True)
+        return "molecule"
+    scene, why = viewer3d.build_scene(payload)
+    if scene is None:
+        # A heart, a skeleton: nothing here models it, but a picture of it is
+        # still an answer -- rather than "I could not work out the structure
+        # of human heart", which is the molecule builder talking.
+        print(f"[3D] No 3D model of {payload!r} ({why}); showing a picture.", flush=True)
+        return "picture"
+    title = f"3D model of {scene['title']}"
+    if scene.get("kind") == "engine":
+        # Name the parts, so "show me the left ventricle" and "what is this
+        # valve" can be answered against what is actually on the board.
+        parts = list(viewer3d.engine_catalog().get(scene["model_id"], {}).get("parts", {}).values())
+        title += " (the 3D engine's" + (f"; parts: {', '.join(parts[:16])}" if parts else "") + ")"
+    state.current_visual = {"kind": "model3d", "title": title, "steps": []}
+    ui_invoke("show_model3d", scene)
+    return "ok", ""
+
+
+# ---------- the 3D engine's model on the board ----------
+# "Rotate it", "cut it in half", "show the left ventricle": once the engine's
+# model is up, these are the engine's to carry out. Two ways in: ai_loop hands
+# the student's own words over first (engine_try, no model call at all), and
+# her reply can carry [ACTION: model3d_do: <instruction>] when she wants to
+# point at something while explaining it.
+ENGINE_TRY_TIMEOUT_S = 3.0
+ENGINE_DO_TIMEOUT_S = 6.0
+
+
+def engine_on_board():
+    ui = state.ui_instance
+    return bool(ui is not None and getattr(ui, "model3d_engine_active", lambda: False)())
+
+
+def _engine_answered(answer):
+    """Bring the board and ON_BOARD up to date with what the engine did."""
+    if answer.get("board"):
+        state.current_visual = {"kind": "model3d", "title": answer["board"], "steps": []}
+    ui_invoke("model3d_after_command", answer)
+
+
+def engine_try(text):
+    """The engine's answer if it carried out `text` as a command; else None,
+    and nothing on the board has changed."""
+    if not engine_on_board():
+        return None
+    answer = state.ui_instance.renderer_ask("try", text, ENGINE_TRY_TIMEOUT_S)
+    if not answer or not answer.get("handled"):
+        return None
+    _engine_answered(answer)
+    return answer
+
+
+def model3d_do_action(param):
+    instruction = (param or "").strip()
+    if not instruction:
+        return "already", ""
+    if not engine_on_board():
+        # She meant well but nothing of the engine's is up; the state block
+        # already says so, and a spoken complaint would only repeat it.
+        print(f"[3D] model3d_do with no engine model on the board: {instruction!r}", flush=True)
+        return "already", ""
+    answer = state.ui_instance.renderer_ask("do", instruction, ENGINE_DO_TIMEOUT_S)
+    if answer is None:
+        return "already", ""
+    if not answer.get("handled"):
+        print(f"[3D] The engine could not {instruction!r}: {answer.get('reason')}", flush=True)
+        return "model3d_refused", answer.get("reason") or ""
+    print(f"[3D] Engine: {instruction!r} -> {answer.get('reply')}", flush=True)
+    _engine_answered(answer)
+    return "ok", ""
 
 
 # Kinds made of stages. A photograph has none and an equation is one thing, so
@@ -1302,6 +1429,9 @@ def student_profile_block():
         "that you are adjusting anything; just answer at that level.\n\n"
         + learning_history_block(profile)
         + _contents_block(profile)
+        # Last of the three: it changes whenever they tell her something new,
+        # and the section-order note in prompts.py puts the more volatile lower.
+        + friend_memory.prompt_block(profile)
     )
 
 

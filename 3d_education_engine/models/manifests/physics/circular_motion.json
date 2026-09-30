@@ -1,0 +1,60 @@
+{
+  "id": "physics.mechanics.circular_motion",
+  "name": "Uniform Circular Motion",
+  "domain": "physics",
+  "subject": "mechanics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "circular_motion",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.circular_motion",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "circular motion",
+      "centripetal acceleration"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "The velocity (blue) is along the circle; the acceleration (orange) points to the centre."
+  },
+  "aliases": [
+    "circular motion",
+    "centripetal force",
+    "moving in a circle"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "v = ω·r",
+    "a = v² / r  (towards the centre)",
+    "F = m·v² / r",
+    "period T = 2π·r / v"
+  ]
+}

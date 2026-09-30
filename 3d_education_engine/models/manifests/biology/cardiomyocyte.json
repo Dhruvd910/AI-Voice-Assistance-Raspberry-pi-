@@ -1,0 +1,121 @@
+{
+  "id": "biology.cell.cardiomyocyte",
+  "name": "Cardiomyocyte (Heart Muscle Cell)",
+  "domain": "biology",
+  "subject": "cell",
+  "kind": "procedural",
+  "generator": {
+    "name": "biology.cells.cardiomyocyte"
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "biology.cells.cardiomyocyte",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on textbook descriptions of cardiomyocyte ultrastructure.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "11",
+      "12"
+    ],
+    "scale_level": "cell",
+    "topics": [
+      "cardiomyocyte",
+      "cardiac cell",
+      "heart muscle cell",
+      "cardiac muscle cell",
+      "muscle cell"
+    ],
+    "disclaimer": "Educational model — not to scale. About 100 µm long; only some myofibrils and mitochondria are drawn."
+  },
+  "aliases": [
+    "cardiac cell",
+    "heart cell",
+    "heart muscle cell",
+    "cardiac muscle cell",
+    "cardiomyocytes",
+    "myocyte"
+  ],
+  "parts": {
+    "sarcolemma": {
+      "name": "Cell membrane (sarcolemma)",
+      "aliases": [
+        "membrane",
+        "cell membrane",
+        "sarcolemma"
+      ],
+      "description": "The cell membrane of a muscle cell."
+    },
+    "nucleus": {
+      "name": "Nucleus",
+      "aliases": [
+        "nuclei"
+      ],
+      "description": "Holds the cell's DNA; placed centrally in cardiac muscle cells."
+    },
+    "myofibrils": {
+      "name": "Myofibrils",
+      "aliases": [
+        "myofibril",
+        "actin and myosin",
+        "contractile fibres"
+      ],
+      "description": "Long bundles of actin and myosin filaments. The filaments slide past each other to shorten the cell."
+    },
+    "z_discs": {
+      "name": "Z-discs (sarcomere boundaries)",
+      "aliases": [
+        "z discs",
+        "z lines",
+        "sarcomeres",
+        "sarcomere",
+        "striations"
+      ],
+      "description": "Mark the ends of each sarcomere, the ~2 µm contractile unit. They line up across the myofibrils, which is why the cell looks striped."
+    },
+    "mitochondria": {
+      "name": "Mitochondria",
+      "aliases": [
+        "mitochondrion"
+      ],
+      "description": "Make ATP by aerobic respiration. In heart muscle cells they take up roughly a third of the cell's volume."
+    },
+    "intercalated_discs": {
+      "name": "Intercalated discs",
+      "aliases": [
+        "intercalated disc",
+        "cell junctions"
+      ],
+      "description": "Join this cell to its neighbours, mechanically (desmosomes) and electrically (gap junctions)."
+    }
+  },
+  "relationships": {
+    "parent": "biology.tissue.cardiac_muscle",
+    "scale_up_to": "biology.tissue.cardiac_muscle",
+    "scale_down_to": "biology.organelle.mitochondrion",
+    "scale_down_focus": "mitochondria",
+    "part_models": {
+      "nucleus": "biology.organelle.nucleus",
+      "mitochondria": "biology.organelle.mitochondrion"
+    }
+  },
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "explode",
+    "focus",
+    "label",
+    "measure"
+  ]
+}

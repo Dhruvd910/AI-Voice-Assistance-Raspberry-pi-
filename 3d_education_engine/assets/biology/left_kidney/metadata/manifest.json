@@ -1,0 +1,118 @@
+{
+  "id": "biology.anatomy.left_kidney",
+  "name": "Left Kidney",
+  "domain": "biology",
+  "subject": "anatomy",
+  "kind": "asset",
+  "asset": {
+    "file": "runtime/left_kidney.glb",
+    "format": "glb",
+    "units": "mm",
+    "lods": {
+      "high": "runtime/left_kidney.glb",
+      "low": "runtime/left_kidney_low.glb"
+    },
+    "origin_offset_mm": [
+      61.611,
+      -79.888,
+      1037.467
+    ],
+    "cells": {
+      "high": 2982,
+      "low": 2982
+    },
+    "thumbnail": "metadata/thumbnail.png"
+  },
+  "source": {
+    "provider": "BodyParts3D",
+    "url": "https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST/partof_BP3D_4.0_obj_99.zip",
+    "source_id": "FMA7205",
+    "creator": "The Database Center for Life Science (DBCLS)",
+    "license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "attribution": "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International",
+    "download_date": "2026-09-25",
+    "modification_status": "extracted+converted+decimated"
+  },
+  "source_detail": {
+    "database_license_page": "https://dbarchive.biosciencedbc.jp/en/bodyparts3d/lic.html",
+    "archive": "https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST/partof_BP3D_4.0_obj_99.zip",
+    "concepts": {
+      "FMA7205": "left kidney"
+    },
+    "processing": [
+      "element meshes merged per part (first claim wins; see biology/anatomy.py)",
+      "triangulated, cleaned, normals computed",
+      "centred on the origin (origin_offset_mm recovers source coordinates)",
+      "low LOD: decimate_pro keeping 100% of triangles"
+    ]
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "left kidney"
+    ],
+    "scale_level": "organ",
+    "disclaimer": "Anatomical model (BodyParts3D). Colours are a teaching convention."
+  },
+  "aliases": [
+    "kidney",
+    "left kidney"
+  ],
+  "parts": {
+    "left_kidney": {
+      "name": "Left Kidney",
+      "description": "Left Kidney (BodyParts3D FMA7205).",
+      "color": "#d9a0a0",
+      "aliases": [],
+      "available": true,
+      "source_concepts": [
+        "FMA7205"
+      ],
+      "source_elements": [
+        "FJ3145"
+      ]
+    }
+  },
+  "groups": {},
+  "group_aliases": {},
+  "relationships": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "explode",
+    "focus",
+    "label",
+    "measure",
+    "animate"
+  ],
+  "animations": [
+    "heartbeat"
+  ],
+  "view": {
+    "azimuth": 0.0,
+    "elevation": 0.0,
+    "up": "z",
+    "front": "-y"
+  },
+  "notes": [],
+  "generated_on": "2026-09-25",
+  "files": {
+    "metadata/thumbnail.png": "fb8c724659a39d24db95a409139177e0084fc9484d4b65beebf85bf22d4c273b",
+    "original/bodyparts3d/FJ3145.obj": "b52066a987f767ad9e5c3092958bf5dd760d9f05f1497d1fc7f7ff11539bdfd2",
+    "processed/left_kidney.vtp": "2af8d0a4cc63bc6d84c9c6b31007d15d6d02723a9b4d9122d460ef6cacac3fd3",
+    "runtime/left_kidney.glb": "3adf2f6fcc55e3629d8a520ff3ef06d1c15405a67a0c21c1b73f7ea2a8f546fc",
+    "runtime/left_kidney_low.glb": "3adf2f6fcc55e3629d8a520ff3ef06d1c15405a67a0c21c1b73f7ea2a8f546fc"
+  }
+}

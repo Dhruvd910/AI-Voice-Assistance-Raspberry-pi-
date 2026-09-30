@@ -126,6 +126,69 @@ model drew hydrogen burning *backwards*. Molecule structures need
 `.venv/bin/pip install rdkit`; a common one is drawn from a built-in list, and
 any other is looked up by name on PubChem.
 
+### 3D models you turn with a finger
+
+"Show me a water molecule in 3D" opens a ball-and-stick model full screen.
+It spins slowly until the first touch. After that, drag to turn it, − and +
+to zoom, Reset to put it back, and × to close. A still stays on the board;
+tap it to open the model again. The shape is worked out on the Pi by RDKit
+(water really is bent at 104.5°, methane really is a tetrahedron), for any
+molecule the flat drawer knows. It needs `.venv/bin/pip install pyvista`.
+Without it, a 3D request falls back to the flat drawing.
+
+Biology and physics have 3D models too, built in code from simple shapes
+(`models3d.py`). They work offline, load in under a second, and are labelled
+like a textbook figure:
+
+- **Physics:** the solar system (planets orbit), the Sun, Earth and Moon (lit
+  by the Sun, so day and night and the Moon's phases show), the layers of the
+  Earth (cut open), the atom of any of the first 20 elements (Bohr model,
+  electrons moving in their shells), the magnetic field of a bar magnet, a
+  wire and a solenoid, white light through a prism, a transverse wave and a
+  sound wave (both moving).
+- **Biology:** animal cell, plant cell, DNA, neuron, red blood cells, virus,
+  bacteriophage, bacterium, flower, the human eye (cut open), mitochondrion
+  and chloroplast.
+
+Anything not on the list, such as a skeleton or a brain, is shown as a
+picture. Put a real model file in `3d-models/`, named for what it is (for
+example `brain.glb`), and Liza will use it instead. See `3d-models/README.txt`.
+
+#### The 3D Education Engine (`3d_education_engine/`)
+
+Some models come from the 3D Education Engine instead:
+- a real anatomical **human heart** with named chambers, valves and vessels
+- heart muscle, a heart muscle cell and a mitochondrion to zoom down through
+- molecules built from PubChem's 3D data
+- 17 physics **simulations with settings**, such as projectile motion,
+  orbits, electric fields and circuits
+
+Liza checks the engine's list first (`viewer3d.engine_model_for`). Anything
+it doesn't have still comes from `models3d.py`.
+
+With an engine model up, you can talk to the model:
+
+- "rotate it", "cut it in half", "show the left ventricle", "make it
+  transparent", "label the chambers", "go one level deeper", "go back",
+  "make the heart beat", "change the angle to 60 degrees".
+
+These are carried out by the engine straight away, without asking the
+language model. Questions still go to Liza, who sees the model's parts and
+state in ON_BOARD. She can point at things with
+`[ACTION: model3d_do: highlight the left ventricle]`.
+
+The engine is a separate app with its own interpreter
+(`3d_education_engine/.venv`). Liza never imports it: the engine draws in
+its own worker process (`app/liza_worker.py`), speaking the same protocol as
+viewer3d's worker. What it can show is read from
+`3d_education_engine/data/liza_catalog.json`. It can also run on its own:
+see `3d_education_engine/README.md`.
+
+The drawing runs in a separate worker process (`viewer3d.py`), so a graphics
+driver crash costs one model, not the whole tutor. The Pi's GPU reports an
+older OpenGL than VTK asks for, so `viewer3d.py` sets
+`MESA_GL_VERSION_OVERRIDE=3.3` before VTK loads.
+
 ### The live graph is different from everything else
 
 Ask for a graph of a formula — "y = x^2", "y = m\*x + c" — and instead of a

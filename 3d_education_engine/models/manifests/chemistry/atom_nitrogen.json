@@ -1,0 +1,59 @@
+{
+  "id": "chemistry.atom.nitrogen",
+  "name": "Nitrogen Atom",
+  "domain": "chemistry",
+  "subject": "atom",
+  "kind": "molecule",
+  "structure": {
+    "element": "N"
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "chemistry.atoms.shell_scene(N)",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on element data from RDKit's periodic table and the Aufbau rule.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "scale_level": "atom",
+    "topics": [
+      "nitrogen atom",
+      "atomic structure",
+      "electron configuration",
+      "electron shells"
+    ],
+    "disclaimer": null
+  },
+  "aliases": [
+    "nitrogen atom",
+    "an atom of nitrogen",
+    "n atom",
+    "atom of nitrogen",
+    "nitrogen",
+    "nitrogen electron configuration"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "electron_shells"
+  ]
+}

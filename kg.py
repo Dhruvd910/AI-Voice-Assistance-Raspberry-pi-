@@ -13,14 +13,16 @@ kg_holds_microphone are the two ends of it.
 
 import queue
 import random
+import re
 import time
 
 import speech_recognition as sr
 
+import kg_content
 import profiles
 import state
 from media import stop_media_playback
-from config import KG_ASK_START_S, KG_DOUBT_MEMORY
+from config import KG_ASK_START_S, KG_DOUBT_MEMORY, KG_MIN_LOGPROB
 from state import (_kg_listen_lock, _kg_listen_next, _kg_listen_valid_from,
                    kg_ask_cancel,
                    audio_queue, kg_active, kg_listen_requests, kg_listen_results,
@@ -65,7 +67,7 @@ KG_SEED_LETTERS = "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z"
 
 
 def kg_request_listen(seconds=6.0, seed="", language="en", phrase_limit=None,
-                      end_silence=None):
+                      end_silence=None, accept=None):
     """Ask ai_loop for one transcribed utterance. Answer arrives on kg_listen_results.
 
     `seconds` bounds only the wait for the child to START, `phrase_limit` caps
@@ -76,12 +78,17 @@ def kg_request_listen(seconds=6.0, seed="", language="en", phrase_limit=None,
     conversational 0.55s pause that closed the phrase. The transcript then held
     a single letter and was marked as a wrong spelling. Counting aloud is slower
     still. So each KG screen now says how patient its own question deserves to be.
+
+    `accept(text)`: True for a transcript that is the answer being waited
+    for. Such a transcript is kept even when Whisper was unsure of it, down to
+    KG_MIN_LOGPROB -- a right answer in an Indian accent is not a guess.
     """
     listen_id = kg_next_listen_id()
     kg_listen_requests.put({"id": listen_id,
                             "seconds": seconds, "seed": seed, "language": language,
                             "phrase_limit": phrase_limit or seconds,
-                            "end_silence": end_silence or assistant.PAUSE_THRESHOLD_NORMAL})
+                            "end_silence": end_silence or assistant.PAUSE_THRESHOLD_NORMAL,
+                            "accept": accept})
     return listen_id
 
 
@@ -113,7 +120,8 @@ def kg_serve_listen(recognizer, mic_device, listener):
             # the same trap WAKE_SEED_PROMPT set for the wake word. The caller
             # says whether it expects letters or a word, and in which language.
             seed=request.get("seed", ""), language=request.get("language") or None,
-            cancel=abandoned, label=f"KG] Listen {listen_id}")
+            cancel=abandoned, label=f"KG] Listen {listen_id}",
+            accept=request.get("accept"))
         print(f"[KG] Listen {listen_id} heard: {text!r}", flush=True)
     except Exception as exc:
         print(f"[KG] Listen {listen_id} failed: {exc}", flush=True)
@@ -130,7 +138,7 @@ def kg_serve_listen(recognizer, mic_device, listener):
 
 def kg_capture_utterance(recognizer, mic_device, listener, seconds, phrase_limit,
                          end_silence, seed="", language=None, cancel=None,
-                         label="KG"):
+                         label="KG", accept=None):
     """One transcribed utterance from the microphone. "" when nothing usable came.
 
     Lifted out of kg_serve_listen so that a question the child asks for
@@ -158,7 +166,8 @@ def kg_capture_utterance(recognizer, mic_device, listener, seconds, phrase_limit
             recognizer.pause_threshold = previous_pause
     if audio is not None and not cancel() and assistant.is_probably_speech(audio, label, True):
         wav = audio.get_wav_data(convert_rate=16000, convert_width=2)
-        text, _lang = assistant.transcribe(wav, seed, language=language or None)
+        text, _lang = assistant.transcribe(wav, seed, language=language or None,
+                                           keep=accept, keep_floor=KG_MIN_LOGPROB)
     if text and assistant.sounds_like_her_own_prompt(text):
         print(f"[{label}] was her own voice coming back, not an answer: {text!r}",
               flush=True)
@@ -366,8 +375,10 @@ def kg_handle_doubt(ui, question, language, recognizer, mic_device, listener,
         return
     print(f"[KG] Doubt answered: {answer!r}", flush=True)
     # No tone: detect_tts_language picks the voice off the script, so an answer
-    # that came back in Hindi is spoken in Hindi without being told to.
-    kg_say(answer, "warm")
+    # that came back in Hindi is spoken in Hindi without being told to. Not
+    # split by script: the model's Hinglish is one sentence, and cutting it at
+    # every English word would speak it in pieces.
+    kg_say(answer, "warm", split=False)
 
 
 def kg_holds_microphone(ui):
@@ -437,7 +448,7 @@ def kg_delivery(name):
     return KG_EMOTIONS.get(name)
 
 
-def kg_say(text, tone=None):
+def kg_say(text, tone=None, split=True):
     """Speak one line on the KG screens, through the one existing TTS pipeline.
 
     Same audio_queue every other spoken line goes through, so the ducking and
@@ -446,11 +457,12 @@ def kg_say(text, tone=None):
     Word three times, and without it they would queue up three words deep.
 
     `tone` names an entry in KG_EMOTIONS and changes how the line is DELIVERED.
+    `split=False` keeps a mixed Hindi-English line whole; see single_script_runs.
     """
-    kg_say_many([(text, tone)])
+    kg_say_many([(text, tone)], split=split)
 
 
-def kg_say_many(segments):
+def kg_say_many(segments, split=True):
     """Speak several lines, each with its own delivery, as ONE response.
 
     All of them go in before the single [END_OF_RESPONSE], which matters: the
@@ -463,8 +475,55 @@ def kg_say_many(segments):
     for text, tone in segments:
         if not text:
             continue
-        audio_queue.put((text, kg_delivery(tone)) if tone else text)
+        for run in (single_script_runs(text) if split else [text]):
+            audio_queue.put((run, kg_delivery(tone)) if tone else run)
     audio_queue.put("[END_OF_RESPONSE]")
+
+
+_HINDI_LETTERS = {entry[0] for entry in kg_content.HINDI_ALPHABET}
+# A letter or word of either script, and what sits between them.
+_RE_SCRIPT_RUN = re.compile(r"[\u0900-\u0963\u0966-\u097f]+|[A-Za-z]+")  # not the dandas
+
+
+def single_script_runs(text):
+    """A KG line cut where it changes script, so each piece is spoken by the
+    voice of its OWN language.
+
+    The voice picks one language per line (assistant.detect_tts_language:
+    any Devanagari makes the whole line Hindi). A line like "You said कबूतर."
+    was therefore read with English in a Hindi accent, and "It is क" read the
+    other way round -- the letters of one alphabet taught in the sounds of the
+    other. Lines in one script, which is nearly all of them, come back whole.
+    A lone Hindi letter gets a danda so it is not read as its Latin
+    transliteration; see TutorUI._kg_say_letter.
+    """
+    words = _RE_SCRIPT_RUN.findall(text)
+    scripts = {"hi" if "\u0900" <= w[0] <= "\u097f" else "en" for w in words}
+    if len(scripts) < 2:
+        return [text]
+    # What lies between two words (spaces, punctuation) stays with the word
+    # before it, so a full stop ends the sentence it belongs to.
+    runs, current, current_script = [], "", None
+    position = 0
+    for match in _RE_SCRIPT_RUN.finditer(text):
+        script = "hi" if "\u0900" <= match.group()[0] <= "\u097f" else "en"
+        if current_script is not None and script != current_script:
+            runs.append((current_script, current + text[position:match.start()]))
+            current = match.group()
+        else:
+            current += text[position:match.end()] if current else match.group()
+        current_script, position = script, match.end()
+    current += text[position:]
+    runs.append((current_script, current))
+    out = []
+    for script, run in runs:
+        run = run.strip(" ,")
+        if not run:
+            continue
+        if script == "hi" and run in _HINDI_LETTERS:
+            run += "।"
+        out.append(run)
+    return out
 
 # ---------------------------------------------------------------------------
 # Bound LAST so this module and the assistant import in either order; see the

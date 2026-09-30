@@ -27,8 +27,13 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 import profiles
 import kg_content
 import store
+import httpx
+# A leaf: what each student has told her about themselves.
+import friend_memory
 # A leaf: the RE-TELL verdict reads its report card with visuals.parse_report.
 import visuals
+# A leaf: the DNS cache and the log's timestamps, installed in main().
+import net
 
 
 # .env loading and the tunables it feeds live in config.py, which reads the
@@ -82,6 +87,7 @@ from media import (MEDIA_STOPPED_ACKS, MEDIA_WAKE_PHRASE_S, MEDIA_WAKE_TIMEOUT_S
 # this module at call time; see its header for which and why.
 from actions import (ACTION_DATA_PREFIX, CLOSED_FILE_ACKS, FILE_CANCEL_ACKS,
                      FILE_FOUND_ACKS, FILE_MISSING_ACKS, IMMEDIATE_ACTIONS,
+                     MODEL3D_DONE_ACKS, engine_try,
                      OPENING_ACKS, RE_CLOSE_FILE_PHRASE, RE_CONFIRM_NO,
                      RE_CONFIRM_YES, action_failure_sentence, device_state_block,
                      execute_action, file_query_topic, find_files,
@@ -91,13 +97,13 @@ from actions import (ACTION_DATA_PREFIX, CLOSED_FILE_ACKS, FILE_CANCEL_ACKS,
 # Everything she is told to be, and every fixed line she says. A leaf: it
 # imports nothing but re, so this only goes one way.
 from prompts import (AGENTIC_ACTIONS, ASSISTANT_SCOPE, EMOTION_PERSONA,
-                     LANGUAGE_INSTRUCTIONS, LLM_BUSY, LLM_UNREACHABLE,
+                     LANGUAGE_INSTRUCTIONS, LANGUAGE_ASKED_NOTE, LLM_BUSY, LLM_UNREACHABLE,
                      MODE_INSTRUCTIONS, RETELL_ACKS, RETELL_EVALUATE_AFTER_S,
                      RETELL_EVALUATION_PROMPT, RETELL_FOLLOWUP_PROMPT,
                      RETELL_FOLLOWUP_WINDOW_S, RETELL_MIN_LISTEN_S, RETELL_NUDGES,
                      RETELL_NUDGE_AFTER_S, RETELL_PHRASE_LIMIT_S, RE_RETELL_FOLLOWUP,
                      RE_RETELL_MARK_NOW,
-                     SEARCH_NOTICES, SLEEP_ACKS, UNIVERSAL_SYSTEM_PROMPT)
+                     LOST_THREAD_LINES, SEARCH_NOTICES, SLEEP_ACKS, UNIVERSAL_SYSTEM_PROMPT)
 # The voice. audio.py reads two names back through this module at call time.
 # The Kindergarten flow. kg.py reads a few names back through this module at
 # call time; see its foot for which.
@@ -108,15 +114,15 @@ from speech import (ClampedRecognizer, HeldMicrophone, VoiceListener,
                     clamp_energy, detect_microphone_index, disable_mic_agc,
                     get_microphone_device, is_probably_speech, list_microphones,
                     listen_for_media_command, listen_for_wake_word, looks_hallucinated,
-                    looks_unfinished, stt_prompt_size, transcribe,
+                    looks_unfinished, stt_prompt_size, transcribe, transcribe_either,
                     wake_word_match, is_repeated_hallucination, rejoin_absorbed_consonant,
                     clamp_stt_prompt, segment_logprob, RE_STOP_TALKING)
 from kg import (KG_DOUBT_PAUSE_S, KG_DOUBT_PHRASE_S, KG_DOUBT_WAIT_S,
                 kg_asking_stopped, kg_cancel_listen, kg_capture_utterance,
                 kg_handle_doubt, kg_holds_microphone, kg_listen_waiting,
                 kg_serve_listen)
-from audio import (audio_player_worker, list_cartesia_voices, spoken_parts,
-                   unspoken_lines)
+from audio import (audio_player_worker, list_cartesia_voices, set_speaker_volume,
+                   spoken_parts, unspoken_lines)
 from config import (BYTES_PER_SEC, CARTESIA_API_KEY, CARTESIA_MODEL,
                     CARTESIA_SAMPLE_RATE, CARTESIA_SPEED, CARTESIA_VOICE_ID,
                     VOICE_IDS, cartesia_client)
@@ -158,7 +164,11 @@ from ddgs import DDGS
 GROQ_STT_KEYS = [k.strip() for k in
                  (os.getenv("GROQ_STT_KEYS") or os.getenv("GROQ_API_KEYS") or os.getenv("GROQ_API_KEY", "")).split(",")
                  if k.strip()]
-groq_stt_clients = [Groq(api_key=k) for k in GROQ_STT_KEYS] or [Groq(api_key="")]
+# Bounded, so a network that has gone away costs seconds rather than a minute of
+# a student standing there. transcribe() retries once on its own.
+STT_TIMEOUT = httpx.Timeout(15.0, connect=4.0)
+groq_stt_clients = ([Groq(api_key=k, timeout=STT_TIMEOUT) for k in GROQ_STT_KEYS]
+                    or [Groq(api_key="", timeout=STT_TIMEOUT)])
 _groq_stt_cursor = itertools.count()
 _groq_stt_lock = threading.Lock()
 
@@ -173,9 +183,16 @@ def groq_key_order():
 
 # OpenRouter: LLM — text-based language models with access to multiple providers
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+# The SDK's default timeout is ten minutes. With a dropped connection that was
+# a reply that never came: logs/liza.log, 14:07:33, a question heard and then
+# eighteen seconds of nothing until somebody tapped Exit. connect is the part a
+# dead network fails; read bounds the gap between streamed chunks, and
+# start_chat_stream retries a failed connection straight away.
+LLM_TIMEOUT = httpx.Timeout(20.0, connect=4.0)
 openrouter_client = OpenAI(
     api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1"
+    base_url="https://openrouter.ai/api/v1",
+    timeout=LLM_TIMEOUT,
 )
 
 
@@ -187,6 +204,7 @@ openrouter_client = OpenAI(
 # Default: openai/gpt-oss-120b (via Groq). Also controls how long the room stays
 # silent before she starts talking; see start_chat_stream().
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.4"))
 # off | low | medium | high. THINKING IS OFF BY DEFAULT, AND THAT IS A LATENCY
 # DECISION. gemini-2.5-flash is a reasoning model, so left to itself it writes a
 # private chain of thought before the first word of the answer -- and nothing
@@ -582,7 +600,7 @@ STANDBY_AFTER_TIMEOUTS = 3   # -> ~30s of quiet before dropping back to standby
 
 
 RE_ANSWER_PREFIX = re.compile(r'ANSWER:\s*')
-RE_GREETING_PREFIX = re.compile(r'^\s*(?:"|\')?\s*(hi there|hello there|hi|hello|hey|greetings)\b[,!.:\s-]*', re.IGNORECASE)
+RE_GREETING_PREFIX = re.compile(r'^\s*(?:"|\')?\s*(hi there|hello there|hi|hello|hey|greetings)\b\s*[,!.:-]+\s*', re.IGNORECASE)
 RE_EMOJI = re.compile(r'[\U00010000-\U0010ffff]')
 # " * " and " x " between two things, and the real multiplication sign. Bounded
 # by whitespace on both sides so markdown emphasis and ordinary words are safe.
@@ -639,23 +657,31 @@ def history_path(user_id):
     return os.path.join(HISTORY_DIR, f"{user_id}.json")
 
 
-# How many turns already in the store when this session started. Everything
-# after that index is new and is what gets appended -- the store keeps an
-# append-only log of turns, while chat_history in memory is a rolling window
-# that trim_history() shortens, so writing the whole window back every turn
-# would duplicate rows the log already has.
-_history_written = 0
+# The turns already in the store, by identity. The store keeps an append-only
+# log, while chat_history in memory is a rolling window that trim_history()
+# shortens, so writing the whole window back every turn would duplicate rows the
+# log already has -- only turns not in here get appended.
+#
+# BY IDENTITY, NOT BY COUNT. This was an index into the window ("everything past
+# the Nth turn is new"), and trim_history runs BEFORE every save: once the window
+# was full at twelve messages it stayed at twelve, turns[12:] was empty on every
+# save after that, and nothing more was ever written. Sahil's log in PostgreSQL
+# stopped on 25 Sep while he went on talking to her for five more days. The
+# message dicts themselves survive trimming, so "is this exact object one we
+# wrote?" stays right however much the window slides.
+_history_saved = []
 
 
 def load_history(user_id=None):
-    global _history_owner, _history_written
+    global _history_owner, _history_saved
     _history_owner = user_id
     rows = store.load_messages(user_id, limit=MAX_HISTORY_TURNS * 2) if user_id else None
     if rows is not None:
-        _history_written = len(rows)
+        _history_saved = list(rows)
         return rows
-    # No store, or no student: the JSON files the device used before.
-    _history_written = 0
+    # No store, or no student: the JSON files the device used before. None of
+    # these are in the store yet, so all of them go in once it is back.
+    _history_saved = []
     path = history_path(user_id)
     if os.path.exists(path):
         with open(path, "r") as f:
@@ -671,7 +697,7 @@ def save_history(chat_history, user_id=None):
     keeps the JSON copy either way: it is what the device falls back to, and a
     fallback that has been stale since the database came up is not a fallback.
     """
-    global _history_written
+    global _history_saved
     owner = _history_owner if user_id is None else user_id
     # A profile deleted from the UI while ai_loop still holds their turns in
     # memory would otherwise be written straight back on the next save -- the
@@ -682,9 +708,12 @@ def save_history(chat_history, user_id=None):
         return
     turns = [m for m in chat_history if m.get("role") in ("user", "assistant")]
     if owner:
-        new_turns = turns[_history_written:]
-        if new_turns and store.append_messages(owner, new_turns):
-            _history_written = len(turns)
+        saved = {id(m) for m in _history_saved}
+        new_turns = [m for m in turns if id(m) not in saved]
+        if not new_turns or store.append_messages(owner, new_turns):
+            # The window itself, not the ids: holding the objects keeps their
+            # ids from being reused by a new dict while they are still compared.
+            _history_saved = turns
     path = history_path(owner)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1060,8 +1089,101 @@ HINDI_STT_ALIASES = {"hi", "hin", "hindi", "ur", "urd", "urdu"}
 # outside this set is re-read with the language forced; see the re-read below.
 STT_ALLOWED_LANGUAGES = {"en", "eng", "english"} | HINDI_STT_ALIASES
 
+# Everyday Hindi written in Latin letters: what makes a Latin transcript Hinglish
+# rather than English.
+RE_ROMAN_HINDI = re.compile(
+    r'\b(?:hai|hain|kya|kyu|kyun|kyon|nahi|nahin|mujhe|mujhko|mera|meri|mere|tum|tumhe|'
+    r'aap|aapko|kaise|kaisa|kaisi|karo|karna|karta|karti|batao|bataiye|samjhao|'
+    r'hota|hoti|tha|thi|raha|rahi|rahe|wala|wali|kaun|kahan|kab|kitna|kitne|'
+    r'accha|acha|theek|thik|haan|bhi|aur|lekin|matlab|yaar|bhai|dikhao|chahiye)\b',
+    re.IGNORECASE)
+
+
+# ASKING her for a language, which then holds until they ask for the other.
+# Before this, "switch to English" bought exactly one English reply: the next
+# turn was routed off the transcript again, and Indian-accented English comes
+# back from Whisper in Devanagari often enough ("वोट इद एलेक्ट्रिसिटी" for
+# "what is electricity") that she was back in Hindi a sentence later --
+# logs/liza.log, 15:28 and 16:00-16:01, a student asking for English three
+# times in two minutes. She had even said "I will stick to English from now
+# on", and then didn't.
+#
+# The verbs are imperatives on purpose. "मछली को इंग्लिश में क्या बोलते हैं?"
+# (what is fish called in English) is a question about a word, and bolte /
+# kehte / "called" / "say" are how that question is asked -- none are here.
+_LANG_ENGLISH = r'(?:english|inglish|इंग्लिश|इंगलिश|अंग्रेज़ी|अंग्रेजी)'
+_LANG_HINDI = r'(?:hindi|हिंदी|हिन्दी)'
+_LANG_ASK = (r'(?:\b(?:speak|talk|reply|answer|switch|stick|continue|respond|'
+             r'baat|bolo|boliye|bolna|bologi|bolegi|samjhao|samjhaiye)\w*'
+             r'|बात|बोलो|बोलिए|बोलना|बोलोगी|बोलेंगी|बोलिये|जवाब|समझाओ|समझाइए)')
+RE_ASK_FOR_ENGLISH = re.compile(
+    _LANG_ASK + r'[^.?!।]{0,30}?' + _LANG_ENGLISH + '|'
+    + _LANG_ENGLISH + r'[^.?!।]{0,25}?' + _LANG_ASK, re.IGNORECASE)
+RE_ASK_FOR_HINDI = re.compile(
+    _LANG_ASK + r'[^.?!।]{0,30}?' + _LANG_HINDI + '|'
+    + _LANG_HINDI + r'[^.?!।]{0,25}?' + _LANG_ASK, re.IGNORECASE)
+
+# The language they asked for, or None to follow whatever they speak. Per
+# session of the process and cleared on Switch User: one child's "English
+# please" is not the next child's.
+_language_preference = [None]
+
+
+def remember_language_request(text):
+    """Note a request to change language. Returns the language asked for, or None."""
+    wants_english = bool(RE_ASK_FOR_ENGLISH.search(text or ""))
+    wants_hindi = bool(RE_ASK_FOR_HINDI.search(text or ""))
+    if wants_english == wants_hindi:
+        return None                  # neither, or "not Hindi, English" -- unclear
+    asked = "en" if wants_english else "hi"
+    if _language_preference[0] != asked:
+        print(f"[LANGUAGE] Asked for {'English' if asked == 'en' else 'Hindi'}; "
+              f"holding it until asked otherwise.", flush=True)
+    _language_preference[0] = asked
+    return asked
+
+
+def language_preference():
+    return _language_preference[0]
+
+
+def forget_language_preference():
+    _language_preference[0] = None
+
+
+# English, written in Devanagari. On an Indian accent Whisper often decides the
+# LANGUAGE is Hindi and then spells the English words it heard in Hindi letters
+# -- "वोट इद एलेक्ट्रिसिटी", "आप मुझे फिश क्या कहते हैं" -- and a reply routed
+# off the script is in Hindi to a student who spoke English. These are the
+# small English words that only turn up in Devanagari that way; none of them
+# is a Hindi word ("इस", "इन", "ए", "नो" are, and are left out).
+ENGLISH_IN_DEVANAGARI = {
+    "व्हाट", "वॉट", "वाट", "वोट", "व्हाट्स", "वॉट्स", "इज़", "इज", "इद", "इट",
+    "इट्स", "द", "दी", "हाउ", "व्हाई", "वाई", "व्हेयर", "वेयर", "व्हेन", "वेन",
+    "हू", "कैन", "कॅन", "यू", "योर", "टेल", "मी", "अबाउट", "प्लीज़", "प्लीज",
+    "एक्सप्लेन", "डू", "डज़", "डज", "डिड", "आई", "दिस", "दैट", "वी", "दे",
+    "आर", "ऑफ", "ऑफ़", "विद", "विथ", "फ्रॉम", "एंड", "थैंक", "थैंक्स", "शो",
+    "ड्रॉ", "गिव", "येस", "स्पीक", "टॉक", "व्हिच", "विच", "हैव", "हैज़", "वाज़",
+    "वॉज़", "कुड", "वुड", "शुड", "नॉट", "डोंट", "वांट", "मीनिंग",
+}
+RE_DEVANAGARI_WORD = re.compile(r'[\u0900-\u0963\u0966-\u097f]+')
+
+
+def looks_like_english_in_devanagari(text):
+    """True when a Devanagari transcript is mostly English words spelled in
+    Hindi letters, so the audio is worth reading again as English."""
+    words = RE_DEVANAGARI_WORD.findall(text or "")
+    hits = sum(word in ENGLISH_IN_DEVANAGARI for word in words)
+    return hits >= 2 and hits >= 0.4 * len(words)
+
+
 def detect_user_language(text, stt_language=None):
-    """What the student just spoke, used to steer the reply: 'hi', 'en' or 'hinglish'."""
+    """What the student just spoke, used to steer the reply: 'hi', 'en' or 'hinglish'.
+
+    A language they have ASKED for wins over what they spoke; see
+    remember_language_request."""
+    if _language_preference[0]:
+        return _language_preference[0]
     has_devanagari = bool(RE_DEVANAGARI.search(text))
     has_latin_words = bool(RE_LATIN_WORD.search(text))
     stt_language = (stt_language or "").strip().lower()
@@ -1069,8 +1191,12 @@ def detect_user_language(text, stt_language=None):
 
     if has_devanagari and has_latin_words: return "hinglish"
     if has_devanagari: return "hi"
-    # Whisper heard Hindi but wrote it in Latin letters, i.e. romanised Hinglish.
-    if stt_says_hindi: return "hinglish"
+    # Whisper heard Hindi but wrote it in Latin letters, i.e. romanised Hinglish
+    # -- but only if there is Hindi in it. Whisper's language tag on a short,
+    # accented English clip is unreliable: "You have to stick in English." and
+    # "Are you listening?" both came back tagged Hindi, and were answered in
+    # Hinglish.
+    if stt_says_hindi and RE_ROMAN_HINDI.search(text): return "hinglish"
     return "en"
 
 def detect_tts_language(text):
@@ -1084,6 +1210,28 @@ def detect_tts_language(text):
 _chat_tuning_supported = True
 
 RE_RETRY_AFTER = re.compile(r"try again in ([0-9.]+)s")
+
+def memory_completion(messages):
+    """One small, unstreamed answer, for friend_memory. Raises on failure."""
+    c = openrouter_client.with_options(max_retries=0)
+    kwargs = {"model": LLM_MODEL, "messages": messages, "stream": False,
+              "max_tokens": 700, "temperature": 0}
+    response = (c.chat.completions.create(**LLM_TUNING, **kwargs)
+                if _chat_tuning_supported else c.chat.completions.create(**kwargs))
+    return response.choices[0].message.content or ""
+
+
+def remember_about_them(text, chat_history):
+    """Hand what they just said to friend_memory, with her last line for context."""
+    try:
+        profile = profiles.get_active_profile()
+    except Exception:
+        return
+    last = next((m.get("content", "") for m in reversed(chat_history)
+                 if m.get("role") == "assistant"), "")
+    last = RE_ANSWER_PREFIX.sub("", re.sub(r"EMOTION:.*\n?", "", last)).strip()
+    friend_memory.learn_later(profile, text, last[:300], memory_completion)
+
 
 def start_chat_stream(messages, attempts=3):
     """Open the streaming completion for a reply. One funnel, so the model, its
@@ -1124,7 +1272,11 @@ def start_chat_stream(messages, attempts=3):
         # cap tuned for English truncates Hindi mid-word. Brevity is enforced
         # by the prompt instead; this is only a runaway guard.
         "max_tokens": LLM_MAX_TOKENS,
-        "temperature": 0.7,
+        # 0.7 was a storyteller's setting on a device mostly asked for facts,
+        # and it shows in logs/liza.log as confident answers to garbled
+        # questions. Low enough to stay on what it knows, not so low that every
+        # reply opens the same way.
+        "temperature": LLM_TEMPERATURE,
     }
 
     def fire():
@@ -1300,6 +1452,50 @@ RE_INLINE_EMOTION_TAG = re.compile(
     r'^[ \t]*(?:' + '|'.join(EMOTION_STYLE) + r')[ \t]*:[ \t]*',
     re.IGNORECASE)
 
+# A first line that is only a mood, however it is dressed: "EMOTION: curious",
+# "curious", "ANSWER: encouraging", "EMOTION: [calm]".
+RE_MOOD_ONLY_LINE = re.compile(
+    r'^[ \t]*(?:ANSWER:[ \t]*)?(?:EMOTION:[ \t]*)?\[?[ \t]*(' + '|'.join(EMOTION_STYLE)
+    + r')[ \t]*\]?[ \t]*[.!]?[ \t]*$', re.IGNORECASE)
+# Long enough, with no label in sight, that it can only be the answer itself.
+ANSWER_WITHOUT_LABEL_CHARS = 40
+# Gemini's own reasoning, leaked into the reply under a first line that just
+# says "thought". Once in 494 replies, and that once (18:07 on 2026-09-25) she
+# read out "The show_visual action has molecule for individual molecules..."
+# for forty seconds until the student tapped Stop: the line is not a mood, so
+# answer_without_prefix took the whole reasoning for the answer. Nothing under
+# that line is spoken until an ANSWER: arrives; with none, LOST_THREAD_LINES.
+RE_THOUGHT_LEAK = re.compile(r'^\s*(?:thought|thoughts|thinking)\s*:?[ \t]*\n', re.IGNORECASE)
+
+
+def answer_without_prefix(text):
+    """(mood or None, the answer so far) for a reply that has not said
+    "ANSWER:", once it can be read as one; None while it is still ambiguous.
+
+    The contract is "EMOTION: x" then "ANSWER: ...", and the model does not
+    always keep it. From logs/liza.log, 'EMOTION: thoughtful\\nCarbon dioxide
+    doesn't have...' -- no ANSWER: at all. The streaming splitter waited for
+    one that never came, so nothing was spoken until the whole reply had
+    arrived, and then all of it went to the speaker as ONE line: slower to
+    start, and when barge-in cut it, "finish the reply" had only one line to
+    go back to and started the whole answer again from the top.
+    """
+    first, newline, rest = text.partition("\n")
+    if newline:
+        if RE_THOUGHT_LEAK.match(text):
+            return None
+        mood = RE_MOOD_ONLY_LINE.match(first)
+        if mood:
+            return mood.group(1).lower(), rest
+        if re.match(r'\s*(?:EMOTION|SEARCH)\s*:', first, re.IGNORECASE):
+            return None
+        return None, text
+    head = text.lstrip()
+    if len(head) >= ANSWER_WITHOUT_LABEL_CHARS and not re.match(
+            r'(?:EMOTION|ANSWER|SEARCH)\b', head, re.IGNORECASE):
+        return None, text
+    return None
+
 # Which cached mascot animation plays for each app state.
 # ==========================================
 # Core AI Functions
@@ -1321,6 +1517,9 @@ def clean_text_for_tts(text):
     clean = RE_ACTION_TAG_STRIP.sub('', text)
     clean = re.sub(r'VISUAL:.*', '', clean, flags=re.IGNORECASE)
     clean = re.sub(r'EMOTION:.*', '', clean, flags=re.IGNORECASE)
+    # Before the mood-line strips below, so "ANSWER: encouraging\n..." -- the
+    # label on the wrong line -- is recognised as a mood line and not spoken.
+    clean = RE_ANSWER_PREFIX.sub('', clean)
     # Then the same thing with the label dropped; see RE_BARE_EMOTION_LINE.
     # After the line above, so a well-formed "EMOTION: curious" is already gone
     # and this only ever sees the malformed shape it exists for.
@@ -1361,7 +1560,7 @@ THINKING_FILLER_AFTER_S = float(os.getenv("THINKING_FILLER_AFTER_S", "2.5"))
 # words every time either.
 THINKING_FILLERS = {
     "en": ["One moment.", "Let me think.", "Just a second.", "Hmm, let me see."],
-    "hi": ["एक सेकंड।", "थोड़ा रुकिए।", "सोच रही हूँ।", "बस एक पल।"],
+    "hi": ["एक सेकंड।", "रुको, सोचने दो।", "सोच रही हूँ।", "बस एक पल।"],
 }
 THINKING_FILLERS["hinglish"] = THINKING_FILLERS["hi"]
 _thinking_filler_index = 0
@@ -1395,6 +1594,7 @@ def ai_loop(ui, headless=False):
     if not headless:
         mic_index = detect_microphone_index()
         disable_mic_agc(mic_index)
+        set_speaker_volume()
         recognizer.pause_threshold = PAUSE_THRESHOLD_NORMAL
         recognizer.non_speaking_duration = 0.3
 
@@ -1512,6 +1712,7 @@ def ai_loop(ui, headless=False):
             save_history(chat_history, history_for)
             chat_history = load_history(current_user)
             history_for = current_user
+            forget_language_preference()
             print(f"[PROFILE] Switched to a different student's history "
                   f"({len(chat_history)} messages).", flush=True)
 
@@ -1681,14 +1882,22 @@ def ai_loop(ui, headless=False):
             retell_buffer, retell_silence_from, retell_nudged = [], 0.0, False
             in_retell = ui.current_mode == "RE-TELL"
 
-        # Sleep was tapped. The button itself already stopped any speech and
-        # media; all that is left is to drop this loop into standby, where it
-        # waits for the wake word or a Speak tap exactly as it does on a
-        # normal timeout. Noticed at most one listen() timeout late, because
-        # the microphone read below cannot be interrupted from another thread.
+        # Sleep was tapped. The button itself stopped any speech and media that
+        # were playing at the time; all that is left is to drop this loop into
+        # standby, where it waits for the wake word or a Speak tap exactly as it
+        # does on a normal timeout. Noticed at most one listen() timeout late,
+        # because the microphone read below cannot be interrupted from another
+        # thread.
+        #
+        # Silenced AGAIN here, because a tap while she is thinking finds nothing
+        # playing to stop: the reply arrives a second later and is spoken to a
+        # student who has just put her to sleep. logs/liza.log has one talking
+        # for eleven seconds after the tap, until Stop was pressed as well.
         if sleep_event.is_set():
             sleep_event.clear()
             print("[STATE] Sleep requested. Returning to Standby Mode...", flush=True)
+            if playback_active.is_set() or not audio_queue.empty():
+                interrupt_playback()
             session_active = False
             silence_counter = 0
             pending_question = pending_language = ""
@@ -2422,7 +2631,17 @@ def ai_loop(ui, headless=False):
                                         dynamic_stt_prompt = f"{STT_SEED_PROMPT} {recent}"
                                 break
 
-                        text, stt_language = transcribe(wav_data, dynamic_stt_prompt)
+                        # Asked for English: read the audio AS English, which
+                        # is the one thing that stops an Indian accent coming
+                        # back spelled in Devanagari. Hindi speech is then
+                        # translated, which is what was asked for anyway -- and
+                        # "हिंदी में बात करो" still arrives as "talk in Hindi".
+                        # verify_prompt on every reading here: see
+                        # prompt_read_back for what she was answering without it.
+                        text, stt_language = transcribe(
+                            wav_data, dynamic_stt_prompt,
+                            language="en" if language_preference() == "en" else None,
+                            verify_prompt=True)
 
                         # Whisper wandered off to a language this device does not
                         # speak. Re-read the same audio with the language pinned
@@ -2432,17 +2651,29 @@ def ai_loop(ui, headless=False):
                         # text means the sounds really were Hindi, so that is the
                         # one worth forcing; otherwise fall back to English.
                         if text and (stt_language or "").strip().lower() not in STT_ALLOWED_LANGUAGES:
-                            forced = "hi" if RE_DEVANAGARI.search(text) else "en"
                             print(f"[STT] Heard '{stt_language}', which this device does not "
-                                  f"speak; re-reading as '{forced}'...", flush=True)
-                            text, stt_language = transcribe(wav_data, STT_SEED_PROMPT,
-                                                            language=forced)
+                                  f"speak; reading it as English and as Hindi...", flush=True)
+                            text, stt_language = transcribe_either(wav_data, STT_SEED_PROMPT,
+                                                                   verify_prompt=True)
 
                         # Hindi heard as Urdu (or any other Indic script): re-read the same audio
                         # forced to Hindi so we get Devanagari the voice can actually speak.
                         if RE_UNREADABLE_SCRIPT.search(text):
                             print(f"[STT] Heard '{stt_language}' in an unreadable script, re-reading as Hindi...", flush=True)
-                            text, stt_language = transcribe(wav_data, STT_SEED_PROMPT, language="hi")
+                            text, stt_language = transcribe(wav_data, STT_SEED_PROMPT, language="hi",
+                                                            verify_prompt=True)
+
+                        # English that came back spelled in Hindi letters. See
+                        # ENGLISH_IN_DEVANAGARI. Not when Hindi was asked for.
+                        if (language_preference() != "hi"
+                                and looks_like_english_in_devanagari(text)):
+                            print(f"[STT] English in Hindi letters ({text!r}); "
+                                  f"re-reading as English...", flush=True)
+                            english, english_language = transcribe(
+                                wav_data, dynamic_stt_prompt, language="en",
+                                verify_prompt=True)
+                            if english:
+                                text, stt_language = english, english_language
 
                         lower_text = text.lower().strip()
 
@@ -2454,11 +2685,13 @@ def ai_loop(ui, headless=False):
                         # how much vocabulary the two share; see
                         # echo_run_length() for what the shared-vocabulary test
                         # was doing to follow-up questions.
-                        # Compared against last_spoken_text (everything Liza
-                        # actually said, including mode intros) rather than
-                        # current_ai_response, which only ever held LLM answers,
-                        # and for a short window AFTER playback as well as
-                        # during it -- the speaker is still draining then.
+                        # Compared against what Liza actually said, including
+                        # mode intros, rather than current_ai_response, which
+                        # only ever held LLM answers -- but only the response
+                        # that could still be coming out of the speaker. See
+                        # state.spoken_responses. And for a short window AFTER
+                        # playback as well as during it -- the speaker is still
+                        # draining then.
                         # Dated from when the microphone heard it, not from now.
                         # A negative gap means the capture began while she was
                         # still talking, which is echo or a barge-in either way.
@@ -2468,7 +2701,8 @@ def ai_loop(ui, headless=False):
                             user_words = echo_words(lower_text)
 
                             if user_words:
-                                if sounds_like_echo(lower_text, state.last_spoken_text):
+                                if sounds_like_echo(lower_text, state.spoken_around(
+                                        speech_started_at, ECHO_GUARD_SEC)):
                                     print(f"[ECHO DETECTED] Ignoring speaker bleed: {text}", flush=True)
                                     resume_cut_reply("her own voice")
                                     continue
@@ -2767,6 +3001,27 @@ def ai_loop(ui, headless=False):
                 save_history(chat_history)
                 continue
 
+        # --- FAST PATH: a command for the 3D engine's model on the board ---
+        # "rotate it", "cut it in half", "show the left ventricle", "go one
+        # level deeper", "change the angle to 60": the engine recognises these
+        # itself, in milliseconds, and nothing about them needs the model. Only
+        # what it is SURE is a command is taken; a question ("why is this wall
+        # thicker?") or anything it does not know comes back untouched and goes
+        # on to the model as usual, with the board described in ON_BOARD.
+        if not is_retell_eval and not media_kind:
+            answer = engine_try(text)
+            if answer:
+                reply_language = detect_user_language(text, stt_language)
+                reply = MODEL3D_DONE_ACKS.get(reply_language) or answer.get("reply") or "Done."
+                print(f"[FAST] 3D engine without the model: {text!r} -> {answer.get('reply')!r}", flush=True)
+                audio_queue.put(reply)
+                audio_queue.put("[END_OF_RESPONSE]")
+                chat_history.append({"role": "user", "content": f"User: {text}"})
+                chat_history.append({"role": "assistant", "content": reply})
+                chat_history = trim_history(chat_history)
+                save_history(chat_history)
+                continue
+
         # "Which song?" -> "Shape of You". The answer names a title but has no
         # "play" in it, so on its own it looks like ordinary conversation and
         # used to reach the LLM, which replied "Enjoy!" and played nothing.
@@ -2896,8 +3151,10 @@ def ai_loop(ui, headless=False):
         else:
             mode_instruction = MODE_INSTRUCTIONS.get(ui.current_mode, MODE_INSTRUCTIONS["TUTOR"])
 
+        remember_language_request(text)
         user_language = detect_user_language(text, stt_language)
-        print(f"[LANGUAGE] heard={stt_language or 'n/a'} -> replying in {user_language}", flush=True)
+        print(f"[LANGUAGE] heard={stt_language or 'n/a'} -> replying in {user_language}"
+              + (" (as asked)" if language_preference() else ""), flush=True)
 
         # Checked again HERE, not only at the top of the loop. Switch User is a
         # tap on the Tk thread and lands whenever it lands -- typically while
@@ -2913,6 +3170,9 @@ def ai_loop(ui, headless=False):
             save_history(chat_history, history_for)
             chat_history = load_history(current_user)
             history_for = current_user
+            forget_language_preference()
+            remember_language_request(text)
+            user_language = detect_user_language(text, stt_language)
             print(f"[PROFILE] Switched student mid-turn; loaded their history "
                   f"({len(chat_history)} messages).", flush=True)
 
@@ -2921,6 +3181,11 @@ def ai_loop(ui, headless=False):
         # question passes through with `text` still in hand, and because a note
         # is worth taking only for a turn that actually became a lesson.
         note_learning(text)
+        # And anything they said about THEMSELVES, on its own thread; see
+        # friend_memory.py. Not from a recitation: RE-TELL is them teaching a
+        # chapter back, and "we learned that plants..." is not news about them.
+        if ui.current_mode != "RE-TELL":
+            remember_about_them(text, chat_history)
 
         current_time = datetime.now().strftime("%I:%M %p, %A, %B %d, %Y")
         dynamic_system_prompt = UNIVERSAL_SYSTEM_PROMPT.format(
@@ -2938,7 +3203,8 @@ def ai_loop(ui, headless=False):
             # anything cacheable -- see the section-order note in prompts.py.
             textbook_context=textbook_block(text),
             domain_guidelines=mode_instruction,
-            language_guidelines=LANGUAGE_INSTRUCTIONS[user_language],
+            language_guidelines=LANGUAGE_INSTRUCTIONS[user_language]
+            + (LANGUAGE_ASKED_NOTE if language_preference() else ""),
             # Volatile, so it sits at the very bottom with the clock -- see the
             # section-order note above UNIVERSAL_SYSTEM_PROMPT.
             device_state=device_state_block(),
@@ -3000,7 +3266,8 @@ def ai_loop(ui, headless=False):
                     spoken_anything = False
 
                     for chunk in response_stream:
-                        if stop_playback_event.is_set():
+                        # Sleep too: see the Sleep note at the top of the loop.
+                        if stop_playback_event.is_set() or sleep_event.is_set():
                             break 
                         
                         delta = chunk.choices[0].delta.content
@@ -3046,7 +3313,19 @@ def ai_loop(ui, headless=False):
                                 delivery = emotion_delivery(mood.group(1) if mood
                                                             else None)
                                 buffer = tail.lstrip()
-                            else: continue 
+                            else:
+                                # No "ANSWER:" -- the model drops it now and
+                                # then, and every word used to wait for the END
+                                # of the reply and go out as one block. See
+                                # answer_without_prefix.
+                                started = answer_without_prefix(full_response)
+                                if started is None:
+                                    continue
+                                emotion_parsed = True
+                                mood_word, buffer = started
+                                if mood_word:
+                                    ui_invoke("set_emotion", mood_word)
+                                delivery = emotion_delivery(mood_word)
                         elif not is_searching:
                             buffer += delta 
                             state.current_ai_response = full_response 
@@ -3102,6 +3381,21 @@ def ai_loop(ui, headless=False):
                     if full_response.strip():
                         print(f"[LLM RAW] {full_response.strip()[:700]!r}", flush=True)
 
+                    # Reasoning is not an answer, and it must not reach the
+                    # history or the action parser either: it talks about tags
+                    # ("I could use [ACTION: show_visual...]") it never meant.
+                    if not is_searching and RE_THOUGHT_LEAK.match(full_response):
+                        if emotion_parsed:
+                            full_response = "ANSWER: " + full_response.rpartition("ANSWER:")[2]
+                        else:
+                            print("[LLM] That reply was the model's reasoning with no answer; "
+                                  "not speaking it.", flush=True)
+                            full_response = LOST_THREAD_LINES.get(user_language,
+                                                                  LOST_THREAD_LINES["en"])
+                            emotion_parsed = True
+                            buffer = full_response
+                            delivery = emotion_delivery("sorry")
+
                     if not is_searching:
                         if not emotion_parsed:
                             # The reply never carried the contract at all, so
@@ -3110,13 +3404,17 @@ def ai_loop(ui, headless=False):
                             # EMOTION: line if one turned up without ANSWER:.
                             buffer = full_response
                             delivery = emotion_delivery(None)
-                        if buffer.strip():
+                        if buffer.strip() and not sleep_event.is_set():
                             clean = clean_text_for_tts(buffer.strip())
-                            if clean:
-                                answered.set()
-                                audio_queue.put((clean, delivery) if delivery
-                                                else clean)
-                    
+                            # One line per sentence, so a reply cut part-way
+                            # is picked up at the sentence that was cut rather
+                            # than from the top. See resume_cut_reply.
+                            for sentence in RE_SENTENCE_SPLIT.split(clean):
+                                if sentence.strip():
+                                    answered.set()
+                                    audio_queue.put((sentence.strip(), delivery)
+                                                    if delivery else sentence.strip())
+
                     if is_searching:
                         try: search_query = full_response.split("SEARCH:")[1].strip()
                         except IndexError: search_query = full_response.replace("SEARCH:", "").strip()
@@ -3268,6 +3566,10 @@ def ai_loop(ui, headless=False):
 def main():
     """Start the assistant. Called by assist.py, which is the file the
     launcher runs."""
+    # First, before any request: a slow DNS server was costing whole seconds
+    # per turn, and an unstamped log could not show it. See net.py.
+    net.stamp_log_lines()
+    net.install_dns_cache()
     # ui_instance is the module global that every ui_call() and ui_invoke()
     # reads to find the screen. Without this it would bind a LOCAL here, the
     # global would stay None, and every update sent from the ai thread would

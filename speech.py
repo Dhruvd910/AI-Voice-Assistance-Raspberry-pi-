@@ -40,7 +40,7 @@ from config import (BARGE_IN_DEBUG, BARGE_IN_ENABLED, BARGE_IN_LEAD_S,
                     STT_MODEL, STT_PROMPT_MAX_CHARS, STT_SEED_PROMPT,
                     VAD_AGGRESSIVENESS, VAD_ENABLED, VAD_FRAME_BYTES,
                     VAD_FRAME_MS, VAD_MIN_RMS, VAD_PREROLL_MS,
-                    VAD_RATE, VAD_START_MS, VAD_TAIL_MS,
+                    VAD_RATE, VAD_START_MS, VAD_TAIL_MS, WAKE_MIN_LOGPROB,
                     WAKE_BARE_NAME_MAX_WORDS, WAKE_LISTEN_TIMEOUT_S, WAKE_MAX_LEAD_WORDS,
                     WAKE_PHRASE_LIMIT_S, WAKE_SEED_PROMPT, WAKE_SEED_PROMPT_ASLEEP,
                     WAKE_SLEEP_MAX_WORDS, WAKE_STT_MODEL)
@@ -1219,14 +1219,29 @@ def segment_logprob(result):
     return min(scores) if scores else None
 
 
-def transcribe(wav_data, prompt, language=None, model=None, attempts=2):
+def transcribe(wav_data, prompt, language=None, model=None, attempts=2, keep=None,
+               scored=False, keep_floor=None, verify_prompt=False, judge=True):
     """Groq STT. With no `language` Whisper auto-detects; pass one to force it.
 
     Retried once because the failure is invisible and expensive: on a Pi over
     home wifi a dropped connection here used to surface as one [STT Error] line
     and total silence, so the student got no reply at all and no reason for it,
     and had to guess that repeating themselves was the fix. wav_data is bytes,
-    so replaying the same audio costs nothing but the call."""
+    so replaying the same audio costs nothing but the call.
+
+    `keep`: a pattern that rescues a transcript dropped ONLY for low confidence,
+    down to WAKE_MIN_LOGPROB -- for the wake phrase, whose two-word clips score
+    lower than any sentence. See WAKE_MIN_LOGPROB. A callable works too, and
+    `keep_floor` moves the floor: a KG screen passes the answer it is waiting
+    for, so a right answer in an Indian accent is not thrown away as a guess.
+
+    `scored`: return (text, language, avg_logprob) instead, for choosing
+    between two readings of the same audio; see transcribe_either.
+
+    `verify_prompt`: when the transcript is mostly the prompt handed back, read
+    the audio again with no prompt and drop it unless the words survive. See
+    prompt_read_back. `judge=False` skips looks_hallucinated entirely, for that
+    second reading, which is only ever compared and never answered."""
     params = {
         "file": ("temp.wav", wav_data),
         "model": model or STT_MODEL,
@@ -1256,11 +1271,19 @@ def transcribe(wav_data, prompt, language=None, model=None, attempts=2):
             # them ever had it. A KG child was being marked wrong for an answer
             # Whisper invented out of the room, and none of that ever reached the
             # code that knew what a hallucination looked like.
-            invented, why = looks_hallucinated(text, segment_logprob(result))
+            logprob = segment_logprob(result)
+            invented, why = looks_hallucinated(text, logprob) if judge else (False, "")
+            floor = WAKE_MIN_LOGPROB if keep_floor is None else keep_floor
+            if (invented and keep is not None and why.startswith("low confidence")
+                    and logprob is not None and logprob >= floor
+                    and (keep(text) if callable(keep) else keep.search(text))):
+                print(f"[STT] Kept at {logprob:.2f}, it is what was expected: {text!r}",
+                      flush=True)
+                invented = False
             if invented:
                 print(f"[STT] Dropped ({why}): {text!r}", flush=True)
-                return "", spoken_language
-            return text, spoken_language
+                return ("", spoken_language, logprob) if scored else ("", spoken_language)
+            break
         except Exception as exc:
             # A rejected REQUEST will be rejected identically next time -- only
             # transport failures are worth replaying. Retrying a 400 turned one
@@ -1272,6 +1295,173 @@ def transcribe(wav_data, prompt, language=None, model=None, attempts=2):
                 raise
             print(f"[STT] Attempt {attempt + 1} failed ({exc}); retrying...", flush=True)
             time.sleep(0.4)
+    # Outside the retry loop, so a failed second reading is not mistaken for a
+    # failure of this one.
+    if (verify_prompt
+            and (prompt_read_back(text, prompt) >= PROMPT_READ_BACK_SHARE
+                 or prompt_vocabulary_share(text, prompt) >= PROMPT_VOCAB_SHARE)
+            and not heard_without_prompt(wav_data, text, language, model)):
+        text = ""
+    return (text, spoken_language, logprob) if scored else (text, spoken_language)
+
+
+# WHISPER HANDS ITS PROMPT BACK.
+#
+# The prompt is meant as the text that came BEFORE this audio, so on a clip it
+# cannot make out -- a mumble, a tap on the screen, the room -- Whisper carries
+# on from the prompt instead of saying nothing. The conversation prompt is the
+# subject seed plus the end of her last reply, and both came back in
+# logs/liza.log as the student's turn:
+#
+#   "नमस्ते लीज़ा, यह concept समझाओ। Biology, chloroplast, photosynthesis,
+#    ribosome, chromosome, enzyme, osmosis..." -- the seed, word for word. She
+#    took it as a request and taught the list, one word per turn.
+#   "प्रोटीन बनाती हैं।", "जानना चाहती हो।", "आप अगले शब्द पर चलें?" -- the ends of
+#    her own replies, from sentences she was cut off before saying. Each was
+#    answered with "हाँ, बिल्कुल!" and the next word on the list, so every attempt
+#    to stop the lecture moved it on instead.
+#
+# The echo guard cannot catch these: the words never came out of the speaker,
+# and they arrive after she has stopped. None of the hallucination checks do
+# either, because they are fluent, confident, and in the right language.
+#
+# Wording alone cannot settle it, because a student does reuse her words
+# ("Yes, clear the board." after she offers to clear it). So a transcript that
+# is mostly the prompt is read again with NO prompt, and kept only if the words
+# are still there. Scored over the 534 transcripts in the log, 11 are this
+# shape -- every one of the read-backs above plus a couple of real replies, and
+# those are what the second reading is for.
+PROMPT_READ_BACK_RUN = 3        # a run of the prompt this long is not chance
+PROMPT_READ_BACK_SHARE = 0.6    # this much of the transcript in such runs
+PROMPT_REREAD_AGREEMENT = 0.5   # this much of it must survive the re-read
+
+
+# The same read-back, SHUFFLED. Whisper does not only continue the seed word
+# for word; out of silence it also strings its vocabulary together in a new
+# order -- "Biology, electron, chromosome, photosynthesis, ribosome" -- which no
+# run of three matches. So a transcript whose words are nearly all in the
+# prompt is re-read without it as well. The re-read is what keeps a real
+# question: "explain photosynthesis and respiration" is mostly prompt words
+# too, and it is still there when read with no prompt.
+PROMPT_VOCAB_SHARE = 0.8        # this much of its distinct words are in the prompt
+PROMPT_VOCAB_MIN_WORDS = 5      # and it has at least this many distinct words
+
+
+def prompt_vocabulary_share(text, prompt):
+    """The share of `text`'s distinct words that appear anywhere in `prompt`.
+    0.0 when there are fewer than PROMPT_VOCAB_MIN_WORDS of them."""
+    tokenise = assistant.RE_ECHO_TOKEN.findall
+    heard = set(tokenise((text or "").lower()))
+    primed = set(tokenise((prompt or "").lower()))
+    if len(heard) < PROMPT_VOCAB_MIN_WORDS or not primed:
+        return 0.0
+    return len(heard & primed) / len(heard)
+
+
+def prompt_read_back(text, prompt):
+    """The share of `text`'s words that sit in verbatim runs of `prompt` at
+    least PROMPT_READ_BACK_RUN words long. 0.0 for anything shorter than that."""
+    tokenise = assistant.RE_ECHO_TOKEN.findall
+    heard, primed = tokenise((text or "").lower()), tokenise((prompt or "").lower())
+    if len(heard) < PROMPT_READ_BACK_RUN or not primed:
+        return 0.0
+    covered = i = 0
+    while i < len(heard):
+        run = 0
+        for k in range(len(primed)):
+            n = 0
+            while (i + n < len(heard) and k + n < len(primed)
+                   and heard[i + n] == primed[k + n]):
+                n += 1
+            run = max(run, n)
+        if run >= PROMPT_READ_BACK_RUN:
+            covered += run
+            i += run
+        else:
+            i += 1
+    return covered / len(heard)
+
+
+def heard_without_prompt(wav_data, text, language=None, model=None):
+    """True when Whisper still hears `text` in this audio with no prompt at all.
+
+    Forced to the script `text` came back in, so the two readings can be
+    compared word for word; left to itself Whisper writes the same Hindi in
+    Devanagari one time and in Latin letters the next. Fails OPEN: if the
+    second reading cannot be had, the first one stands, as it always did."""
+    plain_language = language or ("hi" if RE_DEVANAGARI_ANY.search(text) else "en")
+    try:
+        plain, _l, _lp = transcribe(wav_data, "", language=plain_language, model=model,
+                                    attempts=1, scored=True, judge=False)
+    except Exception as exc:
+        print(f"[STT] Could not re-read without the prompt ({exc}); keeping {text!r}.",
+              flush=True)
+        return True
+    heard = assistant.RE_ECHO_TOKEN.findall(text.lower())
+    again = set(assistant.RE_ECHO_TOKEN.findall((plain or "").lower()))
+    agreement = sum(1 for word in heard if word in again) / len(heard)
+    if agreement >= PROMPT_REREAD_AGREEMENT:
+        print(f"[STT] Mostly the prompt, but still there without it ({plain!r}); "
+              f"keeping {text!r}.", flush=True)
+        return True
+    print(f"[STT] Dropped (the prompt read back; without it: {plain!r}): {text!r}",
+          flush=True)
+    return False
+
+
+def transcribe_either(wav_data, prompt, languages=("en", "hi"), verify_prompt=False):
+    """Read the same audio once per language, AT THE SAME TIME, and keep the
+    reading Whisper is surer of. (text, language).
+
+    For when auto-detection has named a language this device does not speak.
+    The old rule forced a re-read in ONE language, chosen by the script of the
+    wrong first guess -- and a wrong guess picks the wrong one. From
+    logs/liza.log: Hindi speech heard as "Marathi" in Latin letters was forced
+    to English, and Whisper TRANSLATED it ("What you can do for me?"), so the
+    student's Hindi never reached the screen as Hindi. The other way round,
+    English heard as "Panjabi" came back as a Hindi sentence that meant
+    nothing, and she answered that. Asking both questions and comparing the
+    confidence settles it, and running them side by side costs no extra wait.
+    """
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(languages)) as pool:
+        futures = {lang: pool.submit(transcribe, wav_data, prompt, language=lang,
+                                     scored=True, verify_prompt=verify_prompt)
+                   for lang in languages}
+        readings = {}
+        for lang, future in futures.items():
+            try:
+                readings[lang] = future.result()
+            except Exception as exc:
+                print(f"[STT] The {lang} reading failed ({exc}).", flush=True)
+    got = {lang: (text, lp if lp is not None else -99.0)
+           for lang, (text, _l, lp) in readings.items() if text}
+    if not got:
+        return "", ""
+    # NOT simply the more confident one. Told Hindi audio is English, Whisper
+    # TRANSLATES it, fluently and just as confidently: "आप मेरे लिए क्या कर
+    # सकती हो?" came back as "What can you do for me?" at -0.06 against the
+    # Hindi reading's -0.05. The telling thing is the SCRIPT of the Hindi
+    # reading: told English audio is Hindi, Whisper still writes English in
+    # English letters, and only real Hindi comes back in Devanagari. So a
+    # Devanagari Hindi reading wins, unless the English one is clearly surer.
+    hindi, english = got.get("hi"), got.get("en")
+    if hindi and RE_DEVANAGARI_ANY.search(hindi[0]) and not (
+            english and english[1] > hindi[1] + EITHER_ENGLISH_MARGIN):
+        text, lang = hindi[0], "hi"
+    elif english:
+        text, lang = english[0], "en"
+    else:
+        text, lang = hindi[0], "en"
+    print("[STT] Read both ways: " + " | ".join(
+        f"{l} {lp:.2f} {t!r}" for l, (t, lp) in got.items()) + f" -> {lang}", flush=True)
+    return text, lang
+
+
+RE_DEVANAGARI_ANY = re.compile(r'[\u0900-\u097F]')
+# How much surer the English reading must be to beat a Devanagari one.
+EITHER_ENGLISH_MARGIN = 0.15
+
 
 def audio_seconds(audio):
     return len(audio.frame_data) / float(audio.sample_rate * audio.sample_width)
@@ -1382,7 +1572,8 @@ def capture_continuation(listener, recognizer, source, endpointed, pause_thresho
         # Seeded with what they have already said, so the second half is read in
         # the context of the first -- the same trick the main path uses with her
         # own last reply.
-        more_text, _lang = transcribe(wav, f"{stt_prompt} {text}".strip())
+        more_text, _lang = transcribe(wav, f"{stt_prompt} {text}".strip(),
+                                      verify_prompt=True)
         more_text = (more_text or "").strip()
         if not more_text:
             return text
@@ -1449,7 +1640,21 @@ def is_repeated_hallucination(text, threshold=3):
     words = (text or "").split()
     if len(words) >= threshold and len(set(words)) == 1:
         return True
+    # ONE WORD STUCK ON REPEAT at the end of an otherwise ordinary line -- the
+    # other shape the loop takes. Out of a silent room on 30 Sep: "नमस्ते लीज़ा,
+    # यह concept समझाओ। Biology, electron, chromosome, photosynthesis, ribosome,
+    # electron, radical, radical, radical, radical, radical, radical, radical,
+    # radical, radical." Neither test above sees it (many chunks, many words),
+    # and she answered it. Five in a row, because a child does say "no no no".
+    tokens = [t for t in re.findall(r"[\w\u0900-\u097F']+", (text or "").lower())]
+    run = 1
+    for a, b in zip(tokens, tokens[1:]):
+        run = run + 1 if a == b else 1
+        if run >= WORD_LOOP_RUN:
+            return True
     return False
+
+WORD_LOOP_RUN = 5
 
 # "Liza stop" comes back from Whisper as "Lisa's top": the S of the command is
 # heard as a possessive on her name, so stripping the name leaves "'s top" --
@@ -1612,8 +1817,10 @@ def listen_for_wake_word(recognizer, mic_device, asleep=False, listener=None,
         # Forcing English makes the name come back in Latin letters, where the
         # pattern already covers fourteen spellings of it. The Devanagari
         # branches stay as a safety net for whatever still slips through.
+        if pattern is None:
+            pattern = RE_WAKE_WORD_ASLEEP if asleep else RE_WAKE_WORD
         text, language = transcribe(wav_data, seed, language="en",
-                                    model=WAKE_STT_MODEL)
+                                    model=WAKE_STT_MODEL, keep=pattern)
         if is_repeated_hallucination(text):
             # "हे लीज़ा। हे लीज़ा। हे लीज़ा।" -- nobody says the wake word three
             # times in one breath. Whisper looping a short phrase is one of its
@@ -1744,6 +1951,8 @@ def looks_hallucinated(text, logprob=None):
 
 # ---------------------------------------------------------------------------
 # Bound LAST so this module and the assistant import in either order; see the
-# same note in ui.py. Only groq_key_order comes back through it -- the rotation
-# over the Groq keys, which belongs with the clients in config.
+# same note in ui.py. Two names come back through it, both read at call time:
+# groq_key_order -- the rotation over the Groq keys, which belongs with the
+# clients in config -- and RE_ECHO_TOKEN, the one tokeniser that keeps a Hindi
+# word in one piece, for prompt_read_back.
 import assistant

@@ -1,0 +1,72 @@
+{
+  "id": "chemistry.molecule.methane",
+  "name": "Methane",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid297_3d.sdf",
+    "smiles": "C",
+    "pubchem_cid": 297,
+    "formula": "CH4",
+    "representation": "ball_and_stick",
+    "reference": {
+      "angle": "H-C-H",
+      "degrees": 109.5,
+      "source": "regular tetrahedron (109.47°)"
+    }
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/297",
+    "source_id": "297",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Methane (CID 297)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "methane",
+      "hydrocarbons"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "CH4",
+    "ch4",
+    "methane",
+    "methane molecule",
+    "natural gas"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid297_3d.sdf": "0b7b61a53e4512ed19c0a3e9b7d3205b9cc6f6a067c29716cae0597ac343f509",
+    "original/pubchem_cid297_properties.json": "77da9ed7f23704e4e4e96b413d3270d4cc91a273e222a42236e70bc3f1b45c29"
+  },
+  "generated_on": "2026-09-25"
+}

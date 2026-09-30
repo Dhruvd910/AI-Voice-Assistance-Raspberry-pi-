@@ -316,6 +316,9 @@ def delete_profile(user_id, path=None):
             except Exception:
                 pass
         _forget_history_file(user_id)
+        # And what they told her about themselves; see friend_memory.py.
+        import friend_memory
+        friend_memory.forget(user_id)
         return True
 
 

@@ -1,0 +1,64 @@
+{
+  "id": "physics.waves.sine_wave",
+  "name": "Travelling Wave",
+  "domain": "physics",
+  "subject": "waves",
+  "kind": "simulation",
+  "simulation": {
+    "name": "sine_wave",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.sine_wave",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "waves",
+      "wave speed",
+      "frequency and wavelength"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "A transverse wave on a string. The dot moves up and down only; the wave shape travels along."
+  },
+  "aliases": [
+    "wave",
+    "sine wave",
+    "travelling wave",
+    "traveling wave",
+    "transverse wave"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "y = A·sin(k·x − ω·t)",
+    "v = f·λ",
+    "k = 2π/λ,  ω = 2π·f"
+  ]
+}

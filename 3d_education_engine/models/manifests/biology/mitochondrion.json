@@ -1,0 +1,122 @@
+{
+  "id": "biology.organelle.mitochondrion",
+  "name": "Mitochondrion",
+  "domain": "biology",
+  "subject": "organelle",
+  "kind": "procedural",
+  "generator": {
+    "name": "biology.cells.mitochondrion"
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "biology.cells.mitochondrion",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on textbook descriptions of mitochondrial structure.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "scale_level": "organelle",
+    "topics": [
+      "mitochondria",
+      "mitochondrion",
+      "cellular respiration",
+      "powerhouse of the cell",
+      "atp production"
+    ],
+    "disclaimer": "Educational model — not to scale. About 2 µm long; ATP synthase and ribosomes drawn much larger than real."
+  },
+  "aliases": [
+    "mitochondria",
+    "mitochondrion",
+    "powerhouse of the cell",
+    "the mitochondria",
+    "mitocondria"
+  ],
+  "parts": {
+    "outer_membrane": {
+      "name": "Outer membrane",
+      "aliases": [
+        "outer membrane"
+      ],
+      "description": "Smooth outer boundary; small molecules cross it through channel proteins (porins)."
+    },
+    "inner_membrane": {
+      "name": "Inner membrane",
+      "aliases": [
+        "inner membrane"
+      ],
+      "description": "Holds the electron transport chain; much less permeable than the outer membrane."
+    },
+    "cristae": {
+      "name": "Cristae",
+      "aliases": [
+        "crista",
+        "folds",
+        "inner membrane folds"
+      ],
+      "description": "Folds of the inner membrane that greatly increase its surface area for making ATP."
+    },
+    "matrix": {
+      "name": "Matrix",
+      "aliases": [
+        "mitochondrial matrix"
+      ],
+      "description": "The fluid inside the inner membrane, where the Krebs (citric acid) cycle takes place."
+    },
+    "atp_synthase": {
+      "name": "ATP synthase (enlarged)",
+      "aliases": [
+        "atp synthase",
+        "atp synthase enzymes"
+      ],
+      "description": "Enzyme in the inner membrane that makes ATP, driven by hydrogen ions (protons) flowing back through it. Drawn far larger than real."
+    },
+    "mtdna": {
+      "name": "Mitochondrial DNA",
+      "aliases": [
+        "mtdna",
+        "mitochondrial dna",
+        "dna"
+      ],
+      "description": "Mitochondria carry their own small, circular DNA."
+    },
+    "ribosomes": {
+      "name": "Mitochondrial ribosomes (enlarged)",
+      "aliases": [
+        "ribosomes",
+        "ribosome"
+      ],
+      "description": "Mitochondria have their own ribosomes and make some of their own proteins."
+    }
+  },
+  "relationships": {
+    "parent": "biology.cell.cardiomyocyte",
+    "scale_up_to": "biology.cell.cardiomyocyte",
+    "scale_down_to": "chemistry.molecule.atp",
+    "scale_down_focus": "atp_synthase"
+  },
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "explode",
+    "focus",
+    "label",
+    "measure"
+  ]
+}

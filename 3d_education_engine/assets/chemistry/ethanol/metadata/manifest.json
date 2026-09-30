@@ -1,0 +1,67 @@
+{
+  "id": "chemistry.molecule.ethanol",
+  "name": "Ethanol",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid702_3d.sdf",
+    "smiles": "CCO",
+    "pubchem_cid": 702,
+    "formula": "C2H6O",
+    "representation": "ball_and_stick"
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/702",
+    "source_id": "702",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Ethanol (CID 702)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "ethanol",
+      "alcohols"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "C2H6O",
+    "alcohol",
+    "c2h5oh",
+    "ethanol",
+    "ethyl alcohol"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid702_3d.sdf": "705a949b32b4a68876e63d570bc1c55b40c853fa52a8d0fb793925c78e5e08ad",
+    "original/pubchem_cid702_properties.json": "7c302fceac5da1847ca7fc37c9e57f56ba5da6c172a29d184278c11ca9befe42"
+  },
+  "generated_on": "2026-09-25"
+}

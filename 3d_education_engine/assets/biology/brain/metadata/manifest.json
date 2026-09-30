@@ -1,0 +1,650 @@
+{
+  "id": "biology.anatomy.brain",
+  "name": "Human Brain",
+  "domain": "biology",
+  "subject": "anatomy",
+  "kind": "asset",
+  "asset": {
+    "file": "runtime/brain.glb",
+    "format": "glb",
+    "units": "mm",
+    "lods": {
+      "high": "runtime/brain.glb",
+      "low": "runtime/brain_low.glb"
+    },
+    "origin_offset_mm": [
+      -0.523,
+      -79.674,
+      1544.53
+    ],
+    "cells": {
+      "high": 324154,
+      "low": 99986
+    },
+    "thumbnail": "metadata/thumbnail.png"
+  },
+  "source": {
+    "provider": "BodyParts3D",
+    "url": "https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST/partof_BP3D_4.0_obj_99.zip",
+    "source_id": "FMA50801 (+25 related FMA concepts)",
+    "creator": "The Database Center for Life Science (DBCLS)",
+    "license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "attribution": "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International",
+    "download_date": "2026-09-25",
+    "modification_status": "extracted+converted+decimated"
+  },
+  "source_detail": {
+    "database_license_page": "https://dbarchive.biosciencedbc.jp/en/bodyparts3d/lic.html",
+    "archive": "https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST/partof_BP3D_4.0_obj_99.zip",
+    "concepts": {
+      "FMA13889": "pituitary gland",
+      "FMA242184": "subcortex of right cerebral hemisphere",
+      "FMA242186": "subcortex of left cerebral hemisphere",
+      "FMA242787": "ventricular system of brain",
+      "FMA50801": "brain",
+      "FMA61993": "midbrain",
+      "FMA62004": "medulla oblongata",
+      "FMA62008": "hypothalamus",
+      "FMA62009": "epithalamus",
+      "FMA67943": "pons",
+      "FMA67944": "cerebellum",
+      "FMA72906": "right internal capsule",
+      "FMA72907": "left internal capsule",
+      "FMA72969": "right frontal lobe",
+      "FMA72970": "left frontal lobe",
+      "FMA72971": "right temporal lobe",
+      "FMA72972": "left temporal lobe",
+      "FMA72973": "right parietal lobe",
+      "FMA72974": "left parietal lobe",
+      "FMA72975": "right occipital lobe",
+      "FMA72976": "left occipital lobe",
+      "FMA72977": "right insula",
+      "FMA72978": "left insula",
+      "FMA72980": "right limbic lobe",
+      "FMA72981": "left limbic lobe",
+      "FMA7647": "spinal cord"
+    },
+    "processing": [
+      "element meshes merged per part (first claim wins; see biology/anatomy.py)",
+      "triangulated, cleaned, normals computed",
+      "centred on the origin (origin_offset_mm recovers source coordinates)",
+      "low LOD: decimate_pro keeping 31% of triangles",
+      "spinal_cord: Trimmed to the 35 mm below the brain; the source continues down the back."
+    ]
+  },
+  "educational": {
+    "grades": [
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "human brain",
+      "nervous system",
+      "control and coordination",
+      "neural control and coordination",
+      "parts of the brain"
+    ],
+    "scale_level": "organ",
+    "disclaimer": "Anatomical model (BodyParts3D). Colours are a teaching convention."
+  },
+  "aliases": [
+    "brain",
+    "brain structure",
+    "dimaag",
+    "dimag",
+    "human brain",
+    "mastishk",
+    "my brain",
+    "parts of the brain",
+    "the brain",
+    "दिमाग",
+    "दिमाग़",
+    "मस्तिष्क"
+  ],
+  "parts": {
+    "ventricles": {
+      "name": "Ventricles (fluid-filled spaces)",
+      "description": "Four connected spaces deep in the brain, filled with cerebrospinal fluid. The fluid cushions the brain and carries away waste.",
+      "color": "#7fd0f0",
+      "aliases": [
+        "ventricle",
+        "brain ventricles",
+        "cerebrospinal fluid",
+        "csf",
+        "lateral ventricles",
+        "third ventricle",
+        "fourth ventricle"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA242787"
+      ],
+      "source_elements": [
+        "FJ1730",
+        "FJ1731",
+        "FJ1738",
+        "FJ1767",
+        "FJ1814"
+      ]
+    },
+    "frontal_lobe": {
+      "name": "Frontal lobe",
+      "description": "The front of the cerebrum. It plans, decides, controls behaviour and speech, and its back strip (the motor cortex) starts voluntary movements.",
+      "color": "#5b8def",
+      "aliases": [
+        "frontal lobes",
+        "front of the brain",
+        "motor cortex",
+        "precentral gyrus",
+        "prefrontal"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA72969",
+        "FMA72970"
+      ],
+      "source_elements": [
+        "FJ1744",
+        "FJ1745",
+        "FJ1787",
+        "FJ1788",
+        "FJ1800",
+        "FJ1801",
+        "FJ1833",
+        "FJ1834"
+      ]
+    },
+    "parietal_lobe": {
+      "name": "Parietal lobe",
+      "description": "The top-back of the cerebrum. It receives touch, pain, heat and body position from the skin and muscles (the sensory cortex) and works out where things are.",
+      "color": "#f2c14e",
+      "aliases": [
+        "parietal lobes",
+        "sensory cortex",
+        "postcentral gyrus"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA72973",
+        "FMA72974"
+      ],
+      "source_elements": [
+        "FJ1732",
+        "FJ1733",
+        "FJ1797",
+        "FJ1798",
+        "FJ1835",
+        "FJ1836",
+        "FJ1841",
+        "FJ1842"
+      ]
+    },
+    "occipital_lobe": {
+      "name": "Occipital lobe",
+      "description": "The back of the cerebrum. It receives signals from the eyes and makes sense of what we see.",
+      "color": "#e8697d",
+      "aliases": [
+        "occipital lobes",
+        "visual cortex",
+        "back of the brain"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA72975",
+        "FMA72976"
+      ],
+      "source_elements": [
+        "FJ1791",
+        "FJ1792"
+      ]
+    },
+    "temporal_lobe": {
+      "name": "Temporal lobe",
+      "description": "The side of the cerebrum, near the ears. It handles hearing, understanding speech, and forming memories.",
+      "color": "#5fbf77",
+      "aliases": [
+        "temporal lobes",
+        "auditory cortex",
+        "side of the brain"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA72971",
+        "FMA72972"
+      ],
+      "source_elements": [
+        "FJ1746",
+        "FJ1747",
+        "FJ1783",
+        "FJ1784",
+        "FJ1785",
+        "FJ1786",
+        "FJ1789",
+        "FJ1790"
+      ]
+    },
+    "insula": {
+      "name": "Insula",
+      "description": "A lobe hidden deep in the fold between the frontal and temporal lobes; it senses the body's inside state, such as hunger and heartbeat.",
+      "color": "#c08be0",
+      "aliases": [
+        "insular cortex",
+        "insular lobe"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA72977",
+        "FMA72978"
+      ],
+      "source_elements": [
+        "FJ1748",
+        "FJ1749"
+      ]
+    },
+    "limbic": {
+      "name": "Cingulate gyrus and hippocampus (limbic)",
+      "description": "Inner parts of the cerebrum, round its middle. The hippocampus forms new memories; with the cingulate gyrus they are part of the limbic system, involved in emotion.",
+      "color": "#f59ec4",
+      "aliases": [
+        "hippocampus",
+        "cingulate gyrus",
+        "limbic system",
+        "limbic lobe"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA72980",
+        "FMA72981"
+      ],
+      "source_elements": [
+        "FJ1739",
+        "FJ1740",
+        "FJ1759",
+        "FJ1807"
+      ]
+    },
+    "inner_cerebrum": {
+      "name": "Inner cerebrum (white matter, basal nuclei)",
+      "description": "Under the folded surface: nerve fibres (white matter) joining the parts of the brain, and groups of nerve cells deep inside (the basal nuclei).",
+      "color": "#d8c8e8",
+      "aliases": [
+        "white matter",
+        "internal capsule",
+        "basal ganglia",
+        "basal nuclei",
+        "subcortex"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA242184",
+        "FMA242186",
+        "FMA72906",
+        "FMA72907"
+      ],
+      "source_elements": [
+        "FJ1750",
+        "FJ1751",
+        "FJ1758",
+        "FJ1806"
+      ]
+    },
+    "hypothalamus": {
+      "name": "Hypothalamus",
+      "description": "A small region at the base of the forebrain that controls body temperature, hunger, thirst and sleep, and tells the pituitary gland what to do.",
+      "color": "#f08a5d",
+      "aliases": [],
+      "available": true,
+      "source_concepts": [
+        "FMA62008"
+      ],
+      "source_elements": [
+        "FJ1760",
+        "FJ1780",
+        "FJ1808",
+        "FJ1828"
+      ]
+    },
+    "pineal": {
+      "name": "Pineal gland",
+      "description": "A tiny gland in the middle of the brain that makes melatonin, the hormone that helps set the sleep-wake cycle.",
+      "color": "#9fe0a8",
+      "aliases": [
+        "pineal body",
+        "epithalamus",
+        "habenula"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA62009"
+      ],
+      "source_elements": [
+        "FJ1743",
+        "FJ1795"
+      ]
+    },
+    "pituitary": {
+      "name": "Pituitary gland",
+      "description": "A pea-sized gland hanging below the hypothalamus. Its hormones control growth and many other glands, which is why it is called the master gland.",
+      "color": "#ff8fb3",
+      "aliases": [
+        "pituitary",
+        "master gland",
+        "hypophysis"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA13889"
+      ],
+      "source_elements": [
+        "FJ1796"
+      ]
+    },
+    "midbrain": {
+      "name": "Midbrain",
+      "description": "The top of the brainstem. It relays signals for seeing and hearing and helps control eye movements and reflexes.",
+      "color": "#e6b37a",
+      "aliases": [
+        "mid brain",
+        "mesencephalon",
+        "colliculus",
+        "colliculi"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA61993"
+      ],
+      "source_elements": [
+        "FJ1762",
+        "FJ1770",
+        "FJ1779",
+        "FJ1810",
+        "FJ1817",
+        "FJ1826"
+      ]
+    },
+    "pons": {
+      "name": "Pons",
+      "description": "The bulge in the brainstem below the midbrain. It links the cerebrum with the cerebellum and helps control breathing.",
+      "color": "#d9a066",
+      "aliases": [],
+      "available": true,
+      "source_concepts": [
+        "FMA67943"
+      ],
+      "source_elements": [
+        "FJ1775",
+        "FJ1822"
+      ]
+    },
+    "medulla": {
+      "name": "Medulla oblongata",
+      "description": "The lowest part of the brainstem, joining the spinal cord. It controls involuntary actions: heartbeat, breathing, blood pressure, swallowing, vomiting.",
+      "color": "#c98a5a",
+      "aliases": [
+        "medulla oblongata",
+        "medulla"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA62004"
+      ],
+      "source_elements": [
+        "FJ1769",
+        "FJ1831"
+      ]
+    },
+    "cerebellum": {
+      "name": "Cerebellum",
+      "description": "The 'little brain' at the back, under the cerebrum. It keeps balance and posture and makes movements smooth and precise.",
+      "color": "#b07cd8",
+      "aliases": [
+        "little brain",
+        "hindbrain cerebellum"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA67944"
+      ],
+      "source_elements": [
+        "FJ1781",
+        "FJ1830"
+      ]
+    },
+    "spinal_cord": {
+      "name": "Spinal cord (top)",
+      "description": "The bundle of nerves running down from the medulla inside the backbone, carrying messages between the brain and the body. Shown: its first few centimetres.",
+      "color": "#e9d8a6",
+      "aliases": [
+        "spinal cord",
+        "spine cord"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7647"
+      ],
+      "source_elements": [
+        "FJ1737"
+      ],
+      "note": "Trimmed to the 35 mm below the brain; the source continues down the back."
+    },
+    "corpus_callosum": {
+      "name": "Corpus callosum",
+      "aliases": [
+        "corpus callosum"
+      ],
+      "note": "BodyParts3D does not model the corpus callosum, the thick band of fibres joining the two hemispheres, separately; here it is part of the inner cerebrum.",
+      "available": false
+    },
+    "thalamus": {
+      "name": "Thalamus",
+      "aliases": [
+        "thalamus"
+      ],
+      "note": "BodyParts3D does not model the thalamus separately; it lies within the inner cerebrum here. It can be explained but not highlighted.",
+      "available": false
+    }
+  },
+  "groups": {
+    "cerebrum": [
+      "frontal_lobe",
+      "parietal_lobe",
+      "occipital_lobe",
+      "temporal_lobe",
+      "insula",
+      "limbic",
+      "inner_cerebrum"
+    ],
+    "lobes": [
+      "frontal_lobe",
+      "parietal_lobe",
+      "occipital_lobe",
+      "temporal_lobe"
+    ],
+    "forebrain": [
+      "frontal_lobe",
+      "parietal_lobe",
+      "occipital_lobe",
+      "temporal_lobe",
+      "insula",
+      "limbic",
+      "inner_cerebrum",
+      "hypothalamus",
+      "pineal"
+    ],
+    "hindbrain": [
+      "pons",
+      "medulla",
+      "cerebellum"
+    ],
+    "brainstem": [
+      "midbrain",
+      "pons",
+      "medulla"
+    ],
+    "glands": [
+      "pituitary",
+      "pineal",
+      "hypothalamus"
+    ]
+  },
+  "group_aliases": {
+    "cerebrum": [
+      "cerebral cortex",
+      "cortex",
+      "big brain",
+      "cerebral hemispheres",
+      "hemispheres",
+      "grey matter",
+      "gray matter"
+    ],
+    "lobes": [
+      "four lobes",
+      "the lobes",
+      "brain lobes"
+    ],
+    "forebrain": [
+      "fore brain",
+      "prosencephalon"
+    ],
+    "hindbrain": [
+      "hind brain",
+      "rhombencephalon"
+    ],
+    "brainstem": [
+      "brain stem",
+      "stem"
+    ],
+    "glands": [
+      "endocrine glands",
+      "hormone glands"
+    ]
+  },
+  "relationships": {
+    "parent": "biology.anatomy.human_body"
+  },
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "explode",
+    "focus",
+    "label",
+    "measure",
+    "animate"
+  ],
+  "animations": [],
+  "view": {
+    "azimuth": 0.0,
+    "elevation": 0.0,
+    "up": "z",
+    "front": "+x"
+  },
+  "notes": [
+    "Lobes are coloured as in textbook figures; real brain tissue is pinkish-grey outside and creamy white inside.",
+    "BodyParts3D has no superior temporal gyrus, the top fold of the temporal lobe, so the insula shows through between the frontal and temporal lobes."
+  ],
+  "default_labels": [
+    "frontal_lobe",
+    "parietal_lobe",
+    "occipital_lobe",
+    "temporal_lobe",
+    "cerebellum",
+    "pons",
+    "medulla",
+    "spinal_cord",
+    "pituitary"
+  ],
+  "generated_on": "2026-09-25",
+  "files": {
+    "metadata/thumbnail.png": "8c60d7fc74dd2d9c154c70279ab49db3fd2788b6241fae4e9eea3d69f9209418",
+    "original/bodyparts3d/FJ1730.obj": "7acd4a30d13b409221aea7267ae302ef7c100162a6185d891c91843ec876dd79",
+    "original/bodyparts3d/FJ1731.obj": "b56e1cd574977821f5331174a31a830ec6a477e2c6c3f32667f7e46a6716eae8",
+    "original/bodyparts3d/FJ1732.obj": "661e99ae245f0392bd7bfd63aa65074f61fb47e9c35641310f1804c9973acb9a",
+    "original/bodyparts3d/FJ1733.obj": "4f154c33e0c43d68d75aaec659b9a6f65ca42ef4b8ea6462a4482e2178b92a0f",
+    "original/bodyparts3d/FJ1737.obj": "c86dd74640e7c820eda28783944a90998045ff42a131a7a1456a64fdff0e6471",
+    "original/bodyparts3d/FJ1738.obj": "089159be9815563e0645e5a28e7302fbc0bc842af760ac886bf3d0542f34a8f3",
+    "original/bodyparts3d/FJ1739.obj": "26feea54a830b6cf523926e9a50f64935591d30206511f2804cfe79bed423d11",
+    "original/bodyparts3d/FJ1740.obj": "deb04b668a1aa817aa01472ab0191add32393a1bdba518b19d5c8f29431d136f",
+    "original/bodyparts3d/FJ1743.obj": "e2c529932bb78ebae41cbc82496dcfe512f15455b6d806783e019444d10b2eae",
+    "original/bodyparts3d/FJ1744.obj": "055774da0ba432560fb8e65b2b474ddaf5ac1a683f5b4fbcc1e8cac6e9536c25",
+    "original/bodyparts3d/FJ1745.obj": "6210acb1780932a25c00b2f4cbdf5ab28cd9ed95eef46ef792ab3647a42c1b47",
+    "original/bodyparts3d/FJ1746.obj": "4be36eec071bfe6d1878acfa535e74dbf91c773c351dea9bc9a4704e3db3fe2e",
+    "original/bodyparts3d/FJ1747.obj": "0e04dea5d156768ae580670b771197c882d9b652132358ef6197ae3f823640f6",
+    "original/bodyparts3d/FJ1748.obj": "deca1e77a904006224aa6cc34e3710c8d963d1fc89e474ac42258e1f2f3315fd",
+    "original/bodyparts3d/FJ1749.obj": "564190a0427db7acf0b27dc124673d028ff99c3dbd0aaa54ec0c236ee3baf754",
+    "original/bodyparts3d/FJ1750.obj": "ac3d98925d313c0db553ec22a26c20520657f3d9f78c07b0b3cc6d72c5837e93",
+    "original/bodyparts3d/FJ1751.obj": "8f66e76ffc8bccc07a7fb14e49441bc061e23ba1251571439b8197f82acd50df",
+    "original/bodyparts3d/FJ1758.obj": "017e0c54769998fa71f65b60918a6f721bbc723e441bc22ea580284567e708a2",
+    "original/bodyparts3d/FJ1759.obj": "f64b3cea9f760a352cb8981f6cb577700a66392d8a8395ffb45dfebdccee7344",
+    "original/bodyparts3d/FJ1760.obj": "cc6db16b990c3fa607ef64f6c0482fd05cb986213d011da9641ccf50182af897",
+    "original/bodyparts3d/FJ1762.obj": "64a455fe3ae2f5adc06be7b407e50116f56102f9036a4eea3b6f6b7dae4b3b84",
+    "original/bodyparts3d/FJ1767.obj": "17b278c20399a85a9d373ba6a934f9fe61901dd9c9480107baaef2b513f22ee3",
+    "original/bodyparts3d/FJ1769.obj": "ab318e2ca0b27656d06edb4a3d3315669c70d7625989a3573fa66a0e586c6afc",
+    "original/bodyparts3d/FJ1770.obj": "727a267ac80375fd0769bf92067d88adac02aa80220a3099cd530b32ddd88a5b",
+    "original/bodyparts3d/FJ1775.obj": "caecdd922b67fa47e0219e2e7ae05e3efd986a2c869cf57b77ded1c615d1bfc9",
+    "original/bodyparts3d/FJ1779.obj": "0fa8374655959d8e815c2d95105b3471d91a86fb9aa959d37522cab85c46c528",
+    "original/bodyparts3d/FJ1780.obj": "dc2212c4c0c7c9e00375a7bcb24014938f45e15b068df36f6247df0cdb301881",
+    "original/bodyparts3d/FJ1781.obj": "6f66f4912c7519ea6a018324ef4f6d46eb266350574d05a905afeb2c88c575ed",
+    "original/bodyparts3d/FJ1783.obj": "2ea98ec904ba5de8229ed9aeff99c1b34f4030a080e758bdd063f8cc7e92d5f3",
+    "original/bodyparts3d/FJ1784.obj": "b6e11d4565f77ca8c0b815540a6a7cc77f48616f81263cb6352c183cdbd0f1da",
+    "original/bodyparts3d/FJ1785.obj": "87db9ae2691ad71d47210ad27a8d56353fb3e9400f68f1b1350f59cfdf4880b4",
+    "original/bodyparts3d/FJ1786.obj": "9f4a8e120131ee6041a48635c3b6dc74cac8d6dcd50e80ef38b2aec56a66ce38",
+    "original/bodyparts3d/FJ1787.obj": "9bc4568f6633e999f98ba932ac18608251aa36d689433fbbb536f72d6c4d3d6d",
+    "original/bodyparts3d/FJ1788.obj": "e72da8ed193cd1b514207a4056bfb41fef1fabd548090dcc4cd5108ded280fa8",
+    "original/bodyparts3d/FJ1789.obj": "4985721171ebf94eb7607822073dba045e42bec2428982a7befa96204b4b4c1a",
+    "original/bodyparts3d/FJ1790.obj": "47b2ce1a7536c8dccaeba6e14139475ce65805b2d0af6036cda4db18aabe4559",
+    "original/bodyparts3d/FJ1791.obj": "b8f2b6ac30aaf72f9ef0e7c00892edd7d4b27b1a6589971d25c973a8894e09f2",
+    "original/bodyparts3d/FJ1792.obj": "860b8fd92e2fae9dd28f782c88170fb591d00b3154da78b57098ff5119692d96",
+    "original/bodyparts3d/FJ1795.obj": "e3f5a0e1d1ebdf8a97329d1e71904f18d70e40038f89eb1990eb8a1f086dfc36",
+    "original/bodyparts3d/FJ1796.obj": "f4dfe89a92a5af3f9a2de4f3221c45978a2a8308ef465b780684ab839aeab21b",
+    "original/bodyparts3d/FJ1797.obj": "030dbec5dbfc8f29059727f18f867e962fc5debfeea4cab45883edc2c996ec6b",
+    "original/bodyparts3d/FJ1798.obj": "a7c633819d776ef3610be33e0c2ddf47e7da39b6da476b7876418f8245f27c25",
+    "original/bodyparts3d/FJ1800.obj": "34c447cb8bf5e98493cfe52911af1fa9ebd0eaf32c7c5578457666575f5d8cc0",
+    "original/bodyparts3d/FJ1801.obj": "f8ddd0851486a930ef02ff586badabd34cbcf31b034dd7b5ad1b6466f12d28c3",
+    "original/bodyparts3d/FJ1806.obj": "1581396feaf5a2afee55eac865273c126dd0862ef64e756b189b97f85bc898b5",
+    "original/bodyparts3d/FJ1807.obj": "6ae0c7024c63059599eedabc36fe4650e5979d99ca7d8f9b8bd2389c89d6c5a4",
+    "original/bodyparts3d/FJ1808.obj": "9e6fe3664aa909ce2d26683de807b627b076a1e68906f4bf4ffc59cf984e4bc4",
+    "original/bodyparts3d/FJ1810.obj": "3102a4f96ff71fc9c1e9686ca5e7aefe2e48bb15b3df9c731bde44f9a3dc553c",
+    "original/bodyparts3d/FJ1814.obj": "38ca1d48bc0518256be6ee7a947169f24a402e91a49dde23bced70fc59a6a5d3",
+    "original/bodyparts3d/FJ1817.obj": "b05b314182e27a015072a39847bd750a7c0899962d7d6357541cedf1358f05db",
+    "original/bodyparts3d/FJ1822.obj": "bbe90f2e0a971bdbde65b9da78b3dff921ed92d2de4bfb81b9629b920d41d7de",
+    "original/bodyparts3d/FJ1826.obj": "c468ce1835bf10dbc68f7351a99a788731418bc29b83a3ec2af6135766a69d69",
+    "original/bodyparts3d/FJ1828.obj": "14f9e2dbd68f455314424315b049df5a1a84c248d4c56895b8f8ab426cc40a66",
+    "original/bodyparts3d/FJ1830.obj": "d35574d86994e5e49e0e1ee41174a927c666735d7eb7b9cbdae2a709ae4a0bb9",
+    "original/bodyparts3d/FJ1831.obj": "dccbbe50f38efa0e95660b6b99ffe1e16a2baf37a29e0200d697446f5299c476",
+    "original/bodyparts3d/FJ1833.obj": "8f4548f67acff09574bc46bfc9c78c31ad8d4f16a34cfe28b95e19b640d2208c",
+    "original/bodyparts3d/FJ1834.obj": "9a52d502e5af633cb6d1cae76e5e9230e60f78ee987982c23b02776fd3adc9ea",
+    "original/bodyparts3d/FJ1835.obj": "d8c6c241f6e98a6b8bfa9cd97943173d18a91251a66029d9a5681fc09f691be4",
+    "original/bodyparts3d/FJ1836.obj": "367b62ae6f27730d3587f4776ad948ad114f9182be35e776faf7aa576d97ae41",
+    "original/bodyparts3d/FJ1841.obj": "473636ae8d030582d4d7a76d6fa93d2fc785a415060411fe9b93ce63738ee2bf",
+    "original/bodyparts3d/FJ1842.obj": "dd46c1ccde03f979fb0e23071ab5816d7a4bda05776b66604e784f735127c0c2",
+    "processed/cerebellum.vtp": "0ac003a4419ec1ab66bd29a615869ac1ba5cb7f8560dc62c62fd2705b42f36eb",
+    "processed/frontal_lobe.vtp": "da973ee7a72d61818b220383f72f73932d59beda7d24f3f5cdc9128d8a59a847",
+    "processed/hypothalamus.vtp": "1f1a92257dff39ed586665283dcb3ade322de2368190e89377287b23a48fc414",
+    "processed/inner_cerebrum.vtp": "f4f6046d6cae3ef94c60c59ecefbe48960dcca27c0cb7bdab9c0c2943532a3b2",
+    "processed/insula.vtp": "7ac8a935cf2cb36a59850cad9e9cf34c1c08ed6d11be972974bc78662ce62336",
+    "processed/limbic.vtp": "8aaa6cb744e32add3b38d6910bfcea68de923594dca8b172f49d011280bfd531",
+    "processed/medulla.vtp": "e45fb252abe5c1caa42c2dd4729a7e008cdcaf93c4078fe5bcebd7d11ac15b21",
+    "processed/midbrain.vtp": "ddd1c65531597cbf09bfb401d0dae454a5a3114e4fbdb1cdf5ed458b0f636946",
+    "processed/occipital_lobe.vtp": "86111f0345daf4fef172cfabd577222989d88d02b648a9c3598da1ccb3a07553",
+    "processed/parietal_lobe.vtp": "b231168e6c7131c1856fce80cbec5d70d0b9a77085898e060fba5ed802d23726",
+    "processed/pineal.vtp": "ae38f48e107d857a3054eafd7ea322765427d6daa50124c6984179638125eca4",
+    "processed/pituitary.vtp": "1d6e18f555c42b536edb0079e20d162671c5c97213af4b604772d5bf16eb978b",
+    "processed/pons.vtp": "2399c18bcc4ba0763c0a68ebf9c1710d3fcdf8bb798e6f219187ff09c8929594",
+    "processed/spinal_cord.vtp": "9c5743c3386df9119b0bb282c804808f76adc6740f6442018b0a5fb3bf0c179f",
+    "processed/temporal_lobe.vtp": "7ede6115991de0c088b31f2991d18f2b9ad240bd5f061ce14f24d528279ed2e6",
+    "processed/ventricles.vtp": "7378a58531d852c155623d526b60fd88d14241ae0e77ee5802fb46afda5c3911",
+    "runtime/brain.glb": "5ab29282e5374ceef8ae172f2bddf629cdc077c054dbcb56cb70dbeb3e4faf05",
+    "runtime/brain_low.glb": "71f78c908d4f30ee31f3e90b68605878633ee22768d7300fad51b497b85b7756"
+  }
+}

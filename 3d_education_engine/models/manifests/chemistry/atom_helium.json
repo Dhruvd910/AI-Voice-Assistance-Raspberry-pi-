@@ -1,0 +1,59 @@
+{
+  "id": "chemistry.atom.helium",
+  "name": "Helium Atom",
+  "domain": "chemistry",
+  "subject": "atom",
+  "kind": "molecule",
+  "structure": {
+    "element": "He"
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "chemistry.atoms.shell_scene(He)",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on element data from RDKit's periodic table and the Aufbau rule.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "scale_level": "atom",
+    "topics": [
+      "helium atom",
+      "atomic structure",
+      "electron configuration",
+      "electron shells"
+    ],
+    "disclaimer": null
+  },
+  "aliases": [
+    "helium atom",
+    "an atom of helium",
+    "he atom",
+    "atom of helium",
+    "helium",
+    "helium electron configuration"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "electron_shells"
+  ]
+}

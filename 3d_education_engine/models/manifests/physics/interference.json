@@ -1,0 +1,59 @@
+{
+  "id": "physics.waves.interference",
+  "name": "Interference",
+  "domain": "physics",
+  "subject": "waves",
+  "kind": "simulation",
+  "simulation": {
+    "name": "interference",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.interference",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "interference",
+      "superposition"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Ripples from two sources in step. Bright bands: constructive interference; flat bands: destructive."
+  },
+  "aliases": [
+    "interference",
+    "two source interference",
+    "double slit",
+    "young's double slit"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "path difference = n·λ  → constructive",
+    "path difference = (n + ½)·λ  → destructive"
+  ]
+}

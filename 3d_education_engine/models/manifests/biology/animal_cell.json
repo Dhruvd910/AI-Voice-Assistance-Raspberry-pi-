@@ -1,0 +1,134 @@
+{
+  "id": "biology.cell.animal_cell",
+  "name": "Animal Cell",
+  "domain": "biology",
+  "subject": "cell",
+  "kind": "procedural",
+  "generator": {
+    "name": "biology.cells.animal_cell"
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "biology.cells.animal_cell",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on textbook descriptions of a generalised animal cell.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "6",
+      "7",
+      "8",
+      "9",
+      "10"
+    ],
+    "scale_level": "cell",
+    "topics": [
+      "animal cell",
+      "cell structure",
+      "cell organelles",
+      "eukaryotic cell"
+    ],
+    "disclaimer": "Educational model — not to scale. A generalised cell; real cells vary widely in shape and contents."
+  },
+  "aliases": [
+    "animal cell",
+    "cell",
+    "human cell",
+    "a cell",
+    "typical cell"
+  ],
+  "parts": {
+    "cell_membrane": {
+      "name": "Cell membrane",
+      "aliases": [
+        "membrane",
+        "plasma membrane"
+      ],
+      "description": "Controls what enters and leaves the cell."
+    },
+    "nucleus": {
+      "name": "Nucleus",
+      "description": "Contains the cell's DNA and controls its activities."
+    },
+    "nucleolus": {
+      "name": "Nucleolus",
+      "description": "Region of the nucleus where ribosomal RNA is made and ribosomes are assembled."
+    },
+    "rough_er": {
+      "name": "Rough endoplasmic reticulum",
+      "aliases": [
+        "er",
+        "endoplasmic reticulum",
+        "rough er"
+      ],
+      "description": "Membranes studded with ribosomes; proteins made there are folded and transported."
+    },
+    "golgi": {
+      "name": "Golgi apparatus",
+      "aliases": [
+        "golgi body",
+        "golgi complex"
+      ],
+      "description": "Modifies, sorts and packages proteins for use in or outside the cell."
+    },
+    "mitochondria": {
+      "name": "Mitochondria",
+      "aliases": [
+        "mitochondrion"
+      ],
+      "description": "Site of aerobic respiration, which releases energy as ATP."
+    },
+    "lysosomes": {
+      "name": "Lysosomes",
+      "aliases": [
+        "lysosome"
+      ],
+      "description": "Contain digestive enzymes that break down worn-out parts and engulfed material."
+    },
+    "ribosomes": {
+      "name": "Ribosomes (enlarged)",
+      "aliases": [
+        "ribosome"
+      ],
+      "description": "Make proteins by joining amino acids in the order set by mRNA."
+    },
+    "centrioles": {
+      "name": "Centrioles",
+      "aliases": [
+        "centriole",
+        "centrosome"
+      ],
+      "description": "Help organise the spindle that separates chromosomes when the cell divides."
+    }
+  },
+  "relationships": {
+    "related": [
+      "biology.organelle.mitochondrion"
+    ],
+    "scale_down_to": "biology.organelle.nucleus",
+    "scale_down_focus": "nucleus",
+    "part_models": {
+      "nucleus": "biology.organelle.nucleus",
+      "nucleolus": "biology.organelle.nucleus",
+      "mitochondria": "biology.organelle.mitochondrion"
+    }
+  },
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "explode",
+    "focus",
+    "label",
+    "measure"
+  ]
+}

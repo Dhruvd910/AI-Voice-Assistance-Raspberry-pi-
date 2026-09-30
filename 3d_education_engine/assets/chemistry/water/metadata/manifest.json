@@ -1,0 +1,72 @@
+{
+  "id": "chemistry.molecule.water",
+  "name": "Water",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid962_3d.sdf",
+    "smiles": "O",
+    "pubchem_cid": 962,
+    "formula": "H2O",
+    "representation": "ball_and_stick",
+    "reference": {
+      "angle": "H-O-H",
+      "degrees": 104.5,
+      "source": "experimental gas-phase geometry, NIST CCCBDB"
+    }
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/962",
+    "source_id": "962",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Water (CID 962)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "water",
+      "polarity",
+      "hydrogen bonding"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "H2O",
+    "h2o",
+    "water",
+    "water molecule"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid962_3d.sdf": "826c4d006c88c7a4fce0b8d79483082b5d597bf00526cbf59525e97bfb80ee41",
+    "original/pubchem_cid962_properties.json": "fcecb0282cddc63c66c54e366c544ce9981d914eab88a0f42eebe83a5117727e"
+  },
+  "generated_on": "2026-09-25"
+}

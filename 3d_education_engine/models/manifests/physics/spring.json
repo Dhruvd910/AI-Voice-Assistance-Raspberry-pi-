@@ -1,0 +1,62 @@
+{
+  "id": "physics.mechanics.spring",
+  "name": "Mass on a Spring",
+  "domain": "physics",
+  "subject": "mechanics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "spring",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.spring",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "springs",
+      "hooke's law",
+      "simple harmonic motion"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "No friction unless damping is set. The coil is drawn, not simulated."
+  },
+  "aliases": [
+    "spring",
+    "mass on a spring",
+    "spring mass system",
+    "hooke's law"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "F = −k·x  (Hooke's law)",
+    "x = A·cos(ω·t),  ω = √(k/m)",
+    "period T = 2π·√(m/k)"
+  ]
+}

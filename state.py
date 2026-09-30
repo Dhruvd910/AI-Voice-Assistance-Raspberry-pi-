@@ -205,6 +205,43 @@ def note_spoken(text):
     global last_spoken_text, last_spoken_at
     last_spoken_text = f"{last_spoken_text} {text}"[-600:]
     last_spoken_at = time.time()
+    with _spoken_lock:
+        if spoken_responses and not spoken_responses[-1][1]:
+            spoken_responses[-1][2] = f"{spoken_responses[-1][2]} {text}"[-600:]
+
+
+# WHAT SHE SAID, ONE ENTRY PER RESPONSE: [started, ended (0.0 while playing), text].
+#
+# For the echo guard, which used to match against last_spoken_text -- 600
+# characters running back across several replies. Speaker bleed can only be the
+# reply that was playing when the microphone heard it, and matching against
+# older ones ate real questions: "Can you draw the 3D model of carbon dioxide?"
+# was thrown away as her own voice because a reply twenty seconds earlier had
+# said "close the 3D model of the animal cell", and "the 3D model of" is a
+# four-word run. It happened three times in one evening in logs/liza.log, each
+# time to a student asking for a model she had just offered.
+spoken_responses = []
+_spoken_lock = threading.Lock()
+
+
+def begin_spoken_response():
+    with _spoken_lock:
+        spoken_responses.append([time.time(), 0.0, ""])
+        del spoken_responses[:-4]
+
+
+def end_spoken_response():
+    with _spoken_lock:
+        if spoken_responses:
+            spoken_responses[-1][1] = time.time()
+
+
+def spoken_around(since, grace):
+    """Her words from every response still playing at `since`, or that stopped
+    less than `grace` seconds before it -- the only ones that can bleed back."""
+    with _spoken_lock:
+        return " ".join(text for _started, ended, text in spoken_responses
+                        if not ended or ended >= since - grace)
 
 
 # HAS ANYBODY USED HER SINCE THIS PROCESS STARTED?

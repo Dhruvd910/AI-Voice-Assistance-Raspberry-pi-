@@ -2004,6 +2004,10 @@ KINDS = {
     # picture: see that file's header for the reaction an image model drew
     # backwards.
     "reaction": science.reaction, "molecule": science.molecule,
+    # A 3D model is drawn by viewer3d and shown by the screen, not as a PNG --
+    # see actions.show_visual_action. This entry is the flat drawing it falls
+    # back to wherever the 3D side cannot run.
+    "model3d": science.molecule,
     "forces": science.forces, "circuit": science.circuit,
     # The RE-TELL verdict, written out. Asked for by the verdict prompt, never
     # chosen for a question.
@@ -2040,6 +2044,11 @@ KIND_ALIASES = {
     "structure": "molecule", "molecular_structure": "molecule",
     "structural_formula": "molecule", "chemical_structure": "molecule",
     "lewis_structure": "molecule", "compound": "molecule", "molecules": "molecule",
+    "3d": "model3d", "3d_model": "model3d", "model_3d": "model3d",
+    "molecule_3d": "model3d", "molecule3d": "model3d", "3d_molecule": "model3d",
+    "3d_structure": "model3d", "ball_and_stick": "model3d",
+    "ball_and_stick_model": "model3d", "molecular_model": "model3d",
+    "3d_molecular_model": "model3d", "model3d_molecule": "model3d",
     "force": "forces", "force_diagram": "forces", "free_body": "forces",
     "free_body_diagram": "forces", "fbd": "forces",
     "circuit_diagram": "circuit", "electric_circuit": "circuit",

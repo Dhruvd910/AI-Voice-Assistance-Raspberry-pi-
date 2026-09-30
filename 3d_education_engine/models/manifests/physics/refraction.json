@@ -1,0 +1,63 @@
+{
+  "id": "physics.optics.refraction",
+  "name": "Refraction of Light",
+  "domain": "physics",
+  "subject": "optics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "refraction",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.refraction",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "refraction",
+      "snell's law",
+      "total internal reflection"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "A single ray. Part of the light is always reflected; above the critical angle, all of it is."
+  },
+  "aliases": [
+    "refraction",
+    "snell's law",
+    "light bending",
+    "total internal reflection"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "n1·sinθ1 = n2·sinθ2  (Snell's law)",
+    "critical angle: sinθc = n2 / n1  (when n1 > n2)",
+    "angle of reflection = angle of incidence"
+  ]
+}
