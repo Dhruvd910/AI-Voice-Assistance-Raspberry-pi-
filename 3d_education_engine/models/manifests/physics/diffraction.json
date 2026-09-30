@@ -1,0 +1,57 @@
+{
+  "id": "physics.waves.diffraction",
+  "name": "Diffraction",
+  "domain": "physics",
+  "subject": "waves",
+  "kind": "simulation",
+  "simulation": {
+    "name": "diffraction",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.diffraction",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "diffraction",
+      "huygens principle"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Huygens' principle: every point in the gap acts as a source. A gap about the size of the wavelength spreads the wave out most."
+  },
+  "aliases": [
+    "diffraction",
+    "single slit",
+    "wave through a gap"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "first minimum of a single slit: sinθ = λ / a"
+  ]
+}

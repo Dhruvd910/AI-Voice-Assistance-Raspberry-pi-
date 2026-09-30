@@ -44,6 +44,7 @@ from state import (audio_queue, kg_ask_cancel, kg_ask_event,
 import kg_content
 import media
 import profiles
+import chatlog
 import store
 import visuals
 from config import (KG_COUNT_END_SILENCE_S, KG_COUNT_PHRASE_LIMIT_S,
@@ -945,6 +946,8 @@ class TutorUI:
         self.overlay = None
         self._overlay_seq = 0
         self._overlay_photos = []
+        self._overlay_widgets = []
+        self._tap_handled = None
         self._setup_name = ""
         self._setup_class = None
         self._setup_board = None
@@ -980,6 +983,7 @@ class TutorUI:
         self._build_buttons()
         self._build_exit_button()
         self._build_profile_chip()
+        self._build_chats_button()
         self._refresh_cards()
         self.set_now_playing(None)
         self.refresh_profile_chip()
@@ -1063,10 +1067,10 @@ class TutorUI:
             text = text[:-1]
         return text + "…"
 
-    def _round_rect(self, x0, y0, x1, y1, r, **kw):
+    def _round_rect(self, x0, y0, x1, y1, r, canvas=None, **kw):
         pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
                x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
-        return self.canvas.create_polygon(pts, smooth=True, **kw)
+        return (canvas or self.canvas).create_polygon(pts, smooth=True, **kw)
 
     def _place_emoji(self, char, cx, cy, px):
         """Draw one picture centred at (cx, cy). Returns the item id, or None."""
@@ -1082,13 +1086,17 @@ class TutorUI:
 
     def _overlay_text(self, x, y, text, size, bold=False, fill=COL_TEXT,
                       anchor="center", tags=None, width=None, justify="center",
-                      max_lines=None):
+                      max_lines=None, canvas=None):
         """canvas.create_text for modal screens, except Hindi comes out spelled
         right -- see devanagari_image. Latin text is left to Tk unchanged.
 
         `width` wraps like create_text's; `max_lines=1` cuts to one line with an
-        ellipsis, which is what _ellipsize does for Tk text."""
+        ellipsis, which is what _ellipsize does for Tk text.
+
+        `canvas` draws on a different canvas -- the scrolling panes of the chat
+        history, which are canvases of their own inside this one."""
         tags = tags or self.OVERLAY_TAG
+        canvas = canvas or self.canvas
         if has_devanagari(text):
             px = max(1, round(size * self.root.winfo_fpixels("1p")))
             image = devanagari_image(text, px, bold, fill, width=width,
@@ -1096,12 +1104,12 @@ class TutorUI:
             if image is not None:
                 photo = ImageTk.PhotoImage(image)
                 self._overlay_photos.append(photo)
-                return self.canvas.create_image(x, y, image=photo, anchor=anchor,
-                                                tags=tags)
+                return canvas.create_image(x, y, image=photo, anchor=anchor,
+                                           tags=tags)
         font = self._font(size, bold)
         if width and max_lines == 1:
             text, width = self._ellipsize(text, font, width), None
-        return self.canvas.create_text(x, y, text=text, font=font, fill=fill,
+        return canvas.create_text(x, y, text=text, font=font, fill=fill,
                                        anchor=anchor, tags=tags, width=width or 0,
                                        justify=justify)
 
@@ -2225,7 +2233,40 @@ class TutorUI:
         except Exception:
             # A caption is never worth taking the screen down for.
             pass
+        try:
+            self._update_stop_pill()
+        except Exception:
+            pass
         self.root.after(120, self._follow_spoken_captions)
+
+    # A STOP BUTTON OVER WHATEVER IS FULL SCREEN, WHILE SHE TALKS.
+    #
+    # The STOP control is on the home screen, and a 3D model, a picture or a
+    # graph opened full screen covers all of it -- so with a model up there was
+    # no way at all to cut her off: "the user has to wait until Liza completes".
+    # Shown only while she is speaking, top centre, clear of the title on the
+    # left and the close cross on the right. The microphone is already live, so
+    # stopping her is also the way to start talking.
+    STOP_PILL_TAG = "stoppill"
+    FULL_SCREEN_TAGS = ("big3d", "bigvisual", "biggraph")
+
+    def _update_stop_pill(self):
+        speaking = playback_active.is_set() or not audio_queue.empty()
+        covered = any(self.canvas.find_withtag(t) for t in self.FULL_SCREEN_TAGS)
+        shown = bool(self.canvas.find_withtag(self.STOP_PILL_TAG))
+        if not (speaking and covered):
+            if shown:
+                self.canvas.delete(self.STOP_PILL_TAG)
+            return
+        if not shown:
+            cx, cy, half = UI_W / 2, 22, 78
+            self._round_rect(cx - half, cy - 17, cx + half, cy + 17, 16, fill="#DC2626",
+                             outline="#FCA5A5", tags=self.STOP_PILL_TAG)
+            self.canvas.create_text(cx, cy, text="\u25A0  Stop talking", fill="#FFFFFF",
+                                    font=self._font(11, bold=True), tags=self.STOP_PILL_TAG)
+            self.canvas.tag_bind(self.STOP_PILL_TAG, "<Button-1>", self.stop_speaking)
+        # A frame of the model or a redrawn view can land on top of it.
+        self.canvas.tag_raise(self.STOP_PILL_TAG)
 
     # Where a diagram lands on the board: the whole of the writing area, from
     # under the painted heading to just above the status dots. 309x184, which is
@@ -2371,6 +2412,279 @@ class TutorUI:
         self._big_visual_photos = []
         return "break"
 
+    # -----------------------------------------------------------------
+    # 3D models
+    # -----------------------------------------------------------------
+    # "Show me methane in 3D". The drawing itself happens in viewer3d's worker
+    # process; this is only the glass it is shown on and the finger that turns
+    # it. It opens full screen straight away -- a 3D model is asked for in order
+    # to be turned round, and a 309px thumbnail is not where that happens --
+    # and leaves a still on the board to come back to, like any other visual.
+    #
+    # Not an overlay, for the reason show_visual gives: she keeps listening, so
+    # "why is it bent?" can be asked while it is being turned.
+    MODEL3D_TAG = "board3d"
+    BIG_MODEL3D_TAG = "big3d"
+    # The picture area of the full-screen view: under the title, above the
+    # buttons. Rendered at exactly this size so a frame needs no scaling.
+    BIG_MODEL3D_BOX = (0, 62, UI_W, UI_H - 58)
+    # Degrees of turn per pixel of drag. VTK's own trackball is about 0.3 at
+    # this width; a child's short swipe should get round further than that.
+    MODEL3D_DRAG_DEG = 0.45
+
+    def _renderer3d(self):
+        """The one viewer3d.Renderer, made on first use."""
+        if getattr(self, "_renderer", None) is None:
+            import viewer3d
+            self._model3d_pending = None
+            self._renderer = viewer3d.Renderer(self._model3d_frame_ready,
+                                               self._model3d_failed,
+                                               self._model3d_moved)
+        return self._renderer
+
+    def _model3d_moved(self, answer):
+        """From the renderer's thread: the + and - buttons took the student
+        into a part's own model (the cell's nucleus) or back out. ON_BOARD has
+        to name the new one, and the view its title."""
+        def land():
+            if answer.get("board"):
+                app_state.current_visual = {"kind": "model3d", "title": answer["board"], "steps": []}
+            print(f"[3D] Zoomed through to {answer.get('title')}: {answer.get('reply')}", flush=True)
+            self.model3d_after_command(answer)
+        self.root.after(0, land)
+
+    def _model3d_board_size(self):
+        x0, y0, x1, y1 = self.VISUAL_BOX
+        return (x1 - x0 - 8, y1 - y0 - 8)
+
+    def _model3d_big_size(self):
+        x0, y0, x1, y1 = self.BIG_MODEL3D_BOX
+        return (x1 - x0, y1 - y0)
+
+    def show_model3d(self, scene):
+        """Put a 3D model up: full screen and turning, with a still on the board."""
+        self.clear_visual(keep_renderer=True)
+        self._model3d_scene = scene
+        self._model3d_big_open = False
+        x0, y0, x1, y1 = self.VISUAL_BOX
+        self._round_rect(x0, y0, x1, y1, 10, fill="#0B1020", outline="#D8E0F0",
+                         tags=self.MODEL3D_TAG)
+        self._model3d_board_item = self.canvas.create_image(
+            (x0 + x1) / 2, (y0 + y1) / 2, anchor="center", tags=self.MODEL3D_TAG)
+        self.canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2,
+                                text="Building the 3D model\u2026", fill="#C9D2EA",
+                                font=self._font(10, bold=True),
+                                tags=(self.MODEL3D_TAG, self.MODEL3D_TAG + "wait"))
+        badge = self.MODEL3D_TAG + "badge"
+        self._round_rect(x0 + 8, y0 + 8, x0 + 44, y0 + 30, 8, fill="#6366F1",
+                         outline="", tags=(self.MODEL3D_TAG, badge))
+        self.canvas.create_text(x0 + 26, y0 + 19, text="3D", fill="#FFFFFF",
+                                font=self._font(9, bold=True),
+                                tags=(self.MODEL3D_TAG, badge))
+        self._expand_icon(x1 - 21, y0 + 21, self.MODEL3D_TAG)
+        self.canvas.tag_bind(self.MODEL3D_TAG, "<Button-1>",
+                             lambda e: self._open_model3d())
+        self._renderer3d().show(scene, self._model3d_big_size())
+        self._open_model3d(first=True)
+        print(f"[UI] 3D model: {scene.get('title')}", flush=True)
+
+    def _open_model3d(self, first=False):
+        """The full-screen view: drag to turn, buttons to zoom, reset and close."""
+        scene = getattr(self, "_model3d_scene", None)
+        if scene is None:
+            return "break"
+        tag = self.BIG_MODEL3D_TAG
+        self.canvas.delete(tag)
+        self._model3d_big_open = True
+        self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill="#0B1020", outline="",
+                                     tags=tag)
+        self.canvas.create_text(20, 22, text=scene.get("title") or "3D model",
+                                anchor="w", fill="#FFFFFF",
+                                font=self._font(13, bold=True), tags=tag)
+        # The colour key: a dot and a name per element, left to right.
+        x = 22
+        for _symbol, name, colour in scene.get("legend") or []:
+            self.canvas.create_oval(x, 42, x + 12, 54, fill=colour, outline="",
+                                    tags=tag)
+            label = self.canvas.create_text(x + 17, 48, text=name, anchor="w",
+                                            fill="#C9D2EA", font=self._font(9),
+                                            tags=tag)
+            x = self.canvas.bbox(label)[2] + 16
+        x0, y0, x1, y1 = self.BIG_MODEL3D_BOX
+        glass = tag + "glass"
+        # The touch surface: an empty rectangle the size of the picture, so a
+        # drag is caught even before the first frame has arrived.
+        self.canvas.create_rectangle(x0, y0, x1, y1, fill="#0B1020", outline="",
+                                     tags=(tag, glass))
+        self._model3d_big_item = self.canvas.create_image(
+            (x0 + x1) / 2, (y0 + y1) / 2, anchor="center", tags=(tag, glass))
+        self.canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2,
+                                text="Building the 3D model\u2026", fill="#8891A8",
+                                font=self._font(11, bold=True),
+                                tags=(tag, tag + "wait"))
+        self.canvas.tag_bind(glass, "<ButtonPress-1>", self._model3d_press)
+        self.canvas.tag_bind(glass, "<B1-Motion>", self._model3d_drag)
+        # A mouse wheel, for whoever plugs one in. Two-finger pinch never
+        # reaches Tk -- XWayland hands it one pointer -- hence the buttons.
+        self.canvas.tag_bind(glass, "<Button-4>", lambda e: self._model3d_zoom(1.15))
+        self.canvas.tag_bind(glass, "<Button-5>", lambda e: self._model3d_zoom(1 / 1.15))
+
+        bottom = UI_H - 29
+        self._model3d_button(UI_W / 2 - 150, bottom, "\u2212", lambda: self._model3d_zoom(1 / 1.25))
+        self._model3d_button(UI_W / 2 - 80, bottom, "+", lambda: self._model3d_zoom(1.25))
+        self._model3d_button(UI_W / 2 + 20, bottom, "Reset", self._model3d_reset, width=96)
+        self.canvas.create_text(UI_W - 20, bottom, text="drag to turn it", anchor="e",
+                                fill="#8891A8", font=self._font(9), tags=tag)
+        if scene.get("note"):
+            # "Not to scale", "Spreading exaggerated": the honest small print,
+            # in the free corner left of the buttons.
+            self.canvas.create_text(16, bottom, text=scene["note"], anchor="w",
+                                    width=UI_W / 2 - 180, fill="#8891A8",
+                                    font=self._font(8), tags=tag)
+        close = tag + "close"
+        self._close_icon(UI_W - 26, 24, close)
+        self.canvas.addtag_withtag(tag, close)
+        # After this tap has finished, not during it: tap_to_wake runs next on
+        # the same tap and recognises the 3D view by what is under the finger,
+        # so the view must still be there when it looks.
+        self.canvas.tag_bind(close, "<Button-1>",
+                             lambda e: self.root.after_idle(self.hide_big_model3d))
+        self.canvas.tag_raise(tag)
+        renderer = self._renderer3d()
+        if not first:
+            renderer.resize(self._model3d_big_size())
+        # Turning on its own says "this moves" before anyone is told so. The
+        # first touch stops it: the child has taken over. Orbits and waves run
+        # while the view is open -- a model that decides not to spin (the solar
+        # system, whose planets move) says so in the scene, and viewer3d obeys.
+        renderer.spin(True)
+        renderer.animate(True)
+        return "break"
+
+    def _model3d_button(self, cx, cy, text, command, width=56):
+        tag = f"{self.BIG_MODEL3D_TAG}btn{text}"
+        self._round_rect(cx - width / 2, cy - 20, cx + width / 2, cy + 20, 12,
+                         fill="#1E2A4A", outline="#3A4A75", tags=(self.BIG_MODEL3D_TAG, tag))
+        self.canvas.create_text(cx, cy, text=text, fill="#FFFFFF",
+                                font=self._font(14 if len(text) == 1 else 11, bold=True),
+                                tags=(self.BIG_MODEL3D_TAG, tag))
+        self.canvas.tag_bind(tag, "<Button-1>", lambda e: (command(), "break")[1])
+
+    def _model3d_press(self, event):
+        self._model3d_last = (event.x, event.y)
+        self._renderer3d().spin(False)
+        return "break"
+
+    def _model3d_drag(self, event):
+        last = getattr(self, "_model3d_last", None)
+        self._model3d_last = (event.x, event.y)
+        if last is None:
+            return "break"
+        dx, dy = event.x - last[0], event.y - last[1]
+        # Right drags the front of the model right; down tips its top towards you.
+        self._renderer3d().turn(-dx * self.MODEL3D_DRAG_DEG, dy * self.MODEL3D_DRAG_DEG)
+        return "break"
+
+    def _model3d_zoom(self, factor):
+        self._renderer3d().spin(False)
+        self._renderer3d().zoom(factor)
+        return "break"
+
+    def _model3d_reset(self):
+        self._renderer3d().reset()
+        self._renderer3d().spin(True)
+
+    def hide_big_model3d(self, event=None):
+        """Back to the board, which keeps a still of the whole model."""
+        if not getattr(self, "_model3d_big_open", False):
+            return "break"
+        self._model3d_big_open = False
+        self.canvas.delete(self.BIG_MODEL3D_TAG)
+        self._model3d_big_item = None
+        if getattr(self, "_renderer", None) is not None:
+            self._renderer.spin(False)
+            self._renderer.animate(False)
+            self._renderer.resize(self._model3d_board_size())
+            # The whole molecule on the board, not whatever corner of it the
+            # child had zoomed into last.
+            self._renderer.reset()
+        return "break"
+
+    def _model3d_frame_ready(self, image):
+        """From the renderer's thread: keep only the newest frame, and have
+        the Tk thread show it. A drag makes frames faster than Tk may want
+        them, and a queue of old ones would play on after the finger stops."""
+        first = self._model3d_pending is None
+        self._model3d_pending = image
+        if first:
+            self.root.after(0, self._show_model3d_frame)
+
+    def _show_model3d_frame(self):
+        image, self._model3d_pending = self._model3d_pending, None
+        if image is None or getattr(self, "_model3d_scene", None) is None:
+            return
+        photo = ImageTk.PhotoImage(image)
+        if getattr(self, "_model3d_big_open", False) and self._model3d_big_item:
+            self.canvas.delete(self.BIG_MODEL3D_TAG + "wait")
+            self.canvas.itemconfig(self._model3d_big_item, image=photo)
+            self._model3d_big_photo = photo      # Tk keeps no reference itself
+        else:
+            self.canvas.delete(self.MODEL3D_TAG + "wait")
+            self.canvas.itemconfig(self._model3d_board_item, image=photo)
+            self._model3d_board_photo = photo
+            self.canvas.tag_raise(self.MODEL3D_TAG + "badge")
+
+    def _model3d_failed(self, reason):
+        """From the renderer's thread: the worker could not draw. Say so on the
+        screen, where the child is looking, and close the big view."""
+        def show():
+            if getattr(self, "_model3d_scene", None) is None:
+                return
+            self.hide_big_model3d()
+            self.canvas.itemconfig(self.MODEL3D_TAG + "wait",
+                                   text="The 3D model could not be drawn.")
+        self.root.after(0, show)
+
+    def _drop_model3d(self, close_worker=True):
+        """Take any 3D model away, and let the worker go."""
+        self.canvas.delete(self.MODEL3D_TAG)
+        self.canvas.delete(self.BIG_MODEL3D_TAG)
+        self._model3d_scene = None
+        self._model3d_big_open = False
+        self._model3d_board_photo = self._model3d_big_photo = None
+        if close_worker and getattr(self, "_renderer", None) is not None:
+            self._renderer.close()
+
+    # THE 3D ENGINE'S MODELS (see viewer3d.ENGINE_DIR). The same board and big
+    # view; what differs is that the engine can be told to do things to the
+    # model -- highlight a part, cut it open, go a level deeper.
+    def model3d_engine_active(self):
+        """Any thread: is the model on the board the engine's?"""
+        scene = getattr(self, "_model3d_scene", None)
+        return bool(scene and scene.get("kind") == "engine")
+
+    def renderer_ask(self, op, text, timeout=5.0):
+        """Any thread (never Tk's: it waits for the worker). None if no answer."""
+        renderer = getattr(self, "_renderer", None)
+        if renderer is None or not self.model3d_engine_active():
+            return None
+        return renderer.ask(op, text, timeout)
+
+    def model3d_after_command(self, answer):
+        """Tk thread, after the engine carried out a command.
+
+        Opens the big view if the board only had the still -- the student is
+        talking about the model, so they should see it -- redraws its title if
+        the model changed ("go one level deeper"), and stops the slow spin, or
+        the part just highlighted would turn away from them."""
+        scene = getattr(self, "_model3d_scene", None)
+        if scene is None:
+            return
+        if answer.get("changed_model") or not getattr(self, "_model3d_big_open", False):
+            self._open_model3d()
+        if getattr(self, "_renderer", None) is not None:
+            self._renderer.spin(False)
+
     # THE SPOKEN WAY IN AND OUT. A child who wants a closer look says "make it
     # bigger" -- they do not go looking for a control, and on a device answered
     # by talking to it that is the first thing they will try. These take the
@@ -2379,14 +2693,25 @@ class TutorUI:
     def enlarge_current(self):
         if self._graph is not None:
             return self._enlarge_graph()
+        if getattr(self, "_model3d_scene", None) is not None:
+            # A model opens full screen already, so "zoom it" there means
+            # closer -- reopening the same view changed nothing, and the
+            # student said so: "No, I did not see any zoom picture."
+            if getattr(self, "_model3d_big_open", False):
+                return self._model3d_zoom(1.5)
+            return self._open_model3d()
         return self._enlarge_visual()
 
     def shrink_current(self):
         self.hide_big_visual()
         self.hide_big_graph()
+        self.hide_big_model3d()
 
-    def clear_visual(self):
-        """Take the picture off the board. It belonged to the last question."""
+    def clear_visual(self, keep_renderer=False):
+        """Take the picture off the board. It belonged to the last question.
+
+        `keep_renderer`: a new 3D model is about to replace this one, so the
+        3D worker stays up rather than being ended and started again."""
         self.canvas.delete(self.VISUAL_TAG)
         self.canvas.delete(self.BIG_VISUAL_TAG)
         self._visual_photos = []
@@ -2398,6 +2723,7 @@ class TutorUI:
         self._visual_steps = []
         self._step_current = -1
         self._step_views = {}
+        self._drop_model3d(close_worker=not keep_renderer)
 
     # -----------------------------------------------------------------
     # the step strip
@@ -2912,9 +3238,23 @@ class TutorUI:
         those as a wake would put her straight back to listening. Asleep,
         only the Speak button or the wake word count.
         """
-        if "btnEXIT" in self.canvas.gettags("current"):
+        if event is not None and event.serial == self._tap_handled:
+            # An overlay button already took this tap -- see _overlay_press.
+            return
+        tags = self.canvas.gettags("current")
+        if self.CHATS_TAG in tags:
+            # Opening the chat history is not a request to start listening.
+            return
+        if "btnEXIT" in tags:
             # Returning "break" from the Exit button's own binding does not
             # stop this root binding, and arming Exit must not start the mic.
+            return
+        if self.STOP_PILL_TAG in tags:
+            # stop_speaking has it; waking on the same tap would only log noise.
+            return
+        if self.MODEL3D_TAG in tags or self.BIG_MODEL3D_TAG in tags:
+            # Turning a 3D model is a dozen touches a minute. Each one waking
+            # her would open the microphone on a child who is only looking.
             return
         if self.asleep or self.overlay:
             # An overlay owns the whole screen, and every control on it is a
@@ -3014,6 +3354,11 @@ class TutorUI:
 
     def _clear_overlay(self):
         self.canvas.delete(self.OVERLAY_TAG)
+        # Deleting a window item only unmaps the widget in it, so the scrolling
+        # panes of the chat history would pile up hidden behind every screen.
+        for widget in self._overlay_widgets:
+            widget.destroy()
+        self._overlay_widgets = []
         self._overlay_photos = []
         self.overlay = None
 
@@ -3287,8 +3632,22 @@ class TutorUI:
                                sub, 8, fill=text_colour, tags=tags,
                                width=room if wrap else None)
         if command is not None:
-            self.canvas.tag_bind(tag, "<Button-1>", lambda e: command())
+            self.canvas.tag_bind(tag, "<Button-1>",
+                                 lambda e: self._overlay_press(e, command))
         return tag
+
+    def _overlay_press(self, event, command):
+        """Run an overlay button, and keep the same tap from waking her.
+
+        tap_to_wake is bound to the ROOT, so it sees every tap after the item's
+        own binding has run -- and a button that CLOSES the screen (Close, Done,
+        a name in the profile picker) has already cleared self.overlay by then,
+        so the guard there let the tap through and the microphone opened on a
+        child who had only closed a screen. logs/liza.log has five "Speak
+        tapped" lines straight after "[PROFILE] Active". The serial is the X
+        event's own, the same for every binding one tap reaches."""
+        self._tap_handled = event.serial
+        command()
 
     # ---------- the classroom screens ----------
     # The strip of pills along the floor, and the slots they stand in.
@@ -3719,6 +4078,262 @@ class TutorUI:
             weeks = days // 7
             return "a week ago" if weeks == 1 else f"{weeks} weeks ago"
         return value.strftime("%d %b")
+
+    # ---------- chat history ----------
+    # The three-line button in the top-left corner and the screen it opens: the
+    # active student's past conversations down the left, newest first under a
+    # heading per day, and whichever one is chosen read back on the right -- the
+    # shape every chat app has taught children to expect.
+    #
+    # ONLY THE ACTIVE STUDENT'S. The list comes from chatlog.conversations for
+    # the id on the profile chip, and the query under that filters on it, so
+    # nothing here can put one child's conversation in front of another.
+    CHATS_TAG = "chatsbtn"
+    # The corner left of the clock card: 99px of wallpaper, header height.
+    CHATS_BOX = (19, TOP_Y0, 81, TOP_Y1)
+    CHATS_LIST_BOX = (16, 88, 290, 466)
+    CHATS_READ_BOX = (302, 88, 784, 466)
+    # How far a finger has to move before a press is a scroll and not a tap.
+    CHATS_DRAG_SLOP = 8
+
+    def _build_chats_button(self):
+        x0, y0, x1, y1 = self.CHATS_BOX
+        w, h = x1 - x0, y1 - y0
+        # Cut from the profile card's own artwork, left end and right end joined,
+        # so the corners and the glow match the three cards beside it. Squashing
+        # the 204px card to 62 would have turned its corners into ovals.
+        art = ui_asset("Home", "Profile_bg.png", box=CARD_BOX)
+        tags = (self.CHATS_TAG,)
+        if art is not None:
+            half = w // 2
+            face = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            face.paste(art.crop((0, 0, half, h)), (0, 0))
+            face.paste(art.crop((art.width - (w - half), 0, art.width, h)), (half, 0))
+            item = self._place_asset(face, x0, y0, tags)
+        else:
+            face = _card_image(w, h, 16)
+            item = self._place_photo(face, x0, y0, tags)
+        cx = (x0 + x1) / 2
+        for dy in (-15, -7, 1):
+            self.canvas.create_line(cx - 12, CARD_INK_TOP + 26 + dy,
+                                    cx + 12, CARD_INK_TOP + 26 + dy,
+                                    fill=COL_CARD_DIM, width=3, capstyle="round",
+                                    tags=tags)
+        # A word under the mark, for the child who has never met a hamburger.
+        self.canvas.create_text(cx, CARD_INK_TOP + 43, text="Chats",
+                                font=self._font(8, True), fill=COL_CARD_DIM,
+                                tags=tags)
+        self._press_feedback(self.CHATS_TAG, item, face,
+                             lambda event=None: self.show_chat_history())
+
+    def show_chat_history(self):
+        profile = profiles.active_profile() or {}
+        user_id = profile.get("user_id")
+        name = profile.get("name") or "Your"
+        try:
+            chats = chatlog.conversations(user_id) if user_id else []
+        except Exception as exc:
+            print(f"[CHATS] Could not read the history ({exc}).", flush=True)
+            chats = None
+        print(f"[CHATS] Opened for {profile.get('name') or 'nobody'}: "
+              f"{len(chats) if chats is not None else 'no store'} conversations.",
+              flush=True)
+
+        self._overlay_screen("chats", f"{name}'s chats" if user_id else "Chats",
+                             "Newest first. Tap a chat to read it.")
+        self._chats = chats or []
+        self._chat_rows = []
+        self._chat_selected = None
+        self._overlay_button(676, 22, 780, 62, "Close", self._close_chat_history,
+                             fill=COL_INDIGO, size=12)
+
+        for box in (self.CHATS_LIST_BOX, self.CHATS_READ_BOX):
+            self._round_rect(*box, 16, fill="#FFFFFF", outline=COL_CARD_EDGE,
+                             tags=self.OVERLAY_TAG)
+
+        if not self._chats:
+            if not user_id:
+                why = "Choose who you are on the card at the top first."
+            elif chats is None:
+                why = "The chat history is not available right now."
+            else:
+                why = "No chats yet. Say “Hey Liza” and ask anything!"
+            self._overlay_text((self.CHATS_LIST_BOX[0] + self.CHATS_READ_BOX[2]) / 2,
+                               277, why, 12, fill=COL_TEXT_DIM, width=440)
+            return
+
+        self._chat_list = self._chat_pane(self.CHATS_LIST_BOX, self._chat_list_tap)
+        self._chat_read = self._chat_pane(self.CHATS_READ_BOX, None)
+        self._draw_chat_list()
+        self._open_chat(0)
+
+    def _close_chat_history(self):
+        profile = profiles.active_profile()
+        if profile and profiles.is_kindergarten(profile.get("class")):
+            self.show_kg_home()
+        else:
+            self._clear_overlay()
+
+    def _chat_pane(self, box, on_tap):
+        """A canvas of its own inside the card, so a long list can scroll under
+        a finger without spilling over the rest of the screen -- Tk cannot clip
+        items on one canvas, but a child canvas clips to its own edges."""
+        x0, y0, x1, y1 = box
+        inset = 6
+        pane = tk.Canvas(self.canvas, width=x1 - x0 - 2 * inset,
+                         height=y1 - y0 - 2 * inset, bg="#FFFFFF", bd=0,
+                         highlightthickness=0)
+        self._overlay_widgets.append(pane)
+        self.canvas.create_window(x0 + inset, y0 + inset, window=pane, anchor="nw",
+                                  tags=self.OVERLAY_TAG)
+        pane.view_h = y1 - y0 - 2 * inset
+        pane.view_w = x1 - x0 - 2 * inset
+        pane.content_h = pane.view_h
+        pane.top = 0
+        pane.thumb = None
+        drag = {}
+
+        def press(event):
+            drag.update(y=event.y, top=pane.top, moved=False)
+
+        def motion(event):
+            if not drag:
+                return
+            dy = event.y - drag["y"]
+            if abs(dy) > self.CHATS_DRAG_SLOP:
+                drag["moved"] = True
+            if drag["moved"]:
+                self._chat_scroll(pane, drag["top"] - dy)
+
+        def release(event):
+            if drag and not drag["moved"] and on_tap is not None:
+                on_tap(pane.top + event.y)
+            drag.clear()
+
+        pane.bind("<ButtonPress-1>", press)
+        pane.bind("<B1-Motion>", motion)
+        pane.bind("<ButtonRelease-1>", release)
+        return pane
+
+    def _chat_pane_done(self, pane, content_h, top=0):
+        """Set how tall what was drawn is, and put a scroll thumb on it if it
+        is taller than the card -- the only sign there is more below."""
+        pane.content_h = max(pane.view_h, content_h)
+        pane.configure(scrollregion=(0, 0, pane.view_w, pane.content_h))
+        pane.thumb = None
+        if pane.content_h > pane.view_h:
+            pane.thumb = pane.create_line(0, 0, 0, 0, fill="#CBD2E6", width=4,
+                                          capstyle="round")
+        self._chat_scroll(pane, top)
+
+    def _chat_scroll(self, pane, top):
+        top = max(0, min(top, pane.content_h - pane.view_h))
+        pane.top = top
+        pane.yview_moveto(top / pane.content_h)
+        if pane.thumb is not None:
+            length = max(30, pane.view_h * pane.view_h / pane.content_h)
+            y = top + (pane.view_h - length) * top / (pane.content_h - pane.view_h)
+            x = pane.view_w - 3
+            pane.coords(pane.thumb, x, y + 3, x, y + length - 3)
+            pane.tag_raise(pane.thumb)
+
+    @staticmethod
+    def _chat_day(when):
+        today = datetime.now(when.tzinfo).date()
+        days = (today - when.date()).days
+        if days <= 0:
+            return "Today"
+        if days == 1:
+            return "Yesterday"
+        if days < 7:
+            return when.strftime("%A")
+        return when.strftime("%d %b %Y").lstrip("0")
+
+    @staticmethod
+    def _chat_time(when):
+        return when.strftime("%I:%M %p").lstrip("0").lower()
+
+    CHAT_ROW_H = 54
+    CHAT_DAY_H = 30
+
+    def _draw_chat_list(self):
+        pane = self._chat_list
+        pane.delete("all")
+        self._chat_rows = []
+        w, y, day = pane.view_w, 0, None
+        for index, chat in enumerate(self._chats):
+            this_day = self._chat_day(chat["start"])
+            if this_day != day:
+                day = this_day
+                pane.create_text(10, y + self.CHAT_DAY_H / 2 + 3, text=day.upper(),
+                                 anchor="w", font=self._font(8, True),
+                                 fill=COL_TEXT_DIM)
+                y += self.CHAT_DAY_H
+            y0, y1 = y + 2, y + self.CHAT_ROW_H - 2
+            rect = self._round_rect(2, y0, w - 8, y1, 10, canvas=pane,
+                                    fill="#FFFFFF", outline="")
+            self._overlay_text(12, y0 + 17, chat["title"], 10, bold=True,
+                               fill=COL_TEXT, anchor="w", width=w - 30,
+                               max_lines=1, justify="left", canvas=pane,
+                               tags="row")
+            questions = sum(1 for t in chat["turns"] if t["role"] == "user")
+            meta = self._chat_time(chat["start"])
+            if questions:
+                meta += f"  ·  {questions} question" + ("s" if questions > 1 else "")
+            pane.create_text(12, y0 + 36, text=meta, anchor="w",
+                             font=self._font(8), fill=COL_TEXT_DIM)
+            self._chat_rows.append((y0, y1, index, rect))
+            y += self.CHAT_ROW_H
+        self._chat_pane_done(pane, y + 6)
+
+    def _chat_list_tap(self, y):
+        for y0, y1, index, _rect in self._chat_rows:
+            if y0 <= y <= y1:
+                self._open_chat(index)
+                return
+
+    def _open_chat(self, index):
+        self._chat_selected = index
+        for _y0, _y1, row, rect in self._chat_rows:
+            self._chat_list.itemconfigure(
+                rect, fill="#EEF0FF" if row == index else "#FFFFFF")
+
+        chat = self._chats[index]
+        pane = self._chat_read
+        pane.delete("all")
+        w = pane.view_w
+        bubble_w = int(w * 0.74)
+        pad = 10
+        start = chat["start"]
+        heading = f"{self._chat_day(start)}, {self._chat_time(start)}"
+        if start.date() != datetime.now(start.tzinfo).date():
+            heading = f"{start.strftime('%a %d %b %Y').replace(' 0', ' ')}, {self._chat_time(start)}"
+        pane.create_text(w / 2, 16, text=heading, font=self._font(8, True),
+                         fill=COL_TEXT_DIM)
+        y = 36
+        for turn in chat["turns"]:
+            mine = turn["role"] == "user"
+            fill = "#6366F1" if mine else "#F1F3FA"
+            ink = "#FFFFFF" if mine else COL_TEXT
+            # Written first to be measured, then the bubble drawn to fit and
+            # sent behind it: the height of a wrapped reply is not known until
+            # Tk (or the Hindi shaper) has laid it out.
+            x = w - 14 - pad if mine else 6 + pad
+            text = self._overlay_text(x, y + pad, turn["text"], 10, fill=ink,
+                                      anchor="ne" if mine else "nw",
+                                      width=bubble_w - 2 * pad, justify="left",
+                                      canvas=pane, tags="msg")
+            bx0, _by0, bx1, by1 = pane.bbox(text)
+            bubble = self._round_rect(bx0 - pad, y, bx1 + pad, by1 + pad, 12,
+                                      canvas=pane, fill=fill, outline="")
+            pane.tag_lower(bubble, text)
+            who = "You" if mine else "Liza"
+            pane.create_text(bx1 + pad if mine else bx0 - pad, by1 + pad + 9,
+                             text=f"{who}  ·  {self._chat_time(turn['at'])}",
+                             anchor="e" if mine else "w", font=self._font(7),
+                             fill=COL_TEXT_DIM)
+            y = by1 + pad + 26
+        self._chat_pane_done(pane, y)
 
     # ---------- creating and editing a profile ----------
     def show_profile_setup(self, profile=None):
@@ -4452,15 +5067,19 @@ class TutorUI:
             # Wrong one. Say which letter actually comes next rather than only
             # that this one is wrong -- "not that one" tells a child nothing
             # about the alphabet.
+            # Letter NAMES, never the bare letters: "B comes first." handed
+            # to the voice is a lone Latin glyph it may read as a Hindi sound.
+            sound = kg_content.letter_sound
             kg.kg_say_many([("Not that one.", "gentle"),
-                         (f"After {self._kg_order_picked[-1]}, comes {expected}."
+                         (f"After {sound(self._kg_order_picked[-1])}, comes "
+                          f"{sound(expected)}."
                           if self._kg_order_picked
-                          else f"{expected} comes first.", "curious")])
+                          else f"{sound(expected)} comes first.", "curious")])
             return
         self._kg_order_picked.append(letter)
         if len(self._kg_order_picked) < len(self._kg_order_target):
             self._draw_kg_order()
-            kg.kg_say(letter, "curious")
+            kg.kg_say(f"{kg_content.letter_sound(letter)}.", "curious")
             return
         self._kg_order_done = True
         self._kg_note("order", "".join(self._kg_order_target),
@@ -4834,7 +5453,8 @@ class TutorUI:
     def _kg_praise_for(kind):
         """Praise that fits the question. "You got every letter" is the right
         thing to say about a spelling and the wrong thing about sixteen apples."""
-        return kg_content.COUNT_PRAISE if kind == "count" else kg_content.PRAISE
+        return {"count": kg_content.COUNT_PRAISE,
+                "hi": kg_content.HINDI_PRAISE}.get(kind, kg_content.PRAISE)
 
     def _kg_test_repeat(self):
         question = self._kg_test_question()
@@ -4885,8 +5505,24 @@ class TutorUI:
         # the result goes on rescheduling itself for as long as the screen is up.
         self._kg_test_gen = getattr(self, "_kg_test_gen", 0) + 1
         self._kg_begin_listen(start_s, seed=seed, language=language,
-                              phrase_limit=phrase_limit, end_silence=end_silence)
+                              phrase_limit=phrase_limit, end_silence=end_silence,
+                              accept=self._kg_test_accept(question, spelling))
         self._kg_test_poll(token, self._kg_test_gen)
+
+    @staticmethod
+    def _kg_test_accept(question, spelling):
+        """What counts as the right answer to this listen, for kg_request_listen's
+        `accept`. None for counting: a number is short enough to score well."""
+        if not question or question["kind"] == "count":
+            return None
+        if question["kind"] == "hi":
+            if spelling:
+                return lambda t, letter=question["letter"]: letter in (t or "")
+            return lambda t, word=question["word"]: kg_content.matches_answer(t, word)
+        if spelling:
+            target = kg_content.spelling_target(question["word"])
+            return lambda t: kg_content.heard_spelling(t, target)[0] == "correct"
+        return lambda t, word=question["word"]: kg_content.matches_answer(t, word)
 
     def _kg_test_poll(self, token, generation):
         if (self._kg_test_stale(token)
@@ -4920,11 +5556,23 @@ class TutorUI:
             else:
                 right = kg_content.matches_answer(heard, question["word"])
                 answer = question["word"]
-            if right:
+            if right and kind == "hi":
+                # Hindi framing for a Hindi word: "It is कबूतर." is one line
+                # the voice can only read in ONE accent, and got wrong.
+                self._kg_test_score += 1
+                self._kg_test_note = f"Yes! {answer}"
+                lines = [(random.choice(self._kg_praise_for(kind)), "proud"),
+                         (f"यह {answer} है।", "warm")]
+            elif right:
                 self._kg_test_score += 1
                 self._kg_test_note = f"Yes! {answer}"
                 lines = [(random.choice(self._kg_praise_for(kind)), "proud"),
                          (f"It is {answer}.", "warm")]
+            elif kind == "hi":
+                self._kg_test_note = f"It is {answer}"
+                said = f"तुमने कहा, {heard}। " if heard.strip() else ""
+                lines = [("कोई बात नहीं।", "gentle"),
+                         (f"{said}यह {answer} है।", "curious")]
             else:
                 # Say what they said before the answer, the same way the spelling
                 # screen does: a child needs to hear the difference, not just the
@@ -4974,6 +5622,10 @@ class TutorUI:
             self._kg_test_score += 1
             self._kg_test_note = "Correct!"
             lines = [(random.choice(self._kg_praise_for(kind)), "proud")]
+        elif kind == "hi":
+            self._kg_test_note = f"It is {answer}"
+            lines = [("कोई बात नहीं।", "gentle"),
+                     (f"यह {answer} से शुरू होता है।", "curious")]
         else:
             self._kg_test_note = f"It is {answer}"
             lines = [("Not quite.", "gentle"), (f"It is {said}", "curious")]
@@ -5139,11 +5791,11 @@ class TutorUI:
     KG_LISTEN_MARGIN_S = 25.0
 
     def _kg_begin_listen(self, seconds, seed="", language="en",
-                         phrase_limit=None, end_silence=None):
+                         phrase_limit=None, end_silence=None, accept=None):
         """Ask for one listen and remember which answer belongs to us."""
         self._kg_listen_id = kg.kg_request_listen(
             seconds, seed=seed, language=language,
-            phrase_limit=phrase_limit, end_silence=end_silence)
+            phrase_limit=phrase_limit, end_silence=end_silence, accept=accept)
         self._kg_listen_deadline = (time.time() + seconds
                                     + (phrase_limit or seconds)
                                     + self.KG_LISTEN_MARGIN_S)
@@ -5206,10 +5858,13 @@ class TutorUI:
         # per listen, and only the newest one is allowed to read the answer.
         self._kg_listen_gen = getattr(self, "_kg_listen_gen", 0) + 1
         self._draw_kg_spelling()
+        word = self._kg_word["word"]
         self._kg_begin_listen(self.KG_SAY_SECONDS, seed=kg.KG_SEED_LETTERS,
                               language="en",
                               phrase_limit=KG_SPELL_PHRASE_LIMIT_S,
-                              end_silence=KG_SPELL_END_SILENCE_S)
+                              end_silence=KG_SPELL_END_SILENCE_S,
+                              accept=lambda t: kg_content.heard_spelling(t, word)[0]
+                              in ("correct", "said_the_word"))
         self._kg_poll_listen(round_token, self._kg_listen_gen)
 
     def _kg_listen_again(self, round_token):
@@ -5797,9 +6452,10 @@ class HeadlessUI:
     def show_visual(self, path, steps=None):
         print(f"[UI] (headless) visual: {path} steps={steps or []}", flush=True)
     def show_graph(self, spec): print(f"[UI] (headless) graph: {spec['source']}", flush=True)
+    def show_model3d(self, scene): print(f"[UI] (headless) 3D model: {scene.get('title')}", flush=True)
     def enlarge_current(self): pass
     def shrink_current(self): pass
-    def clear_visual(self): pass
+    def clear_visual(self, keep_renderer=False): pass
     def clear_transcript(self): pass
     def set_weather(self, reading): pass
     def set_now_playing(self, title, loading=False): pass

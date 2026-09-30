@@ -1,0 +1,64 @@
+{
+  "id": "physics.mechanics.collision",
+  "name": "Collisions and Momentum",
+  "domain": "physics",
+  "subject": "mechanics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "collision",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.collision",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "momentum",
+      "newton's laws of motion",
+      "collisions"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Frictionless track. Elasticity 1 = elastic (kinetic energy kept), 0 = the carts stick together."
+  },
+  "aliases": [
+    "collision",
+    "momentum",
+    "newton's laws",
+    "newton's third law",
+    "conservation of momentum",
+    "carts colliding"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "total momentum m1·u1 + m2·u2 = m1·v1 + m2·v2",
+    "v1 = (m1·u1 + m2·u2 + m2·e·(u2 − u1)) / (m1 + m2)",
+    "v2 = (m1·u1 + m2·u2 + m1·e·(u1 − u2)) / (m1 + m2)"
+  ]
+}

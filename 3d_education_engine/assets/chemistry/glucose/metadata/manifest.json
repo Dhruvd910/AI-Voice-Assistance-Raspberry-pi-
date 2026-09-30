@@ -1,0 +1,69 @@
+{
+  "id": "chemistry.molecule.glucose",
+  "name": "Glucose",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid5793_3d.sdf",
+    "smiles": "C([C@@H]1[C@H]([C@@H]([C@H](C(O1)O)O)O)O)O",
+    "pubchem_cid": 5793,
+    "formula": "C6H12O6",
+    "representation": "ball_and_stick"
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/5793",
+    "source_id": "5793",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: D-Glucose (CID 5793)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "glucose",
+      "photosynthesis",
+      "respiration"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "C6H12O6",
+    "blood sugar",
+    "c6h12o6",
+    "d-glucose",
+    "dextrose",
+    "sugar"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid5793_3d.sdf": "4bac438c0352a4d0b6c57a3f242d7861573695dc79ee4b06fbbf7c1c5d2f8418",
+    "original/pubchem_cid5793_properties.json": "55a2683ca39579ea78f5f44e1cbfc5368eb47047734524c48178c3af8aef48cd"
+  },
+  "generated_on": "2026-09-25"
+}

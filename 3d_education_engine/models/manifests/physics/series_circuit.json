@@ -1,0 +1,68 @@
+{
+  "id": "physics.electronics.series_circuit",
+  "name": "Series Circuit",
+  "domain": "physics",
+  "subject": "electronics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "series_circuit",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.series_circuit",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "electric circuits",
+      "ohm's law",
+      "resistance"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Dots show conventional current (+ to −); speed exaggerated. Real electrons drift the other way at about a millimetre per second."
+  },
+  "aliases": [
+    "circuit",
+    "series circuit",
+    "simple circuit",
+    "ohm's law",
+    "battery and resistor",
+    "resistor",
+    "current"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "V = I·R  (Ohm's law)",
+    "series: R_total = R1 + R2",
+    "the same current flows through every component",
+    "V = V1 + V2,  V1 = I·R1",
+    "power P = V·I"
+  ]
+}

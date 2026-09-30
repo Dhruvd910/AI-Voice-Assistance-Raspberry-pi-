@@ -1,0 +1,1003 @@
+{
+ "version": 1,
+ "models": {
+  "biology.anatomy.brain": {
+   "name": "Human Brain",
+   "kind": "asset",
+   "domain": "biology",
+   "aliases": [
+    "brain",
+    "brain structure",
+    "dimaag",
+    "dimag",
+    "human brain",
+    "mastishk",
+    "my brain",
+    "parts of the brain",
+    "the brain",
+    "दिमाग",
+    "दिमाग़",
+    "मस्तिष्क"
+   ],
+   "formulas": [],
+   "disclaimer": "Anatomical model (BodyParts3D). Colours are a teaching convention.",
+   "attribution": "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International",
+   "parts": {
+    "ventricles": "Ventricles (fluid-filled spaces)",
+    "frontal_lobe": "Frontal lobe",
+    "parietal_lobe": "Parietal lobe",
+    "occipital_lobe": "Occipital lobe",
+    "temporal_lobe": "Temporal lobe",
+    "insula": "Insula",
+    "limbic": "Cingulate gyrus and hippocampus (limbic)",
+    "inner_cerebrum": "Inner cerebrum (white matter, basal nuclei)",
+    "hypothalamus": "Hypothalamus",
+    "pineal": "Pineal gland",
+    "pituitary": "Pituitary gland",
+    "midbrain": "Midbrain",
+    "pons": "Pons",
+    "medulla": "Medulla oblongata",
+    "cerebellum": "Cerebellum",
+    "spinal_cord": "Spinal cord (top)"
+   },
+   "groups": [
+    "brainstem",
+    "cerebrum",
+    "forebrain",
+    "glands",
+    "hindbrain",
+    "lobes"
+   ]
+  },
+  "biology.anatomy.heart": {
+   "name": "Human Heart",
+   "kind": "asset",
+   "domain": "biology",
+   "aliases": [
+    "cardiac organ",
+    "dil",
+    "heart",
+    "hriday",
+    "human heart",
+    "my heart",
+    "the heart",
+    "दिल",
+    "हृदय"
+   ],
+   "formulas": [],
+   "disclaimer": "Anatomical model (BodyParts3D). Colours are a teaching convention.",
+   "attribution": "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International",
+   "parts": {
+    "aortic_valve": "Aortic valve",
+    "pulmonary_valve": "Pulmonary valve",
+    "tricuspid_valve": "Tricuspid valve",
+    "mitral_valve": "Mitral valve",
+    "right_atrium": "Right atrium",
+    "left_atrium": "Left atrium",
+    "right_ventricle": "Right ventricle",
+    "left_ventricle": "Left ventricle",
+    "aorta": "Aorta",
+    "pulmonary_artery": "Pulmonary trunk",
+    "superior_vena_cava": "Superior vena cava",
+    "inferior_vena_cava": "Inferior vena cava",
+    "pulmonary_veins": "Pulmonary veins",
+    "coronary_arteries": "Coronary arteries",
+    "cardiac_veins": "Cardiac veins"
+   },
+   "groups": [
+    "arteries",
+    "atria",
+    "chambers",
+    "coronary_circulation",
+    "great_vessels",
+    "left_side",
+    "right_side",
+    "valves",
+    "veins",
+    "ventricles"
+   ]
+  },
+  "biology.anatomy.left_kidney": {
+   "name": "Left Kidney",
+   "kind": "asset",
+   "domain": "biology",
+   "aliases": [
+    "kidney",
+    "left kidney"
+   ],
+   "formulas": [],
+   "disclaimer": "Anatomical model (BodyParts3D). Colours are a teaching convention.",
+   "attribution": "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International",
+   "parts": {
+    "left_kidney": "Left Kidney"
+   },
+   "groups": []
+  },
+  "biology.anatomy.skeleton": {
+   "name": "Human Skeleton",
+   "kind": "asset",
+   "domain": "biology",
+   "aliases": [
+    "asthi tantra",
+    "bones",
+    "bones of the body",
+    "full skeleton",
+    "haddiyan",
+    "human bones",
+    "human skeletal system",
+    "human skeleton",
+    "kankal",
+    "skeletal system",
+    "skeleton",
+    "the skeleton",
+    "whole skeleton",
+    "अस्थि तंत्र",
+    "कंकाल",
+    "कंकाल तंत्र",
+    "हड्डियाँ",
+    "हड्डियां"
+   ],
+   "formulas": [],
+   "disclaimer": "Anatomical model (BodyParts3D). Colours are a teaching convention.",
+   "attribution": "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International",
+   "parts": {
+    "cranium": "Skull (cranium and face)",
+    "mandible": "Lower jaw (mandible)",
+    "hyoid": "Hyoid bone",
+    "cervical_vertebrae": "Neck vertebrae (cervical, 7)",
+    "thoracic_vertebrae": "Chest vertebrae (thoracic, 12)",
+    "lumbar_vertebrae": "Lower back vertebrae (lumbar, 5)",
+    "sacrum": "Sacrum",
+    "intervertebral_discs": "Discs between the vertebrae (cartilage)",
+    "ribs": "Ribs (12 pairs)",
+    "sternum": "Breastbone (sternum)",
+    "costal_cartilages": "Rib cartilages (costal)",
+    "clavicle": "Collarbone (clavicle) (right and left)",
+    "scapula": "Shoulder blade (scapula) (right and left)",
+    "humerus": "Upper arm bone (humerus) (right and left)",
+    "radius": "Radius (right and left)",
+    "ulna": "Ulna (right and left)",
+    "carpals": "Wrist bones (carpals, 8 each) (right and left)",
+    "metacarpals": "Palm bones (metacarpals, 5 each) (right and left)",
+    "hand_phalanges": "Finger bones (phalanges, 14 each) (right and left)",
+    "hip_bone": "Hip bone (pelvic girdle) (right and left)",
+    "femur": "Thigh bone (femur) (right and left)",
+    "patella": "Kneecap (patella) (right and left)",
+    "tibia": "Shin bone (tibia) (right and left)",
+    "fibula": "Fibula (right and left)",
+    "tarsals": "Ankle and heel bones (tarsals, 7 each) (right and left)",
+    "metatarsals": "Foot bones (metatarsals, 5 each) (right and left)",
+    "foot_phalanges": "Toe bones (phalanges, 14 each) (right and left)"
+   },
+   "groups": [
+    "appendicular_skeleton",
+    "arm",
+    "axial_skeleton",
+    "cartilage",
+    "foot",
+    "forearm",
+    "hand",
+    "leg",
+    "long_bones",
+    "lower_leg",
+    "pectoral_girdle",
+    "pelvis",
+    "rib_cage",
+    "skull",
+    "vertebrae",
+    "vertebral_column"
+   ]
+  },
+  "biology.cell.animal_cell": {
+   "name": "Animal Cell",
+   "kind": "procedural",
+   "domain": "biology",
+   "aliases": [
+    "a cell",
+    "animal cell",
+    "cell",
+    "human cell",
+    "typical cell"
+   ],
+   "formulas": [],
+   "disclaimer": "Educational model — not to scale. A generalised cell; real cells vary widely in shape and contents.",
+   "attribution": "",
+   "parts": {
+    "cell_membrane": "Cell membrane",
+    "nucleus": "Nucleus",
+    "nucleolus": "Nucleolus",
+    "rough_er": "Rough endoplasmic reticulum",
+    "golgi": "Golgi apparatus",
+    "mitochondria": "Mitochondria",
+    "lysosomes": "Lysosomes",
+    "ribosomes": "Ribosomes (enlarged)",
+    "centrioles": "Centrioles"
+   },
+   "groups": []
+  },
+  "biology.cell.cardiomyocyte": {
+   "name": "Cardiomyocyte (Heart Muscle Cell)",
+   "kind": "procedural",
+   "domain": "biology",
+   "aliases": [
+    "cardiac cell",
+    "cardiac muscle cell",
+    "cardiomyocyte",
+    "cardiomyocyte (heart muscle cell)",
+    "cardiomyocytes",
+    "heart cell",
+    "heart muscle cell",
+    "myocyte"
+   ],
+   "formulas": [],
+   "disclaimer": "Educational model — not to scale. About 100 µm long; only some myofibrils and mitochondria are drawn.",
+   "attribution": "",
+   "parts": {
+    "sarcolemma": "Cell membrane (sarcolemma)",
+    "nucleus": "Nucleus",
+    "myofibrils": "Myofibrils",
+    "z_discs": "Z-discs (sarcomere boundaries)",
+    "mitochondria": "Mitochondria",
+    "intercalated_discs": "Intercalated discs"
+   },
+   "groups": []
+  },
+  "biology.organelle.mitochondrion": {
+   "name": "Mitochondrion",
+   "kind": "procedural",
+   "domain": "biology",
+   "aliases": [
+    "mitochondria",
+    "mitochondrion",
+    "mitocondria",
+    "powerhouse of the cell",
+    "the mitochondria"
+   ],
+   "formulas": [],
+   "disclaimer": "Educational model — not to scale. About 2 µm long; ATP synthase and ribosomes drawn much larger than real.",
+   "attribution": "",
+   "parts": {
+    "outer_membrane": "Outer membrane",
+    "inner_membrane": "Inner membrane",
+    "cristae": "Cristae",
+    "matrix": "Matrix",
+    "atp_synthase": "ATP synthase (enlarged)",
+    "mtdna": "Mitochondrial DNA",
+    "ribosomes": "Mitochondrial ribosomes (enlarged)"
+   },
+   "groups": []
+  },
+  "biology.organelle.nucleus": {
+   "name": "Nucleus",
+   "kind": "procedural",
+   "domain": "biology",
+   "aliases": [
+    "cell nucleus",
+    "kendrak",
+    "nuclei",
+    "nucleus",
+    "nucleus of the cell",
+    "the nucleus",
+    "केंद्रक",
+    "केन्द्रक"
+   ],
+   "formulas": [],
+   "disclaimer": "Educational model — not to scale. About 6 µm across; ribosomes and pores drawn larger than real.",
+   "attribution": "",
+   "parts": {
+    "outer_membrane": "Outer nuclear membrane",
+    "inner_membrane": "Inner nuclear membrane",
+    "nuclear_pores": "Nuclear pores",
+    "nucleoplasm": "Nucleoplasm",
+    "chromatin": "Chromatin (DNA + proteins)",
+    "nucleolus": "Nucleolus",
+    "rough_er": "Rough endoplasmic reticulum",
+    "ribosomes": "Ribosomes (enlarged)"
+   },
+   "groups": []
+  },
+  "biology.protein.haemoglobin": {
+   "name": "Haemoglobin",
+   "kind": "molecule",
+   "domain": "biology",
+   "aliases": [
+    "4hhb",
+    "haemoglobin",
+    "hb",
+    "hemoglobin"
+   ],
+   "formulas": [
+    "4hhb"
+   ],
+   "disclaimer": "",
+   "attribution": "PDB 4HHB: The crystal structure of human deoxyhaemoglobin at 1.74 A resolution (Fermi, G., Perutz, M.F., Shaanan, B.). Data from RCSB PDB (rcsb.org).",
+   "parts": {},
+   "groups": []
+  },
+  "biology.tissue.cardiac_muscle": {
+   "name": "Cardiac Muscle Tissue",
+   "kind": "procedural",
+   "domain": "biology",
+   "aliases": [
+    "cardiac muscle",
+    "cardiac muscle tissue",
+    "heart muscle tissue",
+    "heart tissue",
+    "myocardium",
+    "tissue of the heart"
+   ],
+   "formulas": [],
+   "disclaimer": "Educational model — not to scale. Striations drawn every 6 µm; real sarcomeres repeat every ~2 µm.",
+   "attribution": "",
+   "parts": {
+    "cardiomyocytes": "Cardiac muscle cells",
+    "nuclei": "Nuclei",
+    "intercalated_discs": "Intercalated discs",
+    "capillaries": "Capillaries"
+   },
+   "groups": []
+  },
+  "chemistry.atom.carbon": {
+   "name": "Carbon Atom",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "an atom of carbon",
+    "atom of carbon",
+    "c atom",
+    "carbon",
+    "carbon atom",
+    "carbon electron configuration"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.atom.chlorine": {
+   "name": "Chlorine Atom",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "an atom of chlorine",
+    "atom of chlorine",
+    "chlorine",
+    "chlorine atom",
+    "chlorine electron configuration",
+    "cl atom"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.atom.helium": {
+   "name": "Helium Atom",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "an atom of helium",
+    "atom of helium",
+    "he atom",
+    "helium",
+    "helium atom",
+    "helium electron configuration"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.atom.hydrogen": {
+   "name": "Hydrogen Atom",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "an atom of hydrogen",
+    "atom of hydrogen",
+    "h atom",
+    "hydrogen",
+    "hydrogen atom",
+    "hydrogen electron configuration"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.atom.iron": {
+   "name": "Iron Atom",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "an atom of iron",
+    "atom of iron",
+    "fe atom",
+    "iron",
+    "iron atom",
+    "iron electron configuration"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.atom.nitrogen": {
+   "name": "Nitrogen Atom",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "an atom of nitrogen",
+    "atom of nitrogen",
+    "n atom",
+    "nitrogen",
+    "nitrogen atom",
+    "nitrogen electron configuration"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.atom.oxygen": {
+   "name": "Oxygen Atom",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "an atom of oxygen",
+    "atom of oxygen",
+    "o atom",
+    "oxygen",
+    "oxygen atom",
+    "oxygen electron configuration"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.atom.sodium": {
+   "name": "Sodium Atom",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "an atom of sodium",
+    "atom of sodium",
+    "na atom",
+    "sodium",
+    "sodium atom",
+    "sodium electron configuration"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.ammonia": {
+   "name": "Ammonia",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "ammonia",
+    "ammonia molecule",
+    "h3n",
+    "nh3"
+   ],
+   "formulas": [
+    "H3N",
+    "nh3"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Ammonia (CID 222)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.atp": {
+   "name": "ATP (Adenosine Triphosphate)",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "5' atp",
+    "adenosine triphosphate",
+    "atp",
+    "atp (adenosine triphosphate)",
+    "c10h16n5o13p3",
+    "energy molecule"
+   ],
+   "formulas": [
+    "5'-atp",
+    "C10H16N5O13P3"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: 5'-Atp (CID 5957)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.caffeine": {
+   "name": "Caffeine",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "c8h10n4o2",
+    "caffeine"
+   ],
+   "formulas": [
+    "C8H10N4O2"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Caffeine (CID 2519)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.carbon_dioxide": {
+   "name": "Carbon Dioxide",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "carbon dioxide",
+    "carbon dioxide molecule",
+    "co2"
+   ],
+   "formulas": [
+    "CO2",
+    "co2"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Carbon Dioxide (CID 280)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.ethanol": {
+   "name": "Ethanol",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "alcohol",
+    "c2h5oh",
+    "c2h6o",
+    "ethanol",
+    "ethyl alcohol"
+   ],
+   "formulas": [
+    "C2H6O",
+    "c2h5oh"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Ethanol (CID 702)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.glucose": {
+   "name": "Glucose",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "blood sugar",
+    "c6h12o6",
+    "d glucose",
+    "dextrose",
+    "glucose",
+    "sugar"
+   ],
+   "formulas": [
+    "C6H12O6",
+    "c6h12o6"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: D-Glucose (CID 5793)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.hydrogen_chloride": {
+   "name": "Hydrogen Chloride",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "clh",
+    "hcl",
+    "hydrochloric acid",
+    "hydrochloric acid gas",
+    "hydrogen chloride"
+   ],
+   "formulas": [],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Hydrochloric Acid (CID 313)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.methane": {
+   "name": "Methane",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "ch4",
+    "methane",
+    "methane molecule",
+    "natural gas"
+   ],
+   "formulas": [
+    "CH4",
+    "ch4"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Methane (CID 297)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.nitrogen": {
+   "name": "Nitrogen (N2)",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "n2",
+    "nitrogen",
+    "nitrogen (n2)",
+    "nitrogen gas",
+    "nitrogen molecule"
+   ],
+   "formulas": [
+    "N2",
+    "n2"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Nitrogen (CID 947)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.oxygen": {
+   "name": "Oxygen (O2)",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "dioxygen",
+    "o2",
+    "oxygen",
+    "oxygen (o2)",
+    "oxygen gas",
+    "oxygen molecule"
+   ],
+   "formulas": [
+    "O2",
+    "o2"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Oxygen (CID 977)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.molecule.water": {
+   "name": "Water",
+   "kind": "molecule",
+   "domain": "chemistry",
+   "aliases": [
+    "h2o",
+    "water",
+    "water molecule"
+   ],
+   "formulas": [
+    "H2O",
+    "h2o"
+   ],
+   "disclaimer": "",
+   "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Water (CID 962)",
+   "parts": {},
+   "groups": []
+  },
+  "chemistry.reaction.methane_combustion": {
+   "name": "Combustion of Methane",
+   "kind": "procedural",
+   "domain": "chemistry",
+   "aliases": [
+    "burning methane",
+    "ch4 + 2o2",
+    "combustion of methane",
+    "combustion reaction",
+    "methane burning",
+    "methane combustion"
+   ],
+   "formulas": [
+    "ch4 + 2o2"
+   ],
+   "disclaimer": "Educational animation — not to scale.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.astronomy.orbital_motion": {
+   "name": "Orbital Motion (Gravity)",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "gravity",
+    "kepler's laws",
+    "newton's law of gravitation",
+    "orbit",
+    "orbital motion",
+    "orbital motion (gravity)",
+    "planet orbiting"
+   ],
+   "formulas": [],
+   "disclaimer": "Two bodies, star fixed. Sizes not to scale. Blue: velocity; orange: the pull of gravity, always towards the star.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.astronomy.solar_system": {
+   "name": "The Solar System",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "planetary motion",
+    "planets",
+    "solar system",
+    "the planets",
+    "the solar system"
+   ],
+   "formulas": [],
+   "disclaimer": "Not to scale: distances compressed (square-root scale) and planets hugely enlarged. Orbits drawn as circles; real ones are slightly elliptical. Periods are real.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.electromagnetism.electric_field": {
+   "name": "Electric Field",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "charge",
+    "dipole",
+    "electric dipole",
+    "electric field",
+    "field lines",
+    "point charge"
+   ],
+   "formulas": [],
+   "disclaimer": "Field lines in the plane of the charges. Red: positive charge; blue: negative.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.electromagnetism.magnetic_field_wire": {
+   "name": "Magnetic Field of a Wire",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "current carrying wire",
+    "magnetic field",
+    "magnetic field around a wire",
+    "magnetic field of a wire",
+    "magnetic field wire",
+    "right hand grip rule"
+   ],
+   "formulas": [],
+   "disclaimer": "Conventional current flows upwards (arrow). Right-hand grip rule: thumb along the current, fingers curl the way the field circles.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.electronics.series_circuit": {
+   "name": "Series Circuit",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "battery and resistor",
+    "circuit",
+    "current",
+    "ohm's law",
+    "resistor",
+    "series circuit",
+    "simple circuit"
+   ],
+   "formulas": [],
+   "disclaimer": "Dots show conventional current (+ to −); speed exaggerated. Real electrons drift the other way at about a millimetre per second.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.mechanics.circular_motion": {
+   "name": "Uniform Circular Motion",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "centripetal force",
+    "circular motion",
+    "moving in a circle",
+    "uniform circular motion"
+   ],
+   "formulas": [],
+   "disclaimer": "The velocity (blue) is along the circle; the acceleration (orange) points to the centre.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.mechanics.collision": {
+   "name": "Collisions and Momentum",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "carts colliding",
+    "collision",
+    "collisions and momentum",
+    "conservation of momentum",
+    "momentum",
+    "newton's laws",
+    "newton's third law"
+   ],
+   "formulas": [],
+   "disclaimer": "Frictionless track. Elasticity 1 = elastic (kinetic energy kept), 0 = the carts stick together.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.mechanics.free_fall": {
+   "name": "Free Fall",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "dropping a ball",
+    "falling ball",
+    "falling object",
+    "free fall"
+   ],
+   "formulas": [],
+   "disclaimer": "No air resistance. Ghost balls show the position every 0.2 s: the gaps grow because the ball speeds up.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.mechanics.pendulum": {
+   "name": "Simple Pendulum",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "pendulum",
+    "simple pendulum",
+    "swinging pendulum"
+   ],
+   "formulas": [],
+   "disclaimer": "No friction. Solved exactly (not the small-angle approximation), so large swings are slower.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.mechanics.projectile_motion": {
+   "name": "Projectile Motion",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "cannon ball",
+    "launching a ball",
+    "projectile",
+    "projectile motion",
+    "throwing a ball"
+   ],
+   "formulas": [],
+   "disclaimer": "No air resistance. Arrows: velocity (blue) and its horizontal and vertical components.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.mechanics.spring": {
+   "name": "Mass on a Spring",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "hooke's law",
+    "mass on a spring",
+    "spring",
+    "spring mass system"
+   ],
+   "formulas": [],
+   "disclaimer": "No friction unless damping is set. The coil is drawn, not simulated.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.optics.reflection": {
+   "name": "Reflection of Light",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "law of reflection",
+    "mirror",
+    "plane mirror",
+    "reflection",
+    "reflection of light"
+   ],
+   "formulas": [],
+   "disclaimer": "Angles are measured from the normal, the line at right angles to the mirror.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.optics.refraction": {
+   "name": "Refraction of Light",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "light bending",
+    "refraction",
+    "refraction of light",
+    "snell's law",
+    "total internal reflection"
+   ],
+   "formulas": [],
+   "disclaimer": "A single ray. Part of the light is always reflected; above the critical angle, all of it is.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.waves.diffraction": {
+   "name": "Diffraction",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "diffraction",
+    "single slit",
+    "wave through a gap"
+   ],
+   "formulas": [],
+   "disclaimer": "Huygens' principle: every point in the gap acts as a source. A gap about the size of the wavelength spreads the wave out most.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.waves.interference": {
+   "name": "Interference",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "double slit",
+    "interference",
+    "two source interference",
+    "young's double slit"
+   ],
+   "formulas": [],
+   "disclaimer": "Ripples from two sources in step. Bright bands: constructive interference; flat bands: destructive.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.waves.sine_wave": {
+   "name": "Travelling Wave",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "sine wave",
+    "transverse wave",
+    "traveling wave",
+    "travelling wave",
+    "wave"
+   ],
+   "formulas": [],
+   "disclaimer": "A transverse wave on a string. The dot moves up and down only; the wave shape travels along.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.waves.standing_wave": {
+   "name": "Standing Wave",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "harmonics",
+    "standing wave",
+    "stationary wave",
+    "vibrating string"
+   ],
+   "formulas": [],
+   "disclaimer": "Fixed at both ends. Yellow dots mark nodes (no motion); the loops between them are antinodes.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  }
+ }
+}

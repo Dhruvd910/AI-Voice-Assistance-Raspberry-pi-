@@ -1,0 +1,67 @@
+{
+  "id": "chemistry.molecule.oxygen",
+  "name": "Oxygen (O2)",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid977_3d.sdf",
+    "smiles": "O=O",
+    "pubchem_cid": 977,
+    "formula": "O2",
+    "representation": "ball_and_stick"
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/977",
+    "source_id": "977",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Oxygen (CID 977)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "oxygen gas"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "O2",
+    "dioxygen",
+    "o2",
+    "oxygen",
+    "oxygen gas",
+    "oxygen molecule"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid977_3d.sdf": "a8231dd16a198484e7337950951a5f55b6e9b442e6d98c621fddcf4b3a7a0a1a",
+    "original/pubchem_cid977_properties.json": "5df8b3b54cf947e8461e7d489bc156209f6afb640d1d6d5a320a02056d60fc74"
+  },
+  "generated_on": "2026-09-25"
+}

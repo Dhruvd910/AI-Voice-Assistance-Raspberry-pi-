@@ -1,0 +1,64 @@
+{
+  "id": "physics.astronomy.orbital_motion",
+  "name": "Orbital Motion (Gravity)",
+  "domain": "physics",
+  "subject": "astronomy",
+  "kind": "simulation",
+  "simulation": {
+    "name": "orbital_motion",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.orbital_motion",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "gravitation",
+      "orbital motion",
+      "kepler's laws"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Two bodies, star fixed. Sizes not to scale. Blue: velocity; orange: the pull of gravity, always towards the star."
+  },
+  "aliases": [
+    "gravity",
+    "orbit",
+    "orbital motion",
+    "planet orbiting",
+    "newton's law of gravitation",
+    "kepler's laws"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "F = G·M·m / r²  (Newton's law of gravitation)",
+    "circular orbit speed v = √(G·M / r)",
+    "Kepler's third law: T² = a³ / M  (T in years, a in AU, M in solar masses)"
+  ]
+}

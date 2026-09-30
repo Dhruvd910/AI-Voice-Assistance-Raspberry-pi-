@@ -1,0 +1,65 @@
+{
+  "id": "physics.mechanics.projectile_motion",
+  "name": "Projectile Motion",
+  "domain": "physics",
+  "subject": "mechanics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "projectile_motion",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.projectile_motion",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "projectile motion",
+      "kinematics",
+      "motion in two dimensions"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "No air resistance. Arrows: velocity (blue) and its horizontal and vertical components."
+  },
+  "aliases": [
+    "projectile",
+    "projectile motion",
+    "throwing a ball",
+    "launching a ball",
+    "cannon ball"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "x = v0·cosθ·t",
+    "z = h + v0·sinθ·t − ½·g·t²",
+    "time of flight T = (v0·sinθ + √((v0·sinθ)² + 2gh)) / g",
+    "range R = v0·cosθ·T  (= v0²·sin2θ / g when h = 0)",
+    "maximum height H = h + (v0·sinθ)² / (2g)"
+  ]
+}

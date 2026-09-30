@@ -1,0 +1,75 @@
+{
+  "id": "physics.astronomy.solar_system",
+  "name": "The Solar System",
+  "domain": "physics",
+  "subject": "astronomy",
+  "kind": "simulation",
+  "simulation": {
+    "name": "solar_system",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.solar_system",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10"
+    ],
+    "topics": [
+      "solar system",
+      "planetary motion"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Not to scale: distances compressed (square-root scale) and planets hugely enlarged. Orbits drawn as circles; real ones are slightly elliptical. Periods are real."
+  },
+  "aliases": [
+    "solar system",
+    "planets",
+    "planetary motion",
+    "the planets"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "Kepler's third law: T² = a³  (T in years, a in AU)"
+  ],
+  "default_labels": [
+    "sun",
+    "mercury",
+    "venus",
+    "earth",
+    "mars",
+    "jupiter",
+    "saturn",
+    "uranus",
+    "neptune"
+  ],
+  "riding_labels": [
+    "sun"
+  ]
+}

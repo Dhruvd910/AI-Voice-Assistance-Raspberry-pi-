@@ -1,0 +1,697 @@
+{
+  "id": "biology.anatomy.heart",
+  "name": "Human Heart",
+  "domain": "biology",
+  "subject": "anatomy",
+  "kind": "asset",
+  "asset": {
+    "file": "runtime/heart.glb",
+    "format": "glb",
+    "units": "mm",
+    "lods": {
+      "high": "runtime/heart.glb",
+      "low": "runtime/heart_low.glb"
+    },
+    "origin_offset_mm": [
+      22.338,
+      -113.181,
+      1233.505
+    ],
+    "cells": {
+      "high": 109302,
+      "low": 29987
+    },
+    "thumbnail": "metadata/thumbnail.png"
+  },
+  "source": {
+    "provider": "BodyParts3D",
+    "url": "https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST/partof_BP3D_4.0_obj_99.zip",
+    "source_id": "FMA7088 (+25 related FMA concepts)",
+    "creator": "The Database Center for Life Science (DBCLS)",
+    "license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "attribution": "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International",
+    "download_date": "2026-09-25",
+    "modification_status": "extracted+converted+decimated"
+  },
+  "source_detail": {
+    "database_license_page": "https://dbarchive.biosciencedbc.jp/en/bodyparts3d/lic.html",
+    "archive": "https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST/partof_BP3D_4.0_obj_99.zip",
+    "concepts": {
+      "FMA10951": "inferior vena cava",
+      "FMA3736": "ascending aorta",
+      "FMA3768": "arch of aorta",
+      "FMA4720": "superior vena cava",
+      "FMA49911": "right inferior pulmonary vein",
+      "FMA49913": "left inferior pulmonary vein",
+      "FMA49914": "right superior pulmonary vein",
+      "FMA49916": "left superior pulmonary vein",
+      "FMA50039": "right coronary artery",
+      "FMA50040": "left coronary artery",
+      "FMA68002": "intrapulmonary part of right superior pulmonary vein",
+      "FMA68003": "intrapulmonary part of right inferior pulmonary vein",
+      "FMA68004": "intrapulmonary part of left superior pulmonary vein",
+      "FMA68005": "intrapulmonary part of left inferior pulmonary vein",
+      "FMA7088": "heart",
+      "FMA7096": "right atrium",
+      "FMA7097": "left atrium",
+      "FMA7098": "right ventricle",
+      "FMA7101": "left ventricle",
+      "FMA7234": "tricuspid valve",
+      "FMA7235": "mitral valve",
+      "FMA7246": "pulmonary valve",
+      "FMA7252": "right posterior cusp of aortic valve",
+      "FMA7253": "anterior cusp of aortic valve",
+      "FMA7254": "left posterior cusp of aortic valve",
+      "FMA8612": "pulmonary trunk"
+    },
+    "processing": [
+      "element meshes merged per part (first claim wins; see biology/anatomy.py)",
+      "triangulated, cleaned, normals computed",
+      "centred on the origin (origin_offset_mm recovers source coordinates)",
+      "low LOD: decimate_pro keeping 27% of triangles",
+      "inferior_vena_cava: Trimmed to the 25 mm below the heart; the source continues into the abdomen."
+    ]
+  },
+  "educational": {
+    "grades": [
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "human heart",
+      "circulatory system",
+      "cardiovascular system",
+      "double circulation"
+    ],
+    "scale_level": "organ",
+    "disclaimer": "Anatomical model (BodyParts3D). Colours are a teaching convention."
+  },
+  "aliases": [
+    "cardiac organ",
+    "dil",
+    "heart",
+    "hriday",
+    "human heart",
+    "my heart",
+    "the heart",
+    "दिल",
+    "हृदय"
+  ],
+  "parts": {
+    "aortic_valve": {
+      "name": "Aortic valve",
+      "description": "Semilunar valve with three cusps between the left ventricle and the aorta. It opens when the left ventricle contracts and closes to stop blood flowing back.",
+      "color": "#f0e2a8",
+      "aliases": [
+        "aortic valves"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7252",
+        "FMA7253",
+        "FMA7254"
+      ],
+      "source_elements": [
+        "FJ2426",
+        "FJ2431",
+        "FJ2435"
+      ]
+    },
+    "pulmonary_valve": {
+      "name": "Pulmonary valve",
+      "description": "Semilunar valve with three cusps between the right ventricle and the pulmonary trunk.",
+      "color": "#f0e2a8",
+      "aliases": [
+        "pulmonic valve",
+        "pulmonary valves"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7246"
+      ],
+      "source_elements": [
+        "FJ2417",
+        "FJ2427",
+        "FJ2434"
+      ]
+    },
+    "tricuspid_valve": {
+      "name": "Tricuspid valve",
+      "description": "Valve with three leaflets between the right atrium and right ventricle. It closes when the ventricle contracts, so blood cannot flow back into the atrium.",
+      "color": "#f0e2a8",
+      "aliases": [
+        "right atrioventricular valve"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7234"
+      ],
+      "source_elements": [
+        "FJ2421",
+        "FJ2433",
+        "FJ2436"
+      ]
+    },
+    "mitral_valve": {
+      "name": "Mitral valve",
+      "description": "Valve with two leaflets (the bicuspid valve) between the left atrium and left ventricle. Shown with its fibrous ring.",
+      "color": "#f0e2a8",
+      "aliases": [
+        "bicuspid valve",
+        "left atrioventricular valve",
+        "mitral valves"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7235"
+      ],
+      "source_elements": [
+        "FJ2420",
+        "FJ2432"
+      ]
+    },
+    "right_atrium": {
+      "name": "Right atrium",
+      "description": "Receives deoxygenated blood from the body through the superior and inferior venae cavae, and passes it to the right ventricle.",
+      "color": "#5b7fd6",
+      "aliases": [
+        "right auricle",
+        "RA",
+        "right atrial"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7096"
+      ],
+      "source_elements": [
+        "FJ2424",
+        "FJ2439"
+      ]
+    },
+    "left_atrium": {
+      "name": "Left atrium",
+      "description": "Receives oxygenated blood from the lungs through the pulmonary veins, and passes it to the left ventricle.",
+      "color": "#d65f5a",
+      "aliases": [
+        "LA",
+        "left auricle",
+        "left atrial"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7097"
+      ],
+      "source_elements": [
+        "FJ2425",
+        "FJ2438"
+      ]
+    },
+    "right_ventricle": {
+      "name": "Right ventricle",
+      "description": "Pumps deoxygenated blood through the pulmonary valve into the pulmonary trunk, on its way to the lungs.",
+      "color": "#5b7fd6",
+      "aliases": [
+        "RV",
+        "right ventricular",
+        "right ventricular wall"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7098"
+      ],
+      "source_elements": [
+        "FJ2419",
+        "FJ2423",
+        "FJ2430",
+        "FJ2437"
+      ]
+    },
+    "left_ventricle": {
+      "name": "Left ventricle",
+      "description": "Pumps oxygenated blood through the aortic valve into the aorta and out to the whole body. It has the thickest muscular wall of the four chambers.",
+      "color": "#d65f5a",
+      "aliases": [
+        "LV",
+        "heart muscle of the left ventricle",
+        "left ventricular",
+        "left ventricular wall",
+        "wall of the left ventricle"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA7101"
+      ],
+      "source_elements": [
+        "FJ2418",
+        "FJ2422",
+        "FJ2429"
+      ]
+    },
+    "aorta": {
+      "name": "Aorta",
+      "description": "The largest artery, carrying oxygenated blood from the left ventricle to the body. Shown: the ascending aorta and the aortic arch.",
+      "color": "#dc3f3a",
+      "aliases": [
+        "ascending aorta",
+        "aortic arch",
+        "arch of aorta"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA3736",
+        "FMA3768"
+      ],
+      "source_elements": [
+        "FJ3411",
+        "FJ3413"
+      ]
+    },
+    "pulmonary_artery": {
+      "name": "Pulmonary trunk",
+      "description": "Carries deoxygenated blood from the right ventricle towards the lungs, where it divides into the right and left pulmonary arteries (not shown).",
+      "color": "#3f5fc0",
+      "aliases": [
+        "pulmonary artery",
+        "pulmonary arteries",
+        "pulmonary trunk"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA8612"
+      ],
+      "source_elements": [
+        "FJ2966"
+      ]
+    },
+    "superior_vena_cava": {
+      "name": "Superior vena cava",
+      "description": "Returns deoxygenated blood from the head, neck and arms to the right atrium.",
+      "color": "#3f5fc0",
+      "aliases": [
+        "SVC",
+        "superior venacava"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA4720"
+      ],
+      "source_elements": [
+        "FJ3645"
+      ]
+    },
+    "inferior_vena_cava": {
+      "name": "Inferior vena cava",
+      "description": "Returns deoxygenated blood from the lower body to the right atrium. Shown: its last few centimetres before the heart.",
+      "color": "#3f5fc0",
+      "aliases": [
+        "IVC",
+        "inferior venacava"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA10951"
+      ],
+      "source_elements": [
+        "FJ3441",
+        "FJ3659"
+      ],
+      "note": "Trimmed to the 25 mm below the heart; the source continues into the abdomen."
+    },
+    "pulmonary_veins": {
+      "name": "Pulmonary veins",
+      "description": "Carry oxygenated blood from the lungs into the left atrium; usually four, two from each lung. Shown: the parts outside the lungs.",
+      "color": "#dc3f3a",
+      "aliases": [
+        "pulmonary vein"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA49914",
+        "FMA49916",
+        "FMA49911",
+        "FMA49913"
+      ],
+      "source_elements": [
+        "FJ2925",
+        "FJ2933",
+        "FJ2944",
+        "FJ2950",
+        "FJ2955",
+        "FJ3020",
+        "FJ3040"
+      ]
+    },
+    "coronary_arteries": {
+      "name": "Coronary arteries",
+      "description": "The right and left coronary arteries and their branches, which supply the heart muscle itself with oxygenated blood.",
+      "color": "#e8963d",
+      "aliases": [
+        "coronary artery",
+        "right coronary artery",
+        "left coronary artery"
+      ],
+      "available": true,
+      "source_concepts": [
+        "FMA50039",
+        "FMA50040"
+      ],
+      "source_elements": [
+        "FJ2631",
+        "FJ2632",
+        "FJ2633",
+        "FJ2634",
+        "FJ2635",
+        "FJ2636",
+        "FJ2637",
+        "FJ2638",
+        "FJ2639",
+        "FJ2640",
+        "FJ2641",
+        "FJ2642",
+        "FJ2643",
+        "FJ2644",
+        "FJ2645",
+        "FJ2646",
+        "FJ2647",
+        "FJ2648",
+        "FJ2649",
+        "FJ2650",
+        "FJ2651",
+        "FJ2652",
+        "FJ2653",
+        "FJ2654",
+        "FJ2667",
+        "FJ2668",
+        "FJ2670",
+        "FJ2671",
+        "FJ2672",
+        "FJ2673",
+        "FJ2674",
+        "FJ2675",
+        "FJ2676",
+        "FJ2677",
+        "FJ2692",
+        "FJ2693",
+        "FJ2694",
+        "FJ2695",
+        "FJ2696",
+        "FJ2697",
+        "FJ2698",
+        "FJ2699",
+        "FJ2700",
+        "FJ2714",
+        "FJ2715",
+        "FJ2716",
+        "FJ2717",
+        "FJ2718",
+        "FJ2719",
+        "FJ2720",
+        "FJ2721",
+        "FJ2722",
+        "FJ2723",
+        "FJ2737"
+      ]
+    },
+    "cardiac_veins": {
+      "name": "Cardiac veins",
+      "description": "Veins that drain the heart muscle, mostly into the coronary sinus, which empties into the right atrium.",
+      "color": "#8a5ab8",
+      "aliases": [
+        "coronary sinus",
+        "cardiac vein",
+        "coronary veins"
+      ],
+      "available": true,
+      "source_concepts": [
+        "remainder of FMA7088"
+      ],
+      "source_elements": [
+        "FJ2655",
+        "FJ2656",
+        "FJ2724",
+        "FJ2727",
+        "FJ2728",
+        "FJ2729",
+        "FJ2731"
+      ]
+    },
+    "interventricular_septum": {
+      "name": "Interventricular septum",
+      "aliases": [
+        "septum",
+        "ventricular septum"
+      ],
+      "note": "BodyParts3D does not model the septum as a separate structure; in this model it is part of the ventricle walls. It can be explained but not highlighted.",
+      "available": false
+    }
+  },
+  "groups": {
+    "chambers": [
+      "right_atrium",
+      "right_ventricle",
+      "left_atrium",
+      "left_ventricle"
+    ],
+    "atria": [
+      "right_atrium",
+      "left_atrium"
+    ],
+    "ventricles": [
+      "right_ventricle",
+      "left_ventricle"
+    ],
+    "valves": [
+      "tricuspid_valve",
+      "mitral_valve",
+      "pulmonary_valve",
+      "aortic_valve"
+    ],
+    "great_vessels": [
+      "aorta",
+      "pulmonary_artery",
+      "superior_vena_cava",
+      "inferior_vena_cava",
+      "pulmonary_veins"
+    ],
+    "arteries": [
+      "aorta",
+      "pulmonary_artery",
+      "coronary_arteries"
+    ],
+    "veins": [
+      "superior_vena_cava",
+      "inferior_vena_cava",
+      "pulmonary_veins",
+      "cardiac_veins"
+    ],
+    "right_side": [
+      "right_atrium",
+      "right_ventricle",
+      "tricuspid_valve",
+      "pulmonary_valve"
+    ],
+    "left_side": [
+      "left_atrium",
+      "left_ventricle",
+      "mitral_valve",
+      "aortic_valve"
+    ],
+    "coronary_circulation": [
+      "coronary_arteries",
+      "cardiac_veins"
+    ]
+  },
+  "group_aliases": {
+    "chambers": [
+      "four chambers",
+      "the four chambers",
+      "heart chambers",
+      "cavities"
+    ],
+    "great_vessels": [
+      "blood vessels",
+      "vessels",
+      "big vessels",
+      "major vessels"
+    ],
+    "valves": [
+      "heart valves",
+      "four valves"
+    ],
+    "coronary_circulation": [
+      "coronary vessels",
+      "coronaries",
+      "blood supply of the heart"
+    ],
+    "right_side": [
+      "right heart",
+      "right side of the heart"
+    ],
+    "left_side": [
+      "left heart",
+      "left side of the heart"
+    ]
+  },
+  "relationships": {
+    "parent": "biology.anatomy.cardiovascular_system",
+    "inside": [
+      "biology.tissue.cardiac_muscle"
+    ],
+    "scale_down_to": "biology.tissue.cardiac_muscle",
+    "scale_down_focus": "left_ventricle",
+    "part_models": {
+      "left_ventricle": "biology.tissue.cardiac_muscle",
+      "right_ventricle": "biology.tissue.cardiac_muscle",
+      "left_atrium": "biology.tissue.cardiac_muscle",
+      "right_atrium": "biology.tissue.cardiac_muscle"
+    }
+  },
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "explode",
+    "focus",
+    "label",
+    "measure",
+    "animate"
+  ],
+  "animations": [
+    "heartbeat"
+  ],
+  "view": {
+    "azimuth": 0.0,
+    "elevation": 0.0,
+    "up": "z",
+    "front": "-y"
+  },
+  "notes": [
+    "Colours follow the textbook convention: blue = deoxygenated blood, red = oxygenated. Real heart tissue is not coloured this way."
+  ],
+  "generated_on": "2026-09-25",
+  "files": {
+    "metadata/thumbnail.png": "776585c3fa38a04d3438ecaa3c74d3b8eb49e4141f95d208bb9aed72c9f4b933",
+    "original/bodyparts3d/FJ2417.obj": "b4888f2a738be2f11b98d909c3fc08c0a3ccb05f88a94e53d7e283ad17af15dc",
+    "original/bodyparts3d/FJ2418.obj": "e462c4455225f7d99845af95988ca2d9885144fbb3f7567610ca5635ca3a3dbc",
+    "original/bodyparts3d/FJ2419.obj": "05242b351343b3cce42237dd3e8256a53bb395eaee90e4e8a465578259b58fe8",
+    "original/bodyparts3d/FJ2420.obj": "859e44dbbc0e66eb64da60eff23afba5c4bba1a9b6aaf260d075502c0f3c4f44",
+    "original/bodyparts3d/FJ2421.obj": "ab4d65a190910effcffa60cb5522359756504edb45b9dd312971083cb70c3af7",
+    "original/bodyparts3d/FJ2422.obj": "88654bd73fa155daf0b44fd67bccaec81c9e37c105e046076993f2684c463d95",
+    "original/bodyparts3d/FJ2423.obj": "390747e238ba9239961d02d1e02516d7af7aacc86d2bc0c29fc835381032ceeb",
+    "original/bodyparts3d/FJ2424.obj": "8bd340059ff697cfe9ce57f2427e8c5a982e248a1d2230d477a4fe094adc2a2a",
+    "original/bodyparts3d/FJ2425.obj": "223233fef054fb67b81d27881f10a1acce47c9ade147546b6859fa90e4e37dc3",
+    "original/bodyparts3d/FJ2426.obj": "a309412ea0b21043e9851a6e8d7d529db01034c379f0b846a49f2ac070c94bee",
+    "original/bodyparts3d/FJ2427.obj": "2c07c02f4913f9ee34b4a169f64ab506394a751d0906fad9aa596329da703a1e",
+    "original/bodyparts3d/FJ2429.obj": "83ad99e19bb6105883aa99a86a3c0089385dc5d2de96844c3e9eec6616e571e8",
+    "original/bodyparts3d/FJ2430.obj": "92d65071f4ffc0bb22dcf5da52160cb22fd90056af85d9cbb0cb56794b8b5bac",
+    "original/bodyparts3d/FJ2431.obj": "6ab13f8acf9a3cf93830ab28538e39c423b24c07ffad6c305196671dfc419df0",
+    "original/bodyparts3d/FJ2432.obj": "bdcf7f32b2a16bd8d7b2920ac0f03958174c90d31353e9b38c4462aacfc038f3",
+    "original/bodyparts3d/FJ2433.obj": "736c0689a5489394df568e2788d27e1a547d8fcbc464490e7bef94ba9c66e8e8",
+    "original/bodyparts3d/FJ2434.obj": "ab3806e8ae151df2ea1973043cd5ffe48a89f73dc27c81b2a1d4c1b6cee51131",
+    "original/bodyparts3d/FJ2435.obj": "410689ed978de91a6f14a3332f333b9b8db32931edb47e880cf7bc58b505d191",
+    "original/bodyparts3d/FJ2436.obj": "d2d152ec63544d37077ede2c72f2e8ebd80eb98537386ab917c6a19788f8ed98",
+    "original/bodyparts3d/FJ2437.obj": "510fbbf7a56981733876388838d5acfa392de92a37e84a68d489882e7a063dcb",
+    "original/bodyparts3d/FJ2438.obj": "187235f3c3612ef27abde924d01c71579c2946435e64319164f43e5ad008284d",
+    "original/bodyparts3d/FJ2439.obj": "e7c21cd1659eced056eb56e28f4fa9019ace451ea6e0333097846177f807bb5a",
+    "original/bodyparts3d/FJ2631.obj": "06c78376e08c2eed7416d0e2a841e47952b5d95cafa89fbcb7612c072cd65573",
+    "original/bodyparts3d/FJ2632.obj": "71c8621f9ed5a9dd7814c054f9e6f2ec9a480b39141110615bc7090795040272",
+    "original/bodyparts3d/FJ2633.obj": "3a38d05c39634da75a226de3a4665b02614bf38ab4ea3a39fe8ef1096c0d0296",
+    "original/bodyparts3d/FJ2634.obj": "21dff12c8f9beef5d6022dda5c9d25419a72509e5a9fc2e4a33cafe771237442",
+    "original/bodyparts3d/FJ2635.obj": "51114a0f6f2d95fbc18ddbce0cc19431a0b2cb55db18208029fce64f9128ec2c",
+    "original/bodyparts3d/FJ2636.obj": "aa2166cc5bf12de992dd33eaee5953bc23bb739f62610bbbec345d6aea2c1ecc",
+    "original/bodyparts3d/FJ2637.obj": "6c59d4cf0dbdb902fc83e5596f7a181bb66bcbeda24e10c8ce48d4661dfbe34d",
+    "original/bodyparts3d/FJ2638.obj": "aa3ccf75d2a5a5fefe9665b5acafed8f1797f001a01da365bfdc709a8c84aa4b",
+    "original/bodyparts3d/FJ2639.obj": "dc8bcfe30ddcaff7e1e9022bb1013bb884cd03a0fc9d9fae00a924c8d4eef955",
+    "original/bodyparts3d/FJ2640.obj": "38bc0b0b2c9f8a7424098f9dbaa36ed57b07cb9a1211a86a823c779c419035b1",
+    "original/bodyparts3d/FJ2641.obj": "27e5fff1fdeeff77e3c911ffe2a753279cb391b977f2de3f6ea17e21876b0dac",
+    "original/bodyparts3d/FJ2642.obj": "e906224a535dbf5bfb2201cd6fc81880521aa02f5148ae1bbe67404ace96b3a6",
+    "original/bodyparts3d/FJ2643.obj": "303086bfdcb88e2e9bb4cddcfaff2e9be2bf3f1db2c7943d8ccd4a7a38239fac",
+    "original/bodyparts3d/FJ2644.obj": "203a8bc0e029a76f3b291729ebb4cbfd1155bb84ff5724d2eb51d5fa02d36aa9",
+    "original/bodyparts3d/FJ2645.obj": "760b5d48099edb74a6b14fafe02b56ad076c4e4c27c8edb905f21929d192f8b5",
+    "original/bodyparts3d/FJ2646.obj": "1e2f885bc9aafd4270895deb0000a970ca4e494e909e06a5f13b94858d0b8cc9",
+    "original/bodyparts3d/FJ2647.obj": "cd55e20146fe1f08872c6733a2ed3ef5f2397235e2f7f8c77b883f64b5b67d57",
+    "original/bodyparts3d/FJ2648.obj": "14c937696c6e76239474f760324389f5cc955cfe06570ec7c4f61eb4216e8894",
+    "original/bodyparts3d/FJ2649.obj": "0603b5d96efc1cde531c9301a578b05c747080e9a845ca5b244b973c51b14d67",
+    "original/bodyparts3d/FJ2650.obj": "ec32539fad28298dd01611d624051765eac07c989d461151996907381a1220d9",
+    "original/bodyparts3d/FJ2651.obj": "2fb72c01e8e2b65a8f262e314a9b85cd1c2256defc2d00e1bd8d857013c28d54",
+    "original/bodyparts3d/FJ2652.obj": "ebfa7ccd9598b689c247175e49c89ab8ea3baaef763b5554db38306a689be916",
+    "original/bodyparts3d/FJ2653.obj": "fa365a612a1850f3628ef7224ce0988f1fe2d9cdb4e8c6aa4db10d2a1962a4c3",
+    "original/bodyparts3d/FJ2654.obj": "2d4b35919118657f1d5b8d842d2c78021d4676f78082c71e55e7d8aba9616fa8",
+    "original/bodyparts3d/FJ2655.obj": "6cc76de968f59ae4244f5990fc00023a1ad137e500eea7e3ab02740a9505e030",
+    "original/bodyparts3d/FJ2656.obj": "30995a449ef7c390dcda7f800e38fb1656d23202b162c4a83abf160380dc4cbd",
+    "original/bodyparts3d/FJ2667.obj": "6bb2898acda5680828658540ed9048abc51b9df9761fed5608567849fcbd6a61",
+    "original/bodyparts3d/FJ2668.obj": "ecd7de3f9aa7a87a85da8abc9c023d6701040c3297fd1f6ba93d7875e871f611",
+    "original/bodyparts3d/FJ2670.obj": "d23c5be67fc7e0a221e6d284772cf89bbc75b31a5bfa431210bd396be8d087b7",
+    "original/bodyparts3d/FJ2671.obj": "095344f7ee5d89c8877b24c76fd57671491f34cb59e0fdf1f0738c54c239b200",
+    "original/bodyparts3d/FJ2672.obj": "0adecd6703d24888e3c236c8a248393777a9b83d902ed9bfc69f258809188092",
+    "original/bodyparts3d/FJ2673.obj": "b3fe7f8dd47fd7758fe4b2f8613c24c642be96d419a7699f85b44a2396a127a7",
+    "original/bodyparts3d/FJ2674.obj": "605cda4cb28547b67d9569ff8576ab7dc9a945d47a9d8b4a15d9552c80daee91",
+    "original/bodyparts3d/FJ2675.obj": "f0d843e88d508d4ab383c4e8131974d9fdcab3b340c87e3002fabde9cf23d3f4",
+    "original/bodyparts3d/FJ2676.obj": "c588c075c7c665691e6789312dad8d86541a1d2916fb63c33d03e38266e213d7",
+    "original/bodyparts3d/FJ2677.obj": "a63f5990cabf34ead2c743bda11b178cdb60a983e7d181c2b757757354f2681e",
+    "original/bodyparts3d/FJ2692.obj": "560c831439ab349de9b564ca92ed175677a3d12963ccd5483314175948797347",
+    "original/bodyparts3d/FJ2693.obj": "ec42da30e165d2cb4ccf189982843b88a8ba006daae95b99104a2061bf30633b",
+    "original/bodyparts3d/FJ2694.obj": "2d2b675af567f743da81826537d13fe72087c98a39741f5848bb70b1676b5c75",
+    "original/bodyparts3d/FJ2695.obj": "00e9b8257eed1ddb8bfb60dfe301b03c08fd8a6e4b83002dad567d8cc738ba73",
+    "original/bodyparts3d/FJ2696.obj": "ec8ecd7100e6a34661db1a99861ef4f3df17c8ac87316cafac2dbf6f895efd5a",
+    "original/bodyparts3d/FJ2697.obj": "e029d3b95fc5b032016ff1e0783a2c71623a55be49cdbbd4be37fcbbfed0117a",
+    "original/bodyparts3d/FJ2698.obj": "2864725de555603dc502c206c9d12bef366358ee4064e8f375c1df9294b7f955",
+    "original/bodyparts3d/FJ2699.obj": "b52176deba592a44bcec3e29d11a8cac00031cac0a35e215d06df515e3224fc4",
+    "original/bodyparts3d/FJ2700.obj": "7c1bda6f9d3170fc5a553a5e917514bb7d108f6c3e37cbe912d6573d634fe983",
+    "original/bodyparts3d/FJ2714.obj": "aa76ceec1e0b4e19b281a2da0e15328d2719eaa1d7b1a3666421bf11ab9c877a",
+    "original/bodyparts3d/FJ2715.obj": "d34c2023e84119131841fe5a1e1251a7252d4900b62b2b1b61d29d3ece4cb51a",
+    "original/bodyparts3d/FJ2716.obj": "ecb5e668e2cf43031263ceed40e29b6862519d8dadef6b21ef63c3398e2f81a5",
+    "original/bodyparts3d/FJ2717.obj": "1dcde62744c8b83892ce1828179d736d2eafdf2fb3cbd74aa61658001dab686b",
+    "original/bodyparts3d/FJ2718.obj": "07ca611daf69f5411871802dbf76e6845519b71df1ef39a772d648c7b1861414",
+    "original/bodyparts3d/FJ2719.obj": "dd10bda525a6b29340babe9b70aa02f8273bedd77519fdc69398dc9f492001b7",
+    "original/bodyparts3d/FJ2720.obj": "996196bea87629d81a5c2040b767026e2a0a77854500999fe9857f3f4a030f5f",
+    "original/bodyparts3d/FJ2721.obj": "d42f1d3059c8a78d65b44ea7934deebd96dbc84338b30341a422a9ce1751c243",
+    "original/bodyparts3d/FJ2722.obj": "f5de57227430b3622ad827348883760596469ed754c473685975be5247cc9abd",
+    "original/bodyparts3d/FJ2723.obj": "a98fe0acbf5a00bd5f73dcbc47f01dfbb932ea72607fd2e74231f6cfe49619d1",
+    "original/bodyparts3d/FJ2724.obj": "419e6a37e1fd0b0e7468654b6b58e561229a94f9641f5b04506271659017b2d4",
+    "original/bodyparts3d/FJ2727.obj": "e482e49e0568a53afa594791946a4cb98ad774dbdf4db6bb32d7f9b3629bdced",
+    "original/bodyparts3d/FJ2728.obj": "107b8fc3f7740ca108ac0d2b4b722d6242a3b78f8e67e29433ac56f08544a31b",
+    "original/bodyparts3d/FJ2729.obj": "8b21e5b96cc8cdd8d4b63d798ff7ae01c0d0b335cc6f3fb8ae00b7895067ad48",
+    "original/bodyparts3d/FJ2731.obj": "ac26ffa55a72b44913d761c6b922f6c000f9a229f29740ab765e5ef5fe43f9c5",
+    "original/bodyparts3d/FJ2737.obj": "f350efef8902f0ca4c4ef440a650c3ec4515d6a412340beb596536f4b1b72f32",
+    "original/bodyparts3d/FJ2925.obj": "79b6f7b1761fb181ff351aa6b011144d56eb1e38845c9667880810eb81b121f2",
+    "original/bodyparts3d/FJ2933.obj": "6c50d97d88d3e503f2211043fcc3d6503ae9e375e597e372dbc0bc1267a9bfcc",
+    "original/bodyparts3d/FJ2944.obj": "232ab083823605c8eac632a5888536a99c901b7971203a6dd3662e60f2382063",
+    "original/bodyparts3d/FJ2950.obj": "32911e5c9c02f131249aafaa7515db651f1c0e382eb927fc0528fbf1ad819e77",
+    "original/bodyparts3d/FJ2955.obj": "0e122eabac946b34ad09ec2174b1941d53ccd46a6dff86c7000dd272465aa4fb",
+    "original/bodyparts3d/FJ2966.obj": "5da4132e171716c7a0f78806a14520bee79b993f814de83b1e1f2f2f8cf95edd",
+    "original/bodyparts3d/FJ3020.obj": "78036903d30f5f2084a469044fe0fad1e8dd31da95a86ccbaa7d9a05e4690e7b",
+    "original/bodyparts3d/FJ3040.obj": "149ff96bc5ff992bf9704618872ac1733a49bd47d823e381fea5c82bb5c9d8fc",
+    "original/bodyparts3d/FJ3411.obj": "7f1bbd874b05ea618649bfd5a51ac2675523f419dd3e5f5e160d90f47bd413db",
+    "original/bodyparts3d/FJ3413.obj": "f4d566821c5ee6347147631b4d1b1e5c5cb3465e05ec23fadffa161c268c7bb2",
+    "original/bodyparts3d/FJ3441.obj": "749081b95f406bd38edea220d216f84aa17e019b91c117e7cfd5f3e546ea1163",
+    "original/bodyparts3d/FJ3645.obj": "68710b61d5edce86b6a31ce0a471c88cf63308671f78ba57d9974f6514cdb04b",
+    "original/bodyparts3d/FJ3659.obj": "a2ff79789ca4d74a0ed2382f347918bc630710f92fab40146ba7353b98bc2b02",
+    "processed/aorta.vtp": "d871c8687761b28bf40e8e09d63bcd7d059abd79e81d0cb22da884171f0e5fa6",
+    "processed/aortic_valve.vtp": "815301f03bf3010746e96dfd6f8feef9ead79652392fd3568114792550779ddd",
+    "processed/cardiac_veins.vtp": "366961395cd944b1ebb0bf0939ba70a8e3c2946bb1d5830530c2bbb0e543609c",
+    "processed/coronary_arteries.vtp": "4f57a878e6268802b13c479681748cc9efa3ee1f62dbaf170ad40ac7920de0de",
+    "processed/inferior_vena_cava.vtp": "d66d4c304d7501533016584e885f53ec8f0c94427c9df011bd247fb81ba744fc",
+    "processed/left_atrium.vtp": "20f88cd195b3cbfebb243c4132b844ec8645040b12c46f8c1848c56c47645cb9",
+    "processed/left_ventricle.vtp": "1b842205a6cbbd2c3543dd1a8f6bce58d8be3ae620cf54693fa371edca2c4b5b",
+    "processed/mitral_valve.vtp": "bb31f3a5dc20ac85302315557fe0e0b2cfcbce47c8561e803855669b862d7f3f",
+    "processed/pulmonary_artery.vtp": "c7064d0c111c95a9ef1374c609c9d6e122c422e4c11cad0b702817363cd32c0d",
+    "processed/pulmonary_valve.vtp": "1ebad3428541f63966c344416a81d1245fb2d766f231fbd8b0d2e38905ba47f4",
+    "processed/pulmonary_veins.vtp": "f267c8c96325121279ce4b3ea68074b59c834cd04b7d17069df40a18c03f393d",
+    "processed/right_atrium.vtp": "ab9dc274c1ed8804131de6c0c789fb5a9912e7e9851d6cc6e9f1c391860d2860",
+    "processed/right_ventricle.vtp": "625bc2a59b0d09c976c1671471bd237a8356480757c83c90b4588a7fb25bf430",
+    "processed/superior_vena_cava.vtp": "1a54ee7ef32702da98eafab6bb23aa89d24d01db454132b9ba25da5e2c41801b",
+    "processed/tricuspid_valve.vtp": "276d1cf0decd56580e08573aca458b62cdcdab321b940026b88a66d5acc14bc2",
+    "runtime/heart.glb": "5de0a2e8f89ca78ffce3cba529c0b46628fbe8909587c78bb51e1638c7104223",
+    "runtime/heart_low.glb": "6d50fcec357faa2f8d4e4fc0015ba3605a35f92cfd65c9cb5438b95e4b80665e"
+  }
+}

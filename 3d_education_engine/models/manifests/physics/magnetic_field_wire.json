@@ -1,0 +1,59 @@
+{
+  "id": "physics.electromagnetism.magnetic_field_wire",
+  "name": "Magnetic Field of a Wire",
+  "domain": "physics",
+  "subject": "electromagnetism",
+  "kind": "simulation",
+  "simulation": {
+    "name": "magnetic_field_wire",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.magnetic_field_wire",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "magnetic field",
+      "electromagnetism"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Conventional current flows upwards (arrow). Right-hand grip rule: thumb along the current, fingers curl the way the field circles."
+  },
+  "aliases": [
+    "magnetic field",
+    "current carrying wire",
+    "magnetic field around a wire",
+    "right hand grip rule"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "B = μ₀·I / (2π·r)",
+    "μ₀ = 4π × 10⁻⁷ T·m/A"
+  ]
+}

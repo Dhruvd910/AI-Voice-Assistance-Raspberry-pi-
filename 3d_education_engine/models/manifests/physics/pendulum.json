@@ -1,0 +1,60 @@
+{
+  "id": "physics.mechanics.pendulum",
+  "name": "Simple Pendulum",
+  "domain": "physics",
+  "subject": "mechanics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "pendulum",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.pendulum",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "pendulum",
+      "oscillation",
+      "simple harmonic motion"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "No friction. Solved exactly (not the small-angle approximation), so large swings are slower."
+  },
+  "aliases": [
+    "pendulum",
+    "simple pendulum",
+    "swinging pendulum"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "d²θ/dt² = −(g/L)·sinθ",
+    "small-angle period T ≈ 2π·√(L/g)"
+  ]
+}

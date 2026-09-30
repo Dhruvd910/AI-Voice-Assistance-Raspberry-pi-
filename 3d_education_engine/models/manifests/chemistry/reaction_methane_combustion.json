@@ -1,0 +1,68 @@
+{
+  "id": "chemistry.reaction.methane_combustion",
+  "name": "Combustion of Methane",
+  "domain": "chemistry",
+  "subject": "reaction",
+  "kind": "procedural",
+  "generator": {
+    "name": "chemistry.reactions.reaction",
+    "params": {
+      "reaction": "methane_combustion"
+    }
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "chemistry.reactions.methane_combustion",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the balanced equation CH4 + 2O2 -> CO2 + 2H2O with RDKit-generated geometry.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "scale_level": "molecule",
+    "topics": [
+      "combustion",
+      "combustion of methane",
+      "chemical reaction",
+      "burning methane",
+      "conservation of mass",
+      "exothermic reaction"
+    ],
+    "disclaimer": "Educational animation — not to scale."
+  },
+  "aliases": [
+    "methane combustion",
+    "burning methane",
+    "methane burning",
+    "ch4 + 2o2",
+    "combustion reaction"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "focus",
+    "label",
+    "animate"
+  ],
+  "relationships": {
+    "related": [
+      "chemistry.molecule.methane",
+      "chemistry.molecule.carbon_dioxide",
+      "chemistry.molecule.water"
+    ]
+  }
+}

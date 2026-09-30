@@ -1,0 +1,68 @@
+{
+  "id": "chemistry.molecule.atp",
+  "name": "ATP (Adenosine Triphosphate)",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid5957_3d.sdf",
+    "smiles": "C1=NC(=C2C(=N1)N(C=N2)[C@H]3[C@@H]([C@@H]([C@H](O3)COP(=O)(O)OP(=O)(O)OP(=O)(O)O)O)O)N",
+    "pubchem_cid": 5957,
+    "formula": "C10H16N5O13P3",
+    "representation": "ball_and_stick"
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/5957",
+    "source_id": "5957",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: 5'-Atp (CID 5957)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "atp",
+      "energy currency of the cell",
+      "cellular respiration"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "5'-atp",
+    "C10H16N5O13P3",
+    "adenosine triphosphate",
+    "atp",
+    "energy molecule"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid5957_3d.sdf": "91882a20f4643bdbbcb9eaf3c7ff3369593cd4e2e06d1195b618f464736cb180",
+    "original/pubchem_cid5957_properties.json": "9395695697b383a9a94cbb66c932354e227713034dd076d7107864c65ba763b2"
+  },
+  "generated_on": "2026-09-25"
+}

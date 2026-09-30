@@ -1,0 +1,63 @@
+{
+  "id": "chemistry.molecule.caffeine",
+  "name": "Caffeine",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid2519_3d.sdf",
+    "smiles": "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+    "pubchem_cid": 2519,
+    "formula": "C8H10N4O2",
+    "representation": "ball_and_stick"
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/2519",
+    "source_id": "2519",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Caffeine (CID 2519)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "caffeine"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "C8H10N4O2",
+    "caffeine"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid2519_3d.sdf": "8e5dcf1fcea02947726af6b2f04394bfffb1fb5221ef35d4e4fa8a647d8e22d5",
+    "original/pubchem_cid2519_properties.json": "7330933760fdca9958dd52190da7e3fbc067d248d615d30840bf84792bff06e6"
+  },
+  "generated_on": "2026-09-25"
+}

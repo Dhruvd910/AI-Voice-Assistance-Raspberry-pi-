@@ -1,0 +1,61 @@
+{
+  "id": "physics.waves.standing_wave",
+  "name": "Standing Wave",
+  "domain": "physics",
+  "subject": "waves",
+  "kind": "simulation",
+  "simulation": {
+    "name": "standing_wave",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.standing_wave",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "standing waves",
+      "harmonics",
+      "nodes and antinodes"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Fixed at both ends. Yellow dots mark nodes (no motion); the loops between them are antinodes."
+  },
+  "aliases": [
+    "standing wave",
+    "stationary wave",
+    "harmonics",
+    "vibrating string"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "y = 2A·sin(n·π·x / L)·cos(ω·t)",
+    "λ = 2L / n",
+    "f = n·v / (2L)"
+  ]
+}

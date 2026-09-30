@@ -178,6 +178,26 @@ def load_messages(user_id, limit=40):
     return [{"role": r["role"], "content": r["content"]} for r in rows]
 
 
+def chat_log(user_id, limit=3000):
+    """Every turn one student has had, newest last, with when it was said.
+
+    For the chat-history screen. The WHERE on user_id is the privacy boundary:
+    there is no call here that returns more than one student's turns, so the
+    screen cannot show one child another child's conversation however it is
+    asked. None if the store is unavailable, [] for a student with no turns.
+    """
+    if not user_id:
+        return []
+    rows = query(
+        """SELECT id, role, content, created_at FROM (
+               SELECT id, role, content, created_at FROM messages
+               WHERE user_id = %s AND role IN ('user', 'assistant')
+               ORDER BY id DESC LIMIT %s
+           ) recent ORDER BY id ASC""",
+        (user_id, limit))
+    return rows
+
+
 def forget_student_history(user_id):
     return query("DELETE FROM messages WHERE user_id = %s", (user_id,),
                  fetch="none") is not None

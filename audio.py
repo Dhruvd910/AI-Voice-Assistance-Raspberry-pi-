@@ -12,6 +12,7 @@ function that matters most here.
 """
 
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -19,10 +20,32 @@ import time
 import state
 from config import (AUDIO_OUTPUT_DEVICE, BYTES_PER_SEC, CARTESIA_MODEL,
                     CARTESIA_SAMPLE_RATE, CARTESIA_SPEED, CARTESIA_VOICE_ID,
-                    VOICE_IDS, cartesia_client)
+                    SPEAKER_VOLUME, VOICE_IDS, cartesia_client)
 from state import (audio_queue, caption_lock, caption_state, note_spoken,
                    playback_active, speaker_live, stop_playback_event)
 from uibridge import ui_call
+
+def set_speaker_volume():
+    """Put the output card at SPEAKER_VOLUME. At every start, because the
+    card's level is whatever was last left on it -- a replug, or someone at
+    alsamixer, and barge-in quietly stops working. Best effort: the control is
+    "Speaker" on this dongle and "PCM" on most others; a card with neither is
+    left alone."""
+    card = re.search(r"CARD=(\w+)", AUDIO_OUTPUT_DEVICE or "")
+    if not SPEAKER_VOLUME or not card:
+        return
+    for control in ("Speaker", "PCM"):
+        try:
+            done = subprocess.run(["amixer", "-c", card.group(1), "sset", control, SPEAKER_VOLUME],
+                                  capture_output=True, text=True, timeout=5)
+        except Exception as exc:
+            print(f"[AUDIO] Could not reach amixer to set the volume: {exc}", flush=True)
+            return
+        if done.returncode == 0:
+            print(f"[AUDIO] Speaker at {SPEAKER_VOLUME} on card {card.group(1)}.", flush=True)
+            return
+    print(f"[AUDIO] No volume control found on card {card.group(1)}; left as it was.", flush=True)
+
 
 def cartesia_voice_id(language):
     voice_id = VOICE_IDS.get(language) or CARTESIA_VOICE_ID
@@ -139,20 +162,47 @@ def caption_now(session):
 # same order its caption cues are stamped in, so the index caption_now() gives
 # is an index into this. Read by unspoken_lines() when barge-in cuts a reply.
 _response_lock = threading.Lock()
-_response = {"session": None, "lines": []}
+_response = {"session": None, "lines": [], "ends": []}
 
 
 def unspoken_lines():
-    """The queue items of the playing response from the line that is audible
-    now to the end, that line included, since it was cut part-way through.
+    """The queue items of the playing response from the SENTENCE that is
+    audible now to the end, that sentence included, since it was cut part-way.
+
+    A line can hold several sentences -- the streaming splitter sends them in
+    batches so the speaker stays fed -- and resuming at the start of the line
+    repeated everything already said in it. So the audible line is cut down to
+    the sentence the speaker had reached, judged by how far through the line's
+    audio playback was.
 
     Lines still sitting on audio_queue, not yet picked up by the player, are
     included too. Call it BEFORE interrupt_playback(), which throws them away.
     """
     with _response_lock:
-        session, lines = _response["session"], list(_response["lines"])
+        session = _response["session"]
+        lines, ends = list(_response["lines"]), list(_response["ends"])
     shown, _text = caption_now(session) if session is not None else (-1, None)
-    remaining = lines[max(shown, 0):]
+    shown = max(shown, 0)
+    remaining = lines[shown:]
+    if remaining and shown < len(ends):
+        with caption_lock:
+            start = caption_state["start"]
+            cues = list(caption_state["cues"])
+        if start and shown < len(cues):
+            begin = cues[shown][0]
+            length = ends[shown] - begin
+            done = (time.time() - start - begin) / length if length > 0 else 0.0
+            text, config = spoken_parts(remaining[0])
+            sentences = [x for x in re.split(r'(?<=[.?!।])\s+', text) if x.strip()]
+            if len(sentences) > 1 and done > 0:
+                total = sum(len(x) for x in sentences)
+                reached, index = 0, 0
+                for index, sentence in enumerate(sentences):
+                    reached += len(sentence)
+                    if reached / total > done:
+                        break
+                rest = " ".join(sentences[index:])
+                remaining[0] = (rest, config) if config is not None else rest
     with audio_queue.mutex:
         waiting = list(audio_queue.queue)
     for item in waiting:
@@ -174,6 +224,7 @@ def audio_player_worker():
             continue
 
         state.playback_started_at = time.time()
+        state.begin_spoken_response()
         playback_active.set()
         # Captured once for the whole response; see caption_begin.
         this_caption = caption_session()
@@ -182,6 +233,10 @@ def audio_player_worker():
         sentence_queue.put(first_item)
         with _response_lock:
             _response["session"], _response["lines"] = this_caption, [first_item]
+            # Where each line ENDS on the playback timeline, in seconds, filled
+            # in as each one finishes generating. With the caption cues (where
+            # each starts) this says how far into a line the speaker had got.
+            _response["ends"] = []
 
         try:
             aplay_proc = subprocess.Popen(
@@ -278,6 +333,8 @@ def audio_player_worker():
                         except Exception as exc:
                             if not (stop_playback_event.is_set() or cancelled.is_set()):
                                 print(f"TTS Error: {exc}", flush=True)
+                        with _response_lock:
+                            _response["ends"].append(clock["generated"])
                 finally:
                     generation_done.set()
                     try: aplay_proc.stdin.close()
@@ -314,6 +371,7 @@ def audio_player_worker():
             # Re-stamped at the true end of playback, so the echo window is
             # measured from when sound actually stopped.
             state.last_spoken_at = time.time()
+            state.end_spoken_response()
             speaker_live.clear()
             playback_active.clear()
 

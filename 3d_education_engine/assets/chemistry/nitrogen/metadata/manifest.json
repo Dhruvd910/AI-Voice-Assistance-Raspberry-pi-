@@ -1,0 +1,66 @@
+{
+  "id": "chemistry.molecule.nitrogen",
+  "name": "Nitrogen (N2)",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid947_3d.sdf",
+    "smiles": "N#N",
+    "pubchem_cid": 947,
+    "formula": "N2",
+    "representation": "ball_and_stick"
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/947",
+    "source_id": "947",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Nitrogen (CID 947)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "nitrogen gas"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "N2",
+    "n2",
+    "nitrogen",
+    "nitrogen gas",
+    "nitrogen molecule"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid947_3d.sdf": "04b10d3b92ce45cbc1a5ce1ba12e8136373f212aec2c156ba57330e9805a1cf3",
+    "original/pubchem_cid947_properties.json": "b7ef7bfbdb07f3f3aa5386de58da43569101c0cc0fcccb46cde4a03de34540e1"
+  },
+  "generated_on": "2026-09-25"
+}

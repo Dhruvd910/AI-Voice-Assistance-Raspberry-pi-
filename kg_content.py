@@ -69,6 +69,16 @@ COUNT_PRAISE = [
     "Correct! You got every one.",
 ]
 
+# For the Hindi picture test. Praise in English followed by a Hindi word read
+# the English with a Hindi accent, or the Hindi with an English one, depending
+# on which the voice guessed the whole line was.
+HINDI_PRAISE = [
+    "शाबाश! बिलकुल सही।",
+    "बहुत बढ़िया!",
+    "हाँ! एकदम सही।",
+    "वाह! सही जवाब।",
+]
+
 # Separate from PRAISE because that list is about spelling -- "You spelled it",
 # "You got every letter" -- and answering a question about a story is not
 # spelling anything. Sharing one list produced "Perfect. You spelled it. You
@@ -1291,7 +1301,53 @@ def matches_answer(said, expected):
         return True
     # "ice cream" against ["ice", "cream"], and the other way round.
     parts = [p for p in target.split() if p not in _FILLER]
-    return bool(parts) and all(p in " ".join(spoken) for p in parts)
+    if parts and all(p in " ".join(spoken) for p in parts):
+        return True
+    # Indian English, and Hindi said a little differently. logs/liza.log: a
+    # child's "Rabbit." was right and came back from Whisper as it should,
+    # but many of the ones that do get through arrive spelled the way they
+    # were SAID -- "Rabit", "Wan", "Jebra", "Tigar". Compared by sound, and
+    # a word of five letters or more may be one letter off on top of that.
+    keys = [_sound_key(w) for w in spoken]
+    return bool(parts) and all(
+        any(_sounds_alike(_sound_key(p), k) for k in keys) for p in parts)
+
+
+# What an Indian speaker's English and an American-trained Whisper disagree
+# about, folded to one spelling each so both sides compare equal. Applied in
+# order; each pair is (pattern, replacement).
+_SOUND_FOLDS = [
+    (r"ph", "f"), (r"ck", "k"), (r"th", "t"), (r"dh", "d"), (r"bh", "b"),
+    (r"kh", "k"), (r"gh", "g"), (r"sh", "s"), (r"ch", "c"),
+    (r"w", "v"), (r"z", "j"), (r"q", "k"), (r"x", "ks"), (r"c(?=[eiy])", "s"),
+    (r"c", "k"), (r"ee|ea|ie", "i"), (r"oo|ou", "u"), (r"y$", "i"),
+    (r"(?<=...)e?s$", ""),                   # grapes / grape
+    (r"(.)\1+", r"\1"),                    # rabbit -> rabit, parrot -> parot
+    (r"(?<=.)[aeiou](?=r$)", ""),            # tiger / tigar / tigr
+    (r"(?<=.)[aeiou]$", ""),                 # zebra / zebr, orange / orang
+]
+# Devanagari marks that change how a word is written far more than how a
+# child says it: nukta (जहाज़ / जहाज), chandrabindu and anusvara, halant.
+_DEVANAGARI_FOLDS = re.compile("[\u093c\u0901\u0902\u094d]")
+
+
+def _sound_key(word):
+    word = (word or "").lower()
+    if re.search("[\u0900-\u097f]", word):
+        return _DEVANAGARI_FOLDS.sub("", word)
+    for pattern, replacement in _SOUND_FOLDS:
+        word = re.sub(pattern, replacement, word)
+    return word
+
+
+def _sounds_alike(target_key, heard_key):
+    if not target_key or not heard_key:
+        return False
+    if target_key == heard_key:
+        return True
+    # Short words stay exact: "cat" one letter off is "car" or "hat", which is
+    # a different answer, not an accent.
+    return len(target_key) >= 4 and _one_edit_apart(heard_key, target_key)
 
 
 # Every way a number can arrive in a transcript: the digits, the English name

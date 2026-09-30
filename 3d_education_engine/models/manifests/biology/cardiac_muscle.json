@@ -1,0 +1,104 @@
+{
+  "id": "biology.tissue.cardiac_muscle",
+  "name": "Cardiac Muscle Tissue",
+  "domain": "biology",
+  "subject": "tissue",
+  "kind": "procedural",
+  "generator": {
+    "name": "biology.cells.cardiac_muscle"
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "biology.cells.cardiac_muscle",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on textbook descriptions of cardiac muscle histology.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "scale_level": "tissue",
+    "topics": [
+      "cardiac muscle",
+      "heart muscle",
+      "cardiac tissue",
+      "myocardium",
+      "muscle tissue"
+    ],
+    "disclaimer": "Educational model — not to scale. Striations drawn every 6 µm; real sarcomeres repeat every ~2 µm."
+  },
+  "aliases": [
+    "cardiac muscle tissue",
+    "heart muscle tissue",
+    "heart tissue",
+    "tissue of the heart",
+    "myocardium"
+  ],
+  "parts": {
+    "cardiomyocytes": {
+      "name": "Cardiac muscle cells",
+      "aliases": [
+        "cells",
+        "muscle cells",
+        "cardiomyocytes",
+        "fibres",
+        "fibers"
+      ],
+      "description": "Branched, striated muscle cells that contract rhythmically without conscious control."
+    },
+    "nuclei": {
+      "name": "Nuclei",
+      "aliases": [
+        "nucleus"
+      ],
+      "description": "Usually one (sometimes two) central nucleus per cell, unlike skeletal muscle fibres, which have many nuclei at their edge."
+    },
+    "intercalated_discs": {
+      "name": "Intercalated discs",
+      "aliases": [
+        "intercalated disc",
+        "junctions"
+      ],
+      "description": "Junctions joining the cells end to end. Desmosomes hold the cells together and gap junctions let the electrical signal pass, so the cells contract together."
+    },
+    "capillaries": {
+      "name": "Capillaries",
+      "aliases": [
+        "blood vessels",
+        "capillary"
+      ],
+      "description": "A dense capillary network brings oxygen: heart muscle relies almost entirely on aerobic respiration."
+    }
+  },
+  "relationships": {
+    "parent": "biology.anatomy.heart",
+    "scale_up_to": "biology.anatomy.heart",
+    "scale_down_to": "biology.cell.cardiomyocyte",
+    "scale_down_focus": "cardiomyocytes",
+    "part_models": {
+      "cardiomyocytes": "biology.cell.cardiomyocyte",
+      "nuclei": "biology.organelle.nucleus"
+    }
+  },
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "explode",
+    "focus",
+    "label",
+    "measure"
+  ]
+}

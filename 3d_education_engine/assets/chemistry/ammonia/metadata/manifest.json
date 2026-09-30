@@ -1,0 +1,70 @@
+{
+  "id": "chemistry.molecule.ammonia",
+  "name": "Ammonia",
+  "domain": "chemistry",
+  "subject": "molecule",
+  "kind": "molecule",
+  "structure": {
+    "sdf_file": "original/pubchem_cid222_3d.sdf",
+    "smiles": "N",
+    "pubchem_cid": 222,
+    "formula": "H3N",
+    "representation": "ball_and_stick",
+    "reference": {
+      "angle": "H-N-H",
+      "degrees": 106.7,
+      "source": "experimental gas-phase geometry, NIST CCCBDB"
+    }
+  },
+  "source": {
+    "provider": "PubChem",
+    "url": "https://pubchem.ncbi.nlm.nih.gov/compound/222",
+    "source_id": "222",
+    "creator": "National Center for Biotechnology Information (NCBI)",
+    "license": "LicenseRef-NCBI-Data-Policy",
+    "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    "attribution": "Structure data from PubChem, National Center for Biotechnology Information: Ammonia (CID 222)",
+    "download_date": "2026-09-25",
+    "modification_status": "computed-from-data"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "ammonia"
+    ],
+    "scale_level": "molecule",
+    "disclaimer": null
+  },
+  "aliases": [
+    "H3N",
+    "ammonia",
+    "ammonia molecule",
+    "nh3"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "clip",
+    "focus",
+    "label",
+    "measure",
+    "bond_angle",
+    "representation"
+  ],
+  "files": {
+    "original/pubchem_cid222_3d.sdf": "9de5bb85d2adaef02c96fa39951f1c9b200a8110e0ea2d45598515fa64a7a045",
+    "original/pubchem_cid222_properties.json": "d618224ef7cbdd6a57520bee7deb33aa7889e85d2d8e6e40f839523cb0a9dd09"
+  },
+  "generated_on": "2026-09-25"
+}

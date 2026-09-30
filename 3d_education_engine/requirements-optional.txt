@@ -1,0 +1,3 @@
+# Optional: semantic retrieval instead of the built-in lexical index.
+chromadb>=0.5
+sentence-transformers>=3.0

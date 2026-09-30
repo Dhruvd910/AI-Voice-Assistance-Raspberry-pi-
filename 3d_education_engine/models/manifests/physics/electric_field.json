@@ -1,0 +1,63 @@
+{
+  "id": "physics.electromagnetism.electric_field",
+  "name": "Electric Field",
+  "domain": "physics",
+  "subject": "electromagnetism",
+  "kind": "simulation",
+  "simulation": {
+    "name": "electric_field",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.electric_field",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-09-25",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "11",
+      "12"
+    ],
+    "topics": [
+      "electric field",
+      "coulomb's law",
+      "electric charges"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Field lines in the plane of the charges. Red: positive charge; blue: negative."
+  },
+  "aliases": [
+    "electric field",
+    "point charge",
+    "electric dipole",
+    "dipole",
+    "field lines",
+    "charge"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "E = k·q / r²  (point charge)",
+    "k = 8.99 × 10⁹ N·m²/C²",
+    "field lines start on + charges and end on − charges; they never cross"
+  ]
+}

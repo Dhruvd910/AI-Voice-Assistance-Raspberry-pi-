@@ -1,0 +1,54 @@
+{
+  "id": "biology.protein.haemoglobin",
+  "name": "Haemoglobin",
+  "domain": "biology",
+  "subject": "protein",
+  "kind": "molecule",
+  "structure": {
+    "mmcif_file": "original/4HHB.cif",
+    "pdb_id": "4HHB",
+    "representation": "backbone"
+  },
+  "source": {
+    "provider": "RCSB_PDB",
+    "url": "https://www.rcsb.org/structure/4HHB",
+    "source_id": "4HHB",
+    "creator": "Fermi, G., Perutz, M.F., Shaanan, B.",
+    "license": "CC0-1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "attribution": "PDB 4HHB: The crystal structure of human deoxyhaemoglobin at 1.74 A resolution (Fermi, G., Perutz, M.F., Shaanan, B.). Data from RCSB PDB (rcsb.org).",
+    "download_date": "2026-09-25",
+    "modification_status": "original"
+  },
+  "educational": {
+    "grades": [
+      "11",
+      "12"
+    ],
+    "topics": [
+      "the crystal structure of human deoxyhaemoglobin at 1.74 angstroms resolution"
+    ],
+    "scale_level": "molecule"
+  },
+  "aliases": [
+    "4hhb",
+    "haemoglobin",
+    "hemoglobin",
+    "haemoglobin",
+    "hb"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "representation"
+  ],
+  "files": {
+    "original/4HHB.cif": "2d3ca1bf21ddff35af2e2bc5d331720f7bfc46a16c4829ea3ec1b41062d5f5a6"
+  }
+}
