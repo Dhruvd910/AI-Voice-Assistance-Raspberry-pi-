@@ -41,6 +41,7 @@ from state import (audio_queue, kg_ask_cancel, kg_ask_event,
                    kg_listen_results, media_active,
                    playback_active, sleep_event, stop_playback_event,
                    wake_event)
+import camera
 import kg_content
 import media
 import profiles
@@ -1783,6 +1784,10 @@ class TutorUI:
             x = BOARD_X1 - pad - 22 + i * 8
             self.status_dots.append(self.canvas.create_oval(
                 x - 3, BOARD_Y1 - 19, x + 3, BOARD_Y1 - 13, fill=COL_TRACK, outline=""))
+        # Only with a camera to switch: a button that can only ever say "not
+        # connected" is one more thing on the screen that does nothing.
+        if camera.sensor():
+            self.set_camera_button(False)
 
     # ---------- action buttons ----------
     BUTTON_ART = {"SPEAK": "Speak Button.png", "STOP": "Stop Button.png",
@@ -2399,6 +2404,9 @@ class TutorUI:
         except Exception as exc:
             print(f"[UI] Could not open the visual ({exc}).", flush=True)
             return
+        # The board is wanted for this, and the camera's picture would sit on
+        # top of it. The student turns it back on by asking her to look.
+        camera.stop_live("a picture is going on the board")
         self.canvas.delete(self.VISUAL_TAG)
         self.canvas.delete(self.GRAPH_TAG)
         self.canvas.delete(self.BIG_GRAPH_TAG)
@@ -2476,6 +2484,130 @@ class TutorUI:
         return "break"
 
     # -----------------------------------------------------------------
+    # the live camera
+    # -----------------------------------------------------------------
+    # On the Transcribe Board, live, for as long as the camera is on -- see
+    # camera.py for what turns it on and off. On the board rather than full
+    # screen because the student asked for it there, and so Liza and the
+    # buttons stay in view while she looks. Not an overlay, for the reason
+    # show_visual gives, and its own tag so close_viewfinder takes away exactly
+    # this. camera.py drives all of it through ui_invoke and ui_call.
+    CAMERA_TAG = "camview"
+    CAMERA_X_TAG = "camview_x"
+    CAMERA_BTN_TAG = "cambutton"
+    # The live picture's box: the same place and size as a picture that
+    # show_visual puts on the board (VISUAL_BOX), short of it at the bottom.
+    CAMERA_BOX = (BOARD_X0 + 10, BOARD_Y0 + 56, BOARD_X1 - 10, BOARD_Y1 - 30)
+    # Read by camera.py, which decodes each frame at this size off the Tk
+    # thread; a full-size frame resized here would cost the screen its frame rate.
+    VIEWFINDER_SIZE = (CAMERA_BOX[2] - CAMERA_BOX[0], CAMERA_BOX[3] - CAMERA_BOX[1])
+
+    def _camera_centre(self):
+        x0, y0, x1, y1 = self.CAMERA_BOX
+        return (x0 + x1) / 2, (y0 + y1) / 2
+
+    def _camera_span(self, width):
+        """Left and right of a picture `width` wide, centred in the box."""
+        cx, _ = self._camera_centre()
+        return cx - width / 2, cx + width / 2
+
+    def open_viewfinder(self):
+        self.close_viewfinder()
+        self._camera_open = True
+        self._camera_photo = None
+        tag = self.CAMERA_TAG
+        x0, y0, x1, y1 = self.CAMERA_BOX
+        cx, cy = self._camera_centre()
+        # A clean sheet over the writing area, so the last answer underneath
+        # does not show round the edges of the picture.
+        self._round_rect(BOARD_X0 + 8, BOARD_Y0 + 50, BOARD_X1 - 8, BOARD_Y1 - 6,
+                         12, fill="#FFFFFF", outline="", tags=tag)
+        # Where the picture will be until the camera's first frame fills it --
+        # a second and a half on this Pi, long enough to look broken if blank.
+        width = (y1 - y0) * 4 / 3
+        left, right = self._camera_span(width)
+        self._camera_frame_box = self.canvas.create_rectangle(
+            left - 2, y0 - 2, right + 2, y1 + 2, fill="#161C30",
+            outline="#D8E0F0", width=2, tags=tag)
+        self._camera_item = self.canvas.create_image(cx, cy, anchor="center",
+                                                     tags=tag)
+        # LIVE, on a chip over the corner of the picture: a camera frame can be
+        # any colour, and red text on a red tablecloth is not a label.
+        self._round_rect(left + 6, y0 + 6, left + 62, y0 + 26, 9,
+                         fill="#FFFFFF", outline="#D8E0F0", tags=tag)
+        self.canvas.create_oval(left + 13, y0 + 12, left + 21, y0 + 20,
+                                fill=COL_STOP, outline="", tags=tag)
+        self.canvas.create_text(left + 26, y0 + 16, text="LIVE", anchor="w",
+                                font=self._font(8, True), fill=COL_STOP, tags=tag)
+        self._overlay_text(cx, BOARD_Y1 - 16, "ask me about anything you show me",
+                           7, fill=COL_TEXT_DIM, tags=tag)
+        # The cross turns the camera off. In the corner the board's own
+        # enlarge control uses on a picture.
+        self._close_icon(right - 17, y0 + 17, (tag, self.CAMERA_X_TAG))
+        self.canvas.tag_bind(tag, "<Button-1>", self._viewfinder_tapped)
+        self.canvas.tag_raise(tag)
+
+    def _viewfinder_tapped(self, event=None):
+        """The cross turns the camera off. The picture itself does nothing --
+        but it is in tap_to_wake's list, so touching it does not wake her."""
+        if self.CAMERA_X_TAG in self.canvas.gettags("current"):
+            camera.stop_live("the cross")
+        return "break"
+
+    def viewfinder_frame(self, image):
+        """One live frame, already decoded and sized by camera.preview_image."""
+        if not getattr(self, "_camera_open", False):
+            return
+        photo = ImageTk.PhotoImage(image)
+        self._camera_photo = photo           # Tk keeps no reference of its own
+        self.canvas.itemconfigure(self._camera_item, image=photo)
+        _, cy = self._camera_centre()
+        left, right = self._camera_span(image.width)
+        self.canvas.coords(self._camera_frame_box, left - 2,
+                           cy - image.height / 2 - 2, right + 2,
+                           cy + image.height / 2 + 2)
+
+    def viewfinder_flash(self):
+        """She has just looked: the frame round the picture lights up for a
+        moment, so the student knows which moment she answered about."""
+        if not getattr(self, "_camera_open", False):
+            return
+        box = self._camera_frame_box
+        self.canvas.itemconfigure(box, outline=COL_INDIGO, width=4)
+
+        def back():
+            if getattr(self, "_camera_open", False):
+                self.canvas.itemconfigure(box, outline="#D8E0F0", width=2)
+        self.root.after(350, back)
+
+    def close_viewfinder(self):
+        self._camera_open = False
+        self._camera_photo = None
+        self.canvas.delete(self.CAMERA_TAG)
+
+    def set_camera_button(self, on):
+        """The camera switch in the corner of the board's heading: indigo on
+        white when it is off, white on rose while it is on."""
+        self.canvas.delete(self.CAMERA_BTN_TAG)
+        cx, cy, r = BOARD_X0 + 28, BOARD_Y0 + 26, self.ICON_R
+        tag = self.CAMERA_BTN_TAG
+        fill, ink = (COL_STOP, "#FFFFFF") if on else ("#FFFFFF", COL_INDIGO)
+        self._round_rect(cx - r, cy - r, cx + r, cy + r, 8, fill=fill,
+                         outline="#D8E0F0", tags=tag)
+        # A camera: a body, a lens, and the bump the shutter sits on.
+        self.canvas.create_rectangle(cx - 4, cy - 8, cx + 2, cy - 5, fill=ink,
+                                     outline="", tags=tag)
+        self.canvas.create_rectangle(cx - 9, cy - 5, cx + 9, cy + 7, outline=ink,
+                                     width=2, tags=tag)
+        self.canvas.create_oval(cx - 4, cy - 3, cx + 4, cy + 5, outline=ink,
+                                width=2, tags=tag)
+        self.canvas.tag_bind(tag, "<Button-1>", self._camera_button_tapped)
+
+    def _camera_button_tapped(self, event=None):
+        camera.toggle_live()
+        return "break"
+
+    # -----------------------------------------------------------------
     # 3D models
     # -----------------------------------------------------------------
     # "Show me methane in 3D". The drawing itself happens in viewer3d's worker
@@ -2526,6 +2658,7 @@ class TutorUI:
 
     def show_model3d(self, scene):
         """Put a 3D model up: full screen and turning, with a still on the board."""
+        camera.stop_live("a 3D model is going on the board")
         self.clear_visual(keep_renderer=True)
         self._model3d_scene = scene
         self._model3d_big_open = False
@@ -2904,6 +3037,7 @@ class TutorUI:
 
     def show_graph(self, spec):
         """Put a formula on the board as a curve with its numbers on sliders."""
+        camera.stop_live("a graph is going on the board")
         self.clear_visual()
         self._graph = {"spec": spec,
                        "values": [k["value"] for k in spec["knobs"]],
@@ -3231,6 +3365,8 @@ class TutorUI:
         """
         self.transcript = ""
         self.speaker = "user"
+        # A new student did not turn the camera on, and should not find it on.
+        camera.stop_live("a different student")
         self.clear_visual()
         app_state.current_graph = None
         app_state.current_visual = None
@@ -3314,6 +3450,11 @@ class TutorUI:
             return
         if self.STOP_PILL_TAG in tags:
             # stop_speaking has it; waking on the same tap would only log noise.
+            return
+        if self.CAMERA_TAG in tags or self.CAMERA_BTN_TAG in tags:
+            # The live picture and the camera button are not requests to start
+            # listening; waking on them set wake_event in the middle of a look,
+            # and the next listen began as if Speak had been pressed.
             return
         if self.MODEL3D_TAG in tags or self.BIG_MODEL3D_TAG in tags:
             # Turning a 3D model is a dozen touches a minute. Each one waking
@@ -6538,6 +6679,11 @@ class HeadlessUI:
     def enlarge_current(self): pass
     def shrink_current(self): pass
     def clear_visual(self, keep_renderer=False): pass
+    # No screen: the camera still sees, there is just no picture of it.
+    def open_viewfinder(self): pass
+    def viewfinder_flash(self): pass
+    def close_viewfinder(self): pass
+    def set_camera_button(self, on): pass
     def clear_transcript(self): pass
     def set_weather(self, reading): pass
     def set_now_playing(self, title, loading=False): pass

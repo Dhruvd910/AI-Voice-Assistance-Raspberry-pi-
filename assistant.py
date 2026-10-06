@@ -103,7 +103,11 @@ from prompts import (AGENTIC_ACTIONS, ASSISTANT_SCOPE, EMOTION_PERSONA,
                      RETELL_FOLLOWUP_WINDOW_S, RETELL_MIN_LISTEN_S, RETELL_NUDGES,
                      RETELL_NUDGE_AFTER_S, RETELL_PHRASE_LIMIT_S, RE_RETELL_FOLLOWUP,
                      RE_RETELL_MARK_NOW,
-                     LOST_THREAD_LINES, SEARCH_NOTICES, SLEEP_ACKS, UNIVERSAL_SYSTEM_PROMPT)
+                     LOST_THREAD_LINES, SEARCH_NOTICES, SLEEP_ACKS, UNIVERSAL_SYSTEM_PROMPT,
+                     CAMERA_CANT_SEE, CAMERA_FAILED, CAMERA_LIVE_NOTE, CAMERA_LOOK_NOTE,
+                     CAMERA_MISSING, CAMERA_OFF_ACKS, CAMERA_ON_ACKS, LOOK_PROMPTS)
+# The camera: a leaf. ai_loop decides when to look; camera.py does the looking.
+import camera
 # The voice. audio.py reads two names back through this module at call time.
 # The Kindergarten flow. kg.py reads a few names back through this module at
 # call time; see its foot for which.
@@ -1658,6 +1662,7 @@ def ai_loop(ui, headless=False):
     pending_question = pending_language = ""
     pending_media_kind = None   # set after asking "which song?", see below
     pending_file = None         # (path, name) offered but not yet confirmed
+    look_requested = False      # she tagged [ACTION: look]; the question comes round again
     # [started_at, budget_seconds] for the mic read in flight; [0, 0] when none
     # is. The budget is carried alongside the timestamp so the watchdog can hold
     # each read to ITS OWN limits instead of to one worst-case number: a standby
@@ -2836,11 +2841,17 @@ def ai_loop(ui, headless=False):
                         continue
         else:
             ui.set_state("idle")
-            try: text = input().strip()
-            except EOFError: break
-            if not text: continue
-            if text.lower() in ("exit", "quit"): break
-            stt_language = ""
+            if pending_question:
+                # Sent round again by [ACTION: look]; nothing else sets this
+                # without a microphone.
+                text, stt_language = pending_question, pending_language
+                pending_question = pending_language = ""
+            else:
+                try: text = input().strip()
+                except EOFError: break
+                if not text: continue
+                if text.lower() in ("exit", "quit"): break
+                stt_language = ""
             stop_playback_event.clear()
 
         # --- "GO TO SLEEP" ---
@@ -2962,6 +2973,33 @@ def ai_loop(ui, headless=False):
                 chat_history = trim_history(chat_history)
                 save_history(chat_history)
                 continue
+
+        # --- THE CAMERA ON AND OFF, answered without the model ---
+        # Ahead of the stop/close fast path below on purpose: "कैमरा बंद करो"
+        # with music playing is about the camera, and RE_STOP_MEDIA_PHRASE would
+        # otherwise take its बंद करो and stop the music instead. "Turn on the
+        # camera and tell me what this is" comes back as "look", and is answered
+        # by the look block further down.
+        camera_cmd = (None if (is_retell_eval or look_requested)
+                      else camera.camera_command(text))
+        if camera_cmd in ("on", "off"):
+            cam_language = detect_user_language(text, stt_language)
+            if camera_cmd == "off":
+                camera.stop_live("asked to")
+                table = CAMERA_OFF_ACKS
+            elif camera.start_live():
+                table = CAMERA_ON_ACKS
+            else:
+                table = CAMERA_MISSING if not camera.sensor() else CAMERA_FAILED
+            reply = table.get(cam_language, table["en"])
+            print(f"[CAMERA] Turned {camera_cmd} by voice: {text!r}", flush=True)
+            audio_queue.put(reply)
+            audio_queue.put("[END_OF_RESPONSE]")
+            chat_history.append({"role": "user", "content": f"User: {text}"})
+            chat_history.append({"role": "assistant", "content": f"ANSWER: {reply}"})
+            chat_history = trim_history(chat_history)
+            save_history(chat_history)
+            continue
 
         # --- FAST PATH: "stop" / "close it", answered without the model ---
         # detect_play_media() above already works this way, and these are the
@@ -3136,6 +3174,47 @@ def ai_loop(ui, headless=False):
                     retell_ack_index += 1
                 continue
 
+        # --- LOOK: what the camera sees goes with the question ---
+        # "What is this?", "read this page", "check my answer": the camera
+        # comes on if it was off, and what it sees right now goes to the model
+        # WITH the question, in one call. While it is on, every question goes
+        # with what it sees, and the model is the one that can tell "and this
+        # one?" from "who was the first prime minister?" (CAMERA_LIVE_NOTE).
+        # Decided here, before the model, because the model cannot know that
+        # somebody is holding a book up. What the phrases miss she catches
+        # herself with [ACTION: look] -- see the ACT block at the foot of the
+        # turn, which sends the question round again with look_requested set.
+        turn_photo, photo_note, looked = None, CAMERA_LIVE_NOTE, False
+        forced = False
+        if not (is_retell_eval or is_retell_followup):
+            forced, look_requested = look_requested, False
+            wants = (forced or camera_cmd == "look"
+                     or camera.wants_a_look(text, state.current_visual))
+            if wants or camera.live():
+                look_language = detect_user_language(text, stt_language)
+                why = "no_camera"
+                if camera.sensor():
+                    # Only when it has to come on first, which takes about two
+                    # seconds; and not when she asked to look herself, because
+                    # she has just said "Show me!".
+                    if wants and not forced and not camera.live():
+                        audio_queue.put(LOOK_PROMPTS.get(look_language,
+                                                         LOOK_PROMPTS["en"]))
+                    turn_photo, why = camera.look(text)
+                if turn_photo is None and wants:
+                    table = {"no_camera": CAMERA_MISSING,
+                             "cancelled": CAMERA_OFF_ACKS}.get(why, CAMERA_FAILED)
+                    reply = table.get(look_language, table["en"])
+                    audio_queue.put(reply)
+                    audio_queue.put("[END_OF_RESPONSE]")
+                    chat_history.append({"role": "user", "content": f"User: {text}"})
+                    chat_history.append({"role": "assistant", "content": f"ANSWER: {reply}"})
+                    chat_history = trim_history(chat_history)
+                    save_history(chat_history)
+                    continue
+                if wants:
+                    photo_note, looked = CAMERA_LOOK_NOTE, True
+
         # --- 2. THINK & STREAM ---
         ui.set_state("thinking")
         if is_retell_eval:
@@ -3180,11 +3259,15 @@ def ai_loop(ui, headless=False):
         # save_history sites because this is the single point every answered
         # question passes through with `text` still in hand, and because a note
         # is worth taking only for a turn that actually became a lesson.
-        note_learning(text)
+        #
+        # Not on the second pass of a question she asked to look at: the first
+        # pass took both notes already.
+        if not forced:
+            note_learning(text)
         # And anything they said about THEMSELVES, on its own thread; see
         # friend_memory.py. Not from a recitation: RE-TELL is them teaching a
         # chapter back, and "we learned that plants..." is not news about them.
-        if ui.current_mode != "RE-TELL":
+        if ui.current_mode != "RE-TELL" and not forced:
             remember_about_them(text, chat_history)
 
         current_time = datetime.now().strftime("%I:%M %p, %A, %B %d, %Y")
@@ -3218,9 +3301,13 @@ def ai_loop(ui, headless=False):
 
         # The recitation is already quoted in full inside the evaluation prompt;
         # repeating it here would only push the older turns out of the window.
+        # The photo itself never goes into the history -- see camera.attach --
+        # but the fact that one was shown does, so the turns after it know
+        # what her answer was an answer to.
         chat_history.append({"role": "user", "content":
                              "I have finished. Give me your verdict."
-                             if is_retell_eval else f"User: {text}"})
+                             if is_retell_eval else f"User: {text}"
+                             + (" [holding it up to your camera]" if looked else "")})
         chat_history = trim_history(chat_history)
 
         pending_action = (None, None)
@@ -3250,6 +3337,9 @@ def ai_loop(ui, headless=False):
                     messages = ([chat_history[0], chat_history[-1]]
                                 if is_retell_eval and len(chat_history) >= 2
                                 else chat_history)
+                    # On the outgoing copy only; also on the second pass after
+                    # a web search, whose last user turn is then the results.
+                    messages = camera.attach(messages, turn_photo, photo_note)
                     response_stream = start_chat_stream(messages)
                     
                     buffer = ""
@@ -3516,6 +3606,33 @@ def ai_loop(ui, headless=False):
         # Closing early costs nothing: there is no focus to steal from a window
         # that is going away, and nothing of hers to cut off.
         action_name, action_param = pending_action
+        # [ACTION: look] -- she wants to see what they are asking about. The
+        # same question goes round the loop again, as if it had just been
+        # asked, with the camera open this time; the look block above sees
+        # look_requested and answers it with the photo. Her "Show me!" turn is
+        # taken back out of the history, so what is left is one question and
+        # the answer that actually looked at it.
+        if (action_name or "").lower() == "look":
+            if (turn_photo is None and not (is_retell_eval or is_retell_followup)
+                    and camera.sensor()):
+                if chat_history and chat_history[-1].get("role") == "assistant":
+                    chat_history.pop()
+                if chat_history and chat_history[-1].get("role") == "user":
+                    chat_history.pop()
+                look_requested = True
+                pending_question, pending_language = text, stt_language
+                continue
+            if not camera.sensor():
+                audio_queue.put(CAMERA_MISSING.get(user_language, CAMERA_MISSING["en"]))
+                audio_queue.put("[END_OF_RESPONSE]")
+            elif turn_photo is not None:
+                # She had the picture and still asked to look: she cannot make
+                # out what they mean in it. Going round again would only send
+                # the same frame, so the student is told what to do instead.
+                audio_queue.put(CAMERA_CANT_SEE.get(user_language, CAMERA_CANT_SEE["en"]))
+                audio_queue.put("[END_OF_RESPONSE]")
+            # Nothing left to carry out.
+            action_name = None
         # A verdict carries exactly one action: its report card. It is written
         # down in the progress log as well as put on the board, which is what
         # lets the next re-tell say whether the weak point has been fixed.
