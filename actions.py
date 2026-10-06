@@ -26,6 +26,7 @@ import time
 import profiles
 import state
 import books
+import camera
 import friend_memory
 import store
 import visuals
@@ -1120,6 +1121,8 @@ def execute_action(name, param, language="en"):
         reason, detail = enlarge_visual_action(False)
     elif name == "model3d_do":
         reason, detail = model3d_do_action(param)
+    elif name == "camera_off":
+        reason, detail = ("ok", "") if camera.stop_live("she was asked to") else ("already", "")
     else:
         print(f"[ACTION] Unknown action {name!r}.", flush=True)
 
@@ -1144,7 +1147,7 @@ def execute_action(name, param, language="en"):
 # whole of the delay. Drawing it costs about a twentieth of a second, so it
 # lands while she is still on her first word.
 IMMEDIATE_ACTIONS = {"stop_media", "close_file", "show_visual", "hide_visual",
-                     "enlarge_visual", "shrink_visual", "model3d_do"}
+                     "enlarge_visual", "shrink_visual", "model3d_do", "camera_off"}
 
 
 def show_visual_action(param):
@@ -1328,6 +1331,10 @@ def hide_visual_action():
     """Take the board down because the conversation has moved off it."""
     if state.current_visual is None:
         return "already", ""
+    if state.current_visual is camera.LIVE_BOARD:
+        # The live camera is the student's to turn off, not a picture of hers
+        # that the conversation has moved past -- rule 10 must not reach it.
+        return "already", ""
     state.current_visual = None
     state.current_graph = None
     ui_invoke("clear_visual")
@@ -1366,7 +1373,8 @@ def device_state_block():
             f"CURRENTLY_OPEN_FILE: {open_file or 'None (no file is open)'}\n"
             f"CURRENT_UI_MODE: {ui_mode}\n"
             f"LAST_GRAPH: {graph or 'None (you have not plotted one)'}\n"
-            f"ON_BOARD: {on_board_line()}")
+            f"ON_BOARD: {on_board_line()}\n"
+            f"CAMERA: {camera.state_line()}")
 
 
 def on_board_line():
@@ -1374,6 +1382,9 @@ def on_board_line():
     visual = getattr(state, "current_visual", None)
     if not visual:
         return "None (the board is empty)"
+    if visual is camera.LIVE_BOARD:
+        return ("your live camera view -- it stays until they want it off "
+                "(or the board wiped): then camera_off, never hide_visual")
     kind = visual["kind"]
     if visual["steps"]:
         return (f"a {kind} diagram, its stages in this order: "

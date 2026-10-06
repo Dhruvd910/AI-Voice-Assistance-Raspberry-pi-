@@ -14,6 +14,7 @@ A local-first, multimodal AI assistant designed for the Raspberry Pi. Liza combi
 * **Physical Hardware Support:** Designed for 5-inch touchscreens (XPT2046 SPI) and supports physical GPIO push-buttons for instant wake-up.
 * **Live Web Search Fallback:** Automatically queries DuckDuckGo for real-time technical answers when needed.
 * **Visuals on the Transcribe Board:** Ask her to show a diagram, an equation, a graph, a number line, a table or a picture and it appears on screen — see [Showing Things](#-showing-things-diagrams-equations-graphs--pictures) below.
+* **She Can See:** Turn on the live camera, hold something up and ask "what is this?", or hold up a page of your book and ask her to read it, solve a question on it or check your answer — see [Showing Her Things](#-showing-her-things-the-camera) below.
 * **Her Textbooks:** Put the child's own CBSE or ICSE books on the device and she answers out of the chapter they are actually taught from — see [Her Textbooks](#-her-textbooks) below.
 * **Progress:** Every story heard, word spelled and test taken is kept per student, shown on a **My progress** screen, and remembered by her.
 
@@ -25,6 +26,7 @@ A local-first, multimodal AI assistant designed for the Raspberry Pi. Liza combi
 * 5-inch HDMI Touchscreen (with SPI touch controller)
 * USB Microphone & Speaker (or a combined USB audio device)
 * Momentary push-button (optional, for physical wake-up)
+* Raspberry Pi camera module (optional, so she can see; on a Pi 5 it needs the narrow 22-pin cable)
 * External USB Pendrive/SSD (optional, for storing local Ollama models)
 
 ---
@@ -220,6 +222,54 @@ fails or times out, everything falls back to being drawn locally on the Pi
 nothing breaks, it just looks plainer. The live-graph slider above is **never**
 sent over the network either way; it has to redraw instantly, so it's always
 drawn on-device.
+
+---
+
+## 📷 Showing Her Things: the Camera
+
+With a camera module plugged in, she can see. The camera is **live**: once it
+is on, the picture stays on the Transcribe Board and she answers about whatever
+is in front of it the moment you ask, with no photo to take and no countdown.
+
+* **Turn it on:** "Turn on the camera", "कैमरा ऑन करो", or tap the camera button
+  in the top-left corner of the Transcribe Board. Asking her to look turns it on
+  too.
+* **Ask about an object:** "What is this?", "What am I holding?", "ये क्या है?",
+  "मेरे हाथ में क्या है?" Then hold up the next thing and ask again.
+* **Ask about a page:** "Read this page", "Solve this question", "Check my
+  answer", "Help me with my homework question", "इसमें क्या लिखा है?", "मेरी
+  किताब का सवाल नंबर तीन समझाओ"
+* **Turn it off:** "Turn off the camera", "कैमरा बंद करो", "wipe out the
+  board", the ✕ on the picture, or the camera button again.
+
+It also turns itself off when she goes to sleep, when another screen opens,
+when she draws something on the board (ask her to look and it comes back), when
+a different student is picked, and after 10 minutes with no questions. While
+it is on, every question goes to her with what the camera sees at that moment;
+she ignores the picture when the question is about something else.
+
+The pictures go to the same model that answers everything else (it reads
+print, handwriting and Hindi); nothing is recognised on the Pi itself. The last
+five frames she was sent are kept in `pictures/camera/`, so an odd answer can
+be checked against what she saw.
+
+**Setting it up.** Power the Pi off, then plug the camera into the connector
+the screen is *not* using. Push the ribbon in fully, contacts the same way
+round as the screen's ribbon, and close the latch. Then check:
+
+```bash
+rpicam-hello --list-cameras
+```
+
+It should list one camera (`imx708`, `imx219`, `ov5647`...). "No cameras
+available" means the ribbon is not seated or is the wrong way round, or the
+camera is not an official one and needs its `dtoverlay=` line in
+`/boot/firmware/config.txt`. Then `liza restart`.
+
+Settings (in `.env`): `CAMERA=0` turns the camera feature off,
+`CAMERA_IDLE_OFF_S` is how long it stays on with no questions (600 seconds),
+and `CAMERA_ROTATION=180` is for a module mounted upside down. `CAMERA_PREVIEW_MIRROR=1` mirrors only the preview, for a camera that
+faces you. The rest are in `config.py`.
 
 ---
 

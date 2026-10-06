@@ -13,6 +13,7 @@ make.
 | `profiles.py` | 365 | who is using the device |
 | `kg.py` | 475 | the Kindergarten flow under the screens |
 | `store.py` | 529 | the database, the knowledge graph, the progress log |
+| `camera.py` | 644 | **what she sees: the live camera, and when to look** |
 | `prompts.py` | 573 | **what she is told to be, and every fixed line she says** |
 | `media.py` | 666 | music and video |
 | `config.py` | 869 | **the .env, and every number worth tuning** |
@@ -32,8 +33,8 @@ not easier.
 ## Two rules that keep it untangled
 
 **1. Leaves import nothing of ours.** `config`, `state`, `uibridge`, `prompts`,
-`media`, `profiles`, `store`, `visuals`, `kg_content` and `books` never import
-the assistant. You can open a shell, import one, and poke at it. (`books`
+`media`, `profiles`, `store`, `visuals`, `kg_content`, `books` and `camera`
+never import the assistant. You can open a shell, import one, and poke at it. (`books`
 imports `store`, which is itself a leaf; that is as deep as it goes. `visuals`
 imports `science`, which reaches back into `visuals`' drawing helpers only
 inside its functions, at call time.)

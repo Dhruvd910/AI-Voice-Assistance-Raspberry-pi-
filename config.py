@@ -901,3 +901,43 @@ KG_ASK_START_S = float(os.getenv("KG_ASK_START_S", "3.0"))
 # or turn a one-breath answer into a slow one.
 KG_DOUBT_MEMORY = int(os.getenv("KG_DOUBT_MEMORY", "6"))
 
+
+# ---------------------------------------------------------------- the camera
+# What she sees when somebody holds a thing up to her, or a page of their book.
+# See camera.py. Set CAMERA=0 to take the camera away from her entirely: she
+# then says she cannot see rather than opening a viewfinder that never fills.
+CAMERA_ENABLED = os.getenv("CAMERA", "1") != "0"
+# Which camera libcamera should open, as `rpicam-hello --list-cameras` numbers
+# them. With one camera module plugged in, it is 0 whichever connector it is on.
+CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+# The size of every frame, preview and photo alike: one stream, so the picture
+# she is sent is the one the student is looking at on the board. 4:3 because a page
+# is that shape and a 16:9 frame wastes a third of itself on the table. 1640
+# across puts ordinary textbook print at roughly thirty pixels a line from
+# forty centimetres away, which the model reads without trouble.
+CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "1640"))
+CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "1232"))
+CAMERA_FPS = int(os.getenv("CAMERA_FPS", "8"))
+# How long after the camera turns on before a frame is used. The first frames
+# come out dark and tinted while the exposure catches up with the room; once
+# the camera is already on, a question is answered from it straight away.
+CAMERA_SETTLE_S = float(os.getenv("CAMERA_SETTLE_S", "1.5"))
+# The camera turns itself off after this long with nobody asking anything:
+# it is a lens pointed at a child's room, and a tenth of a core besides.
+CAMERA_IDLE_OFF_S = float(os.getenv("CAMERA_IDLE_OFF_S", "600"))
+# How the module is mounted. 180 for one that is upside down; the flips for a
+# mirror in the way. The photo is turned, not only the preview, so text reads
+# the right way round to the model too.
+CAMERA_ROTATION = int(os.getenv("CAMERA_ROTATION", "0"))
+CAMERA_HFLIP = os.getenv("CAMERA_HFLIP", "0") != "0"
+CAMERA_VFLIP = os.getenv("CAMERA_VFLIP", "0") != "0"
+# For a lens facing the student: the PREVIEW is mirrored, the way a phone's
+# front camera is, so moving the book left moves it left on the screen. The
+# photo she is sent is never mirrored -- mirrored print is not print.
+CAMERA_PREVIEW_MIRROR = os.getenv("CAMERA_PREVIEW_MIRROR", "0") != "0"
+# The longest side of the photo the model is sent, in pixels.
+CAMERA_SEND_MAX = int(os.getenv("CAMERA_SEND_MAX", "1600"))
+# How many of the frames she was sent are kept in pictures/camera/, so a
+# strange answer can be checked against what she saw. They are pictures of a
+# child's room; only the last few are kept.
+CAMERA_KEEP_PHOTOS = int(os.getenv("CAMERA_KEEP_PHOTOS", "5"))
