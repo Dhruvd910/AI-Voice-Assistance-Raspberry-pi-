@@ -941,3 +941,33 @@ CAMERA_SEND_MAX = int(os.getenv("CAMERA_SEND_MAX", "1600"))
 # strange answer can be checked against what she saw. They are pictures of a
 # child's room; only the last few are kept.
 CAMERA_KEEP_PHOTOS = int(os.getenv("CAMERA_KEEP_PHOTOS", "5"))
+
+
+# ---------------------------------------------------------------- the whiteboard
+# The Transcribe Board opened full screen, to write and draw on with a finger.
+# See whiteboard.py. BOARD=0 takes the full-screen button away.
+BOARD_ENABLED = os.getenv("BOARD", "1") != "0"
+# She reads the page each time the writing stops for this long, and says in a
+# chip on the page what she read there -- before anybody asks her anything.
+# BOARD_READ_LIVE=0 leaves the page unread until she is asked about it.
+BOARD_READ_LIVE = os.getenv("BOARD_READ_LIVE", "1") != "0"
+# One second: the buttons under the writing come from this reading, and a
+# child who has stopped writing is looking for them already.
+BOARD_READ_PAUSE_S = float(os.getenv("BOARD_READ_PAUSE_S", "1.0"))
+# The model that does that reading. It has to SEE, so it is the one she answers
+# with only when that one is set; a text-only default would read nothing.
+BOARD_READ_MODEL = (os.getenv("BOARD_READ_MODEL", "")
+                    or os.getenv("LLM_MODEL", "") or "google/gemini-2.5-flash")
+# The longest side of the picture of the page that a question carries.
+BOARD_SEND_MAX = int(os.getenv("BOARD_SEND_MAX", "1280"))
+# A question about the page usually needs WORKING OUT -- a sum, a balance, a
+# force -- and an answer read off the top of the model's head is where the
+# arithmetic slips. So those turns, and only those, think first: off | low |
+# medium | high. Costs a second or two before the first word.
+BOARD_REASONING = os.getenv("BOARD_REASONING", "low").strip().lower()
+# Room for the spoken steps AND the worked solution written beside them, which
+# is several times an ordinary reply -- more again in Hindi.
+BOARD_MAX_TOKENS = int(os.getenv("BOARD_MAX_TOKENS", "2400"))
+# How many pictures of the page she was sent are kept in pictures/board/, so a
+# strange answer can be checked against what she saw.
+BOARD_KEEP_SKETCHES = int(os.getenv("BOARD_KEEP_SKETCHES", "5"))

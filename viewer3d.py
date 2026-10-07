@@ -681,6 +681,12 @@ def _mesh(p, at_origin=False):
         corners = [(x, y, -depth / 2) for x, y in p["points2d"]]
         face = pv.PolyData(np.asarray(corners, float), faces=[len(corners), *range(len(corners))])
         m = face.extrude((0, 0, depth), capping=True)
+    elif shape == "polyhedron":
+        # Corners and the faces between them -- a pyramid, a tetrahedron.
+        cells = []
+        for face in p["faces"]:
+            cells += [len(face), *face]
+        m = pv.PolyData(np.asarray(p["vertices"], float), faces=cells)
     elif shape == "revolve":
         profile = np.asarray(p["profile"], float)
         angles = np.linspace(0, TAU, 72)
@@ -699,6 +705,12 @@ def _mesh(p, at_origin=False):
         m = _point_z_at(m, p["direction"])
     elif "normal" in p:
         m = _point_z_at(m, p["normal"])
+    if shape in ("box", "prism", "polyhedron"):
+        # A flat face keeps its corners. The scene is drawn with smooth
+        # shading, which on shared corner points rounds a cube off into a
+        # cushion; split normals keep each face flat and each edge sharp.
+        m = m.triangulate().compute_normals(split_vertices=True, feature_angle=30,
+                                            auto_orient_normals=True)
     if not at_origin:
         m = m.translate(tuple(p.get("centre", (0, 0, 0))))
     return _cut(m, p)

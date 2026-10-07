@@ -17,6 +17,7 @@ import subprocess
 import threading
 import time
 
+import spoken
 import state
 from config import (AUDIO_OUTPUT_DEVICE, BYTES_PER_SEC, CARTESIA_MODEL,
                     CARTESIA_SAMPLE_RATE, CARTESIA_SPEED, CARTESIA_VOICE_ID,
@@ -264,7 +265,9 @@ def audio_player_worker():
                 # `with` so a barge-in releases the HTTP connection instead of leaking it.
                 with cartesia_client.tts.generate_sse(
                     model_id=CARTESIA_MODEL,
-                    transcript=sentence,
+                    # Said, not read: "H 2 S O 4", "x squared", "metres per
+                    # second". The caption keeps the symbols; see spoken.py.
+                    transcript=spoken.speakable(sentence, language),
                     voice={"mode": "id", "id": cartesia_voice_id(language)},
                     language=language,
                     output_format={"container": "raw", "encoding": "pcm_s16le", "sample_rate": CARTESIA_SAMPLE_RATE},

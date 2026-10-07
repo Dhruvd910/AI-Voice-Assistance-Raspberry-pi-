@@ -90,8 +90,9 @@ from actions import (ACTION_DATA_PREFIX, CLOSED_FILE_ACKS, FILE_CANCEL_ACKS,
                      MODEL3D_DONE_ACKS, engine_try,
                      OPENING_ACKS, RE_CLOSE_FILE_PHRASE, RE_CONFIRM_NO,
                      RE_CONFIRM_YES, action_failure_sentence, device_state_block,
-                     execute_action, file_query_topic, find_files,
-                     note_learning, open_file_action, parse_action,
+                     clear_offers, execute_action, file_query_topic, find_files,
+                     note_learning, offer_asked_for, offer_for_topic, open_file_action,
+                     parse_action, set_offers,
                      phrase_action_result, student_profile_block,
                      textbook_block)
 # Everything she is told to be, and every fixed line she says. A leaf: it
@@ -105,9 +106,16 @@ from prompts import (AGENTIC_ACTIONS, ASSISTANT_SCOPE, EMOTION_PERSONA,
                      RE_RETELL_MARK_NOW,
                      LOST_THREAD_LINES, SEARCH_NOTICES, SLEEP_ACKS, UNIVERSAL_SYSTEM_PROMPT,
                      CAMERA_CANT_SEE, CAMERA_FAILED, CAMERA_LIVE_NOTE, CAMERA_LOOK_NOTE,
-                     CAMERA_MISSING, CAMERA_OFF_ACKS, CAMERA_ON_ACKS, LOOK_PROMPTS)
+                     CAMERA_MISSING, CAMERA_OFF_ACKS, CAMERA_ON_ACKS, LOOK_PROMPTS,
+                     BOARD_CANT_READ, BOARD_CLEARED_ACKS, BOARD_CLOSE_ACKS,
+                     BOARD_LOOK_LINES, BOARD_NOTE, BOARD_OPEN_ACKS, BOARD_UNDONE_ACKS)
 # The camera: a leaf. ai_loop decides when to look; camera.py does the looking.
 import camera
+# The board, full screen to write on: a leaf in the same shape as the camera.
+# ai_loop sends the page with the question; whiteboard.py draws it and reads it.
+import geometry
+import whiteboard
+from config import BOARD_MAX_TOKENS, BOARD_REASONING
 # The voice. audio.py reads two names back through this module at call time.
 # The Kindergarten flow. kg.py reads a few names back through this module at
 # call time; see its foot for which.
@@ -237,6 +245,17 @@ LLM_RETRY_MAX_WAIT_S = float(os.getenv("LLM_RETRY_MAX_WAIT_S", "5.0"))
 # Charged against the rate limit on every request whether it is used or not; see
 # the note where it is spent in start_chat_stream().
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "500"))
+
+
+def board_tuning():
+    """LLM_TUNING for a turn about the page on the board: thinking ON, at
+    BOARD_REASONING. Half a second of silence is the right price for an
+    ordinary question and the wrong one for "solve this" -- the slips that
+    thinking catches are exactly the ones in a worked sum. Its reasoning is
+    excluded from the reply, which is read aloud."""
+    if BOARD_REASONING in ("", "off", "none", "0", "false"):
+        return LLM_TUNING
+    return {"extra_body": {"reasoning": {"effort": BOARD_REASONING, "exclude": True}}}
 
 # ALSA's "default" device does not resolve without a configured ~/.asoundrc, so
 # playback is pointed at a specific card.
@@ -749,6 +768,59 @@ RE_EMOTION_TAG = re.compile(r'^[ \t]*EMOTION:.*\n?', re.IGNORECASE | re.MULTILIN
 # "]" and she read the products of a reaction aloud.
 RE_ACTION_TAG_STRIP = re.compile(r'\[\s*ACTION\s*:(?:[^\[\]]|\[[^\[\]]*\]?)*\]?',
                                  re.IGNORECASE)
+
+# "Would you like to see a simulation of it?" -- the question the buttons
+# replaced (offer_visual). The prompt forbids it, and still now and then it
+# comes out alongside the very button that answers it: measured, one reply in
+# ten. So a sentence like this is held back while the reply streams in, and
+# only spoken if the reply turns out NOT to put a button up.
+_SHOW_WORDS = (r"see|show|look|draw|visuali[sz]e|model|graph|plot|simulation|simulate|"
+               r"picture|diagram|reaction|molecule|3d|animation|steps?|step-by-step|"
+               r"working|shape")
+# The visual word is looked for from the START of the question, so the verb
+# that opens it counts: "Want to see it step-by-step?" was spoken over its
+# own button, because "want to see" used up the only "see" in it and the
+# check then found nothing after. And an offer said as a statement -- "I can
+# show you the cube model if you'd like" -- is the same offer.
+RE_ASKS_TO_SHOW = re.compile(
+    r"^\W*(?:(?:so|and|also|or|now|okay|ok|hey|then)\b[\s,]*)?"
+    r"(?=[^?]*\b(?:" + _SHOW_WORDS + r")\b)"
+    r"(?:(?:would|do) you (?:like|want)|wanna|want to|want me to|shall (?:i|we)|"
+    r"should (?:i|we)|can i|could i|may i|how about|what about)\b[^?]*\?\s*$"
+    r"|^\W*(?:(?:and|or|so)\s+)?(?:i can|i could|i'll|i will)\b[^.?!]*\b(?:" + _SHOW_WORDS
+    + r")\b[^.?!]*\bif you(?:'d| would)? (?:like|want)\b"
+    r"|^\W*let me know if you(?:'d| would)? (?:like|want)\b[^.?!]*\b(?:" + _SHOW_WORDS + r")\b"
+    r"|(?:देखना|देखोगे|देखोगी)\s+(?:चाहोगे|चाहोगी|चाहते|चाहती)|(?:दिखाऊँ|दिखाऊं)\s*\?",
+    re.IGNORECASE)
+
+
+def action_tag_spans(text):
+    """(start, end) of every action tag in `text`. One still being written runs
+    to the end of the text.
+
+    The streaming splitter cuts at sentence ends, and a long tag has them
+    inside it -- a worked solution's "take 3 from both sides. Then ..." -- so a
+    cut there sent the front of the tag to clean_text_for_tts, which stripped
+    it, and the rest, no longer starting with [ACTION:, to the speaker. A cut
+    is never made inside one of these."""
+    spans, upper, at = [], text.upper(), 0
+    while True:
+        start = upper.find("[ACTION", at)
+        if start < 0:
+            return spans
+        depth, end = 0, len(text)
+        for index in range(start, len(text)):
+            if text[index] == "[":
+                depth += 1
+            elif text[index] == "]":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        spans.append((start, end))
+        at = end
+
+
 # The mood she reports on the first line, for the chip under her face. Tolerant
 # of the brackets the model sometimes adds around it.
 RE_EMOTION_LINE = re.compile(r'EMOTION:\s*\[?\s*([A-Za-z]+)', re.IGNORECASE)
@@ -1237,7 +1309,7 @@ def remember_about_them(text, chat_history):
     friend_memory.learn_later(profile, text, last[:300], memory_completion)
 
 
-def start_chat_stream(messages, attempts=3):
+def start_chat_stream(messages, attempts=3, max_tokens=None, tuning=None):
     """Open the streaming completion for a reply. One funnel, so the model, its
     tuning and its rate-limit handling live in exactly one place.
 
@@ -1255,7 +1327,9 @@ def start_chat_stream(messages, attempts=3):
     spend. Do not expect it to make her feel faster on its own.
 
     LLM_TUNING is where thinking is turned off, and the measurements behind
-    that are with it at the top of this file. Note that Groq's reasoning_format
+    that are with it at the top of this file. `tuning` and `max_tokens` replace
+    it and LLM_MAX_TOKENS for one call -- a question about the board's page
+    thinks first and needs room for the working (see board_tuning). Note that Groq's reasoning_format
     has no place here: the OpenAI SDK rejects the keyword outright, raising
     before the request is even sent, which is what the TypeError branch below
     exists to survive.
@@ -1275,7 +1349,7 @@ def start_chat_stream(messages, attempts=3):
         # Devanagari costs roughly 3x the tokens of the same English, so a
         # cap tuned for English truncates Hindi mid-word. Brevity is enforced
         # by the prompt instead; this is only a runaway guard.
-        "max_tokens": LLM_MAX_TOKENS,
+        "max_tokens": max_tokens or LLM_MAX_TOKENS,
         # 0.7 was a storyteller's setting on a device mostly asked for facts,
         # and it shows in logs/liza.log as confident answers to garbled
         # questions. Low enough to stay on what it knows, not so low that every
@@ -1286,7 +1360,8 @@ def start_chat_stream(messages, attempts=3):
     def fire():
         c = openrouter_client.with_options(max_retries=0)
         if _chat_tuning_supported:
-            return c.chat.completions.create(**LLM_TUNING, **kwargs)
+            return c.chat.completions.create(
+                **(LLM_TUNING if tuning is None else tuning), **kwargs)
         return c.chat.completions.create(**kwargs)
 
     for attempt in range(attempts):
@@ -1869,6 +1944,8 @@ def ai_loop(ui, headless=False):
         # True when phrase_time_limit cut the student off rather than them
         # actually pausing. Only the microphone path can tell.
         phrase_truncated = False
+        # The question came from the board's Ask button, not the microphone.
+        board_asked = False
         in_retell = ui.current_mode == "RE-TELL"
 
         # A mode card was tapped. Spoken from this thread, where the microphone
@@ -1961,7 +2038,7 @@ def ai_loop(ui, headless=False):
                 # is broken -- the Sleep-then-Speak complaint exactly.
                 def standby_interrupted():
                     return bool(wake_event.is_set() or kg_holds_microphone(ui)
-                                or state.pending_mode_intro)
+                                or state.pending_mode_intro or whiteboard.ask_waiting())
 
                 if WAKE_WORD_ENABLED:
                     print(f"[STATE] In {'Sleep' if ui.asleep else 'Standby'} Mode. "
@@ -1983,6 +2060,10 @@ def ai_loop(ui, headless=False):
                             break
                         if state.pending_mode_intro:
                             mode_tapped = True
+                            break
+                        # Ask Liza on the board: a question, and a tap, so no
+                        # wake word is wanted.
+                        if whiteboard.ask_waiting():
                             break
                         # THE WAKE BAR RISES ON A DEVICE NOBODY IS USING.
                         #
@@ -2035,6 +2116,8 @@ def ai_loop(ui, headless=False):
                             break
                         if state.pending_mode_intro:
                             mode_tapped = True
+                            break
+                        if whiteboard.ask_waiting():
                             break
                         time.sleep(0.1)
 
@@ -2110,6 +2193,13 @@ def ai_loop(ui, headless=False):
                     wake_event.clear()
                     interrupt_playback()
                     ui_call(lambda: state.ui_instance.set_state("listening"))
+                    session_active = True
+                    silence_counter = 0
+                    continue
+                # Ask Liza tapped on the board while she talks: the page is the
+                # question now, and it is collected below once she has stopped.
+                if whiteboard.ask_waiting():
+                    interrupt_playback()
                     session_active = True
                     silence_counter = 0
                     continue
@@ -2194,7 +2284,7 @@ def ai_loop(ui, headless=False):
                 # to talk left her permanently unreachable. Reported exactly
                 # that way: "even after I manually pause the audio it not goes
                 # to listen state, I tap tap-to-speak but still not listening."
-                if wake_event.is_set():
+                if wake_event.is_set() or whiteboard.ask_waiting():
                     print("[UI] Speak tapped during playback; stopping media.", flush=True)
                     wake_event.clear()
                     stop_media_playback()
@@ -2401,6 +2491,21 @@ def ai_loop(ui, headless=False):
                     pending_question, pending_language = spoken, spoken_language
                 continue
 
+            # THE BOARD'S ASK BUTTON. The question was left by the Tk thread
+            # (whiteboard.ask) and is answered like one said in the same breath
+            # as the wake word: no listen, straight to the answer. wake_event is
+            # cleared with it -- left set, the next reply would read it as a
+            # Speak tap and cut itself off.
+            if not pending_question:
+                asked = whiteboard.take_ask()
+                if asked:
+                    pending_question, pending_language = asked[0], ""
+                    board_asked = asked[2] == "board"
+                    wake_event.clear()
+                    print("[BOARD] Ask Liza: answering about the page." if board_asked
+                          else "[GEOMETRY] Ask Liza: answering about what was picked.",
+                          flush=True)
+
             if pending_question:
                 # Said in the same breath as the wake word, so skip straight to answering.
                 text, stt_language = pending_question, pending_language
@@ -2537,7 +2642,8 @@ def ai_loop(ui, headless=False):
                                 # behind a silence.
                                 cancel=lambda: (kg_holds_microphone(ui)
                                                 or sleep_event.is_set()
-                                                or bool(state.pending_mode_intro)))
+                                                or bool(state.pending_mode_intro)
+                                                or whiteboard.ask_waiting()))
                             if audio is None:
                                 # Raised rather than returned so that everything
                                 # below -- the RE-TELL nudge clock, the standby
@@ -2797,7 +2903,7 @@ def ai_loop(ui, headless=False):
                         # and before the RE-TELL clock below reads the same
                         # return as the student having stopped talking.
                         if (kg_holds_microphone(ui) or sleep_event.is_set()
-                                or state.pending_mode_intro):
+                                or state.pending_mode_intro or whiteboard.ask_waiting()):
                             continue
 
                         # --- RE-TELL: the examiner is holding the floor open ---
@@ -3001,6 +3107,50 @@ def ai_loop(ui, headless=False):
             save_history(chat_history)
             continue
 
+        # --- THE BOARD, FULL SCREEN: opened, closed, wiped, undone ---
+        # Answered without the model, like the camera switch above and for the
+        # same reason: plain intent, a local action, and a child waiting with a
+        # finger in the air. What these miss, the model catches with
+        # [ACTION: board_open] / [ACTION: board_close].
+        board_cmd = (None if (is_retell_eval or look_requested or board_asked)
+                     else whiteboard.board_command(text, ui))
+        if board_cmd:
+            board_language = detect_user_language(text, stt_language)
+            table = {"open": BOARD_OPEN_ACKS, "close": BOARD_CLOSE_ACKS,
+                     "clear": BOARD_CLEARED_ACKS, "undo": BOARD_UNDONE_ACKS}[board_cmd]
+            ui_invoke("board_command", board_cmd)
+            reply = table.get(board_language, table["en"])
+            print(f"[BOARD] {board_cmd} by voice: {text!r}", flush=True)
+            audio_queue.put(reply)
+            audio_queue.put("[END_OF_RESPONSE]")
+            chat_history.append({"role": "user", "content": f"User: {text}"})
+            chat_history.append({"role": "assistant", "content": f"ANSWER: {reply}"})
+            chat_history = trim_history(chat_history)
+            save_history(chat_history)
+            continue
+
+        # --- "YES" TO A BUTTON SHE PUT UP ---
+        # She offers things as buttons now (offer_visual) rather than asking,
+        # but a child will still often just say "yes" or "show me". With one
+        # button up, or with the words naming which ("show me the reaction"),
+        # that is a tap; anything longer or less certain goes to her, who is
+        # told what the buttons are (BUTTONS in the device state).
+        offer_index = (None if (is_retell_eval or look_requested or board_asked)
+                       else offer_asked_for(text, state.current_offers))
+        if offer_index is not None:
+            offer = state.current_offers[offer_index]
+            print(f"[OFFER] Taken by voice: {text!r} -> {offer['label']}", flush=True)
+            ui_invoke("take_offer", offer_index)
+            offer_language = detect_user_language(text, stt_language)
+            reply = {"hi": "ये लो।", "hinglish": "ये लो।"}.get(offer_language, "Here it is.")
+            audio_queue.put(reply)
+            audio_queue.put("[END_OF_RESPONSE]")
+            chat_history.append({"role": "user", "content": f"User: {text}"})
+            chat_history.append({"role": "assistant", "content": f"ANSWER: {reply}"})
+            chat_history = trim_history(chat_history)
+            save_history(chat_history)
+            continue
+
         # --- FAST PATH: "stop" / "close it", answered without the model ---
         # detect_play_media() above already works this way, and these are the
         # requests that deserve it most: the intent is unambiguous, the action is
@@ -3141,7 +3291,7 @@ def ai_loop(ui, headless=False):
             is_retell_followup = True
             print("[RE-TELL] A question about the verdict; answering it.", flush=True)
 
-        if in_retell and not is_retell_eval and not is_retell_followup:
+        if in_retell and not is_retell_eval and not is_retell_followup and not board_asked:
             retell_language = detect_user_language(text, stt_language)
 
             # "That's it, how did I do?" -- an explicit request to be marked, so
@@ -3186,7 +3336,48 @@ def ai_loop(ui, headless=False):
         # turn, which sends the question round again with look_requested set.
         turn_photo, photo_note, looked = None, CAMERA_LIVE_NOTE, False
         forced = False
-        if not (is_retell_eval or is_retell_followup):
+        # --- THE BOARD: the page goes with the question ---
+        # With the board open full screen and something written on it, every
+        # question goes to the model with a picture of the page, by the road a
+        # camera photo takes. It outranks the camera: the student is looking
+        # at the page, and "check my answer" means the answer on it -- unless
+        # they plainly mean the camera, or something in their hands.
+        board_sketch, board_thinks, board_works = None, False, False
+        # Not while the geometry lab is open over it: they are looking at the
+        # figure they are turning, which GEOMETRY in the device state describes.
+        if (not (is_retell_eval or is_retell_followup) and camera_cmd != "look"
+                and not whiteboard.RE_NOT_THE_BOARD.search(text)
+                and not getattr(ui, "geometry_open", lambda: False)()):
+            board_sketch = whiteboard.turn_sketch(ui)
+        if board_sketch is not None:
+            forced, look_requested = look_requested, False
+            turn_photo = board_sketch
+            photo_note = BOARD_NOTE
+            # A question ABOUT the page is worked out before it is answered
+            # (board_tuning), and the student is watching her face: a word now
+            # says the question landed. "What's the capital of France?" asked
+            # with the page up is neither, and is answered at the usual speed.
+            board_thinks = board_asked or bool(whiteboard.RE_ABOUT_THE_PAGE.search(text))
+            if board_thinks:
+                look_lines = BOARD_LOOK_LINES.get(detect_user_language(text, stt_language),
+                                                  BOARD_LOOK_LINES["en"])
+                audio_queue.put(random.choice(look_lines))
+                # Thinking only when the page has something to work out. A
+                # reading of this very page still on its way is worth a moment
+                # -- she is saying "let me see" over it -- because thinking
+                # about a drawing cost one answer nineteen seconds of silence.
+                found = whiteboard.found_for(board_sketch.version)
+                waited = time.time()
+                while (found is None and whiteboard.reading_pending(board_sketch.version)
+                       and time.time() - waited < 1.5):
+                    time.sleep(0.1)
+                    found = whiteboard.found_for(board_sketch.version)
+                board_works = whiteboard.needs_working(found, text)
+                print(f"[BOARD] {'Working it out' if board_works else 'Nothing to work out'}"
+                      f" ({'read' if found is not None else 'not read yet'}"
+                      f"{f', waited {time.time() - waited:.1f}s' if time.time() - waited > 0.05 else ''}).",
+                      flush=True)
+        elif not (is_retell_eval or is_retell_followup):
             forced, look_requested = look_requested, False
             wants = (forced or camera_cmd == "look"
                      or camera.wants_a_look(text, state.current_visual))
@@ -3270,6 +3461,23 @@ def ai_loop(ui, headless=False):
         if ui.current_mode != "RE-TELL" and not forced:
             remember_about_them(text, chat_history)
 
+        # THE GEOMETRY LAB, MEASURED BEFORE SHE ANSWERS. "What's the angle
+        # between AG and the bottom face?" names the parts: picked here, on
+        # the screen and in GEOMETRY, the measurement is in front of her when
+        # she answers -- asked to work it out herself, she explained the method
+        # and never said 35.3°.
+        if getattr(ui, "geometry_open", lambda: False)() and not is_retell_eval:
+            figure = ui.geometry_figure()
+            try:
+                named = geometry.picks_from_words(figure, text, strict=True)
+            except Exception as exc:
+                print(f"[GEOMETRY] Could not read the picks in {text!r}: {exc}", flush=True)
+                named = []
+            if named:
+                state.current_geometry = geometry.lab_line(figure, named)
+                ui_invoke("geometry_pick", named)
+                print("[GEOMETRY] Picked from the question: "
+                      + ", ".join(figure.element_name(p) for p in named), flush=True)
         current_time = datetime.now().strftime("%I:%M %p, %A, %B %d, %Y")
         dynamic_system_prompt = UNIVERSAL_SYSTEM_PROMPT.format(
             education_scope=ASSISTANT_SCOPE,
@@ -3307,10 +3515,15 @@ def ai_loop(ui, headless=False):
         chat_history.append({"role": "user", "content":
                              "I have finished. Give me your verdict."
                              if is_retell_eval else f"User: {text}"
-                             + (" [holding it up to your camera]" if looked else "")})
+                             + (" [holding it up to your camera]" if looked else "")
+                             + (" [about what is written on your board]"
+                                if board_sketch is not None else "")})
         chat_history = trim_history(chat_history)
 
         pending_action = (None, None)
+        # The button for what they asked about, when her reply puts none up
+        # itself -- found at the end of the stream, put up after it.
+        topic_offer = {"offer": None}
         try:
             result_holder = {}
 
@@ -3340,7 +3553,10 @@ def ai_loop(ui, headless=False):
                     # On the outgoing copy only; also on the second pass after
                     # a web search, whose last user turn is then the results.
                     messages = camera.attach(messages, turn_photo, photo_note)
-                    response_stream = start_chat_stream(messages)
+                    response_stream = (
+                        start_chat_stream(messages, max_tokens=BOARD_MAX_TOKENS,
+                                          tuning=board_tuning() if board_works else None)
+                        if board_sketch is not None else start_chat_stream(messages))
                     
                     buffer = ""
                     full_response = ""
@@ -3354,6 +3570,24 @@ def ai_loop(ui, headless=False):
                     # Whether any audio has been queued for THIS reply yet; see
                     # the first-flush note in the splitter below.
                     spoken_anything = False
+                    # Questions offering to show something, kept back until the
+                    # reply is complete; see RE_ASKS_TO_SHOW.
+                    held_back = []
+
+                    def say(text):
+                        """Queue spoken text, holding back an offer to show."""
+                        out = []
+                        for sentence in RE_SENTENCE_SPLIT.split(text):
+                            if not sentence.strip():
+                                continue
+                            if RE_ASKS_TO_SHOW.search(sentence):
+                                held_back.append(sentence.strip())
+                            else:
+                                out.append(sentence.strip())
+                        if out:
+                            joined = " ".join(out)
+                            audio_queue.put((joined, delivery) if delivery else joined)
+                        return bool(out)
 
                     for chunk in response_stream:
                         # Sleep too: see the Sleep note at the top of the loop.
@@ -3444,6 +3678,11 @@ def ai_loop(ui, headless=False):
                         gate = 0 if not spoken_anything else 25
                         if not is_searching and emotion_parsed and len(buffer) > gate:
                             sentence_matches = list(RE_SENTENCE_SPLIT.finditer(buffer))
+                            spans = action_tag_spans(buffer)
+                            if spans:
+                                sentence_matches = [
+                                    m for m in sentence_matches
+                                    if not any(a < m.end() <= b for a, b in spans)]
                             if sentence_matches:
                                 cut = (sentence_matches[0] if not spoken_anything
                                        else sentence_matches[-1]).end()
@@ -3451,14 +3690,12 @@ def ai_loop(ui, headless=False):
                                 buffer = buffer[cut:]
 
                                 clean = clean_text_for_tts(new_sentences)
-                                if clean:
+                                # Every sentence of the reply carries the same
+                                # delivery, so the mood does not change gear half
+                                # way through one answer.
+                                if clean and say(clean):
                                     spoken_anything = True
                                     answered.set()
-                                    # Every sentence of the reply carries the
-                                    # same delivery, so the mood does not change
-                                    # gear half way through one answer.
-                                    audio_queue.put((clean, delivery) if delivery
-                                                    else clean)
 
                     # THE RAW MODEL OUTPUT, before any cleaning touches it.
                     # Without this a wrong answer cannot be told apart from a
@@ -3500,10 +3737,34 @@ def ai_loop(ui, headless=False):
                             # is picked up at the sentence that was cut rather
                             # than from the top. See resume_cut_reply.
                             for sentence in RE_SENTENCE_SPLIT.split(clean):
-                                if sentence.strip():
+                                if sentence.strip() and say(sentence.strip()):
                                     answered.set()
-                                    audio_queue.put((sentence.strip(), delivery)
-                                                    if delivery else sentence.strip())
+                        # A reply with no tag at all still gets a button for
+                        # the thing the question was about, when this device
+                        # can show it (actions.offer_for_topic).
+                        tag, tag_param = parse_action(full_response)
+                        if tag is None and not (is_retell_eval or is_retell_followup):
+                            try:
+                                topic_offer["offer"] = offer_for_topic(text, user_language)
+                            except Exception as exc:
+                                print(f"[OFFER] No topic button ({exc}).", flush=True)
+                        # The held-back question: dropped when the reply puts
+                        # up the button that answers it, spoken when it does not.
+                        if held_back and not sleep_event.is_set():
+                            # Or the buttons under their writing on the page are
+                            # up already: "Plot it" is there to be tapped.
+                            offered = (tag == "offer_visual"
+                                       or (tag == "show_visual" and "see" in (tag_param or ""))
+                                       or topic_offer["offer"] is not None
+                                       or bool(getattr(state.ui_instance, "board_buttons",
+                                                       lambda: [])()))
+                            if offered:
+                                print(f"[OFFER] Not asking out loud, the button is there: "
+                                      f"{' '.join(held_back)!r}", flush=True)
+                            else:
+                                for sentence in held_back:
+                                    answered.set()
+                                    audio_queue.put((sentence, delivery) if delivery else sentence)
 
                     if is_searching:
                         try: search_query = full_response.split("SEARCH:")[1].strip()
@@ -3566,7 +3827,8 @@ def ai_loop(ui, headless=False):
 
             worker = threading.Thread(target=stream_hf, daemon=True)
             worker.start()
-            worker.join(timeout=25)
+            # Longer for the board: it thinks first, and writes out the working.
+            worker.join(timeout=45 if board_thinks else 25)
 
             if worker.is_alive():
                 ui.set_state('error')
@@ -3622,7 +3884,13 @@ def ai_loop(ui, headless=False):
                 look_requested = True
                 pending_question, pending_language = text, stt_language
                 continue
-            if not camera.sensor():
+            if board_sketch is not None:
+                # The page was in front of her and she still asked to look:
+                # she cannot make out what is written on it. The camera is no
+                # answer to that -- writing it bigger is.
+                audio_queue.put(BOARD_CANT_READ.get(user_language, BOARD_CANT_READ["en"]))
+                audio_queue.put("[END_OF_RESPONSE]")
+            elif not camera.sensor():
                 audio_queue.put(CAMERA_MISSING.get(user_language, CAMERA_MISSING["en"]))
                 audio_queue.put("[END_OF_RESPONSE]")
             elif turn_photo is not None:
@@ -3633,6 +3901,15 @@ def ai_loop(ui, headless=False):
                 audio_queue.put("[END_OF_RESPONSE]")
             # Nothing left to carry out.
             action_name = None
+        # Buttons she offered last turn belong to that turn. This reply either
+        # offers again, which replaces them, or has moved on.
+        if (action_name or "").lower() != "offer_visual":
+            clear_offers()
+        if topic_offer["offer"] is not None and not action_name:
+            offer = topic_offer["offer"]
+            print(f"[OFFER] A button for what they asked about: {offer['label']} "
+                  f"({offer['kind']} | {offer['payload']})", flush=True)
+            set_offers([offer])
         # A verdict carries exactly one action: its report card. It is written
         # down in the progress log as well as put on the board, which is what
         # lets the next re-tell say whether the weak point has been fixed.

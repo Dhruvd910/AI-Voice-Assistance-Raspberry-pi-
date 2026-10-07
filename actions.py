@@ -28,8 +28,11 @@ import state
 import books
 import camera
 import friend_memory
+import geometry
+import solution
 import store
 import visuals
+import whiteboard
 from config import MPV_AUDIO_DEVICE
 from media import _die_with_parent, stop_media_playback
 from state import (device_state_lock, get_device_state, media_active,
@@ -1026,6 +1029,9 @@ ACTION_FAILURES = {
     "command_failed": {"en": "I couldn't run that one.",
                       "hi": "मैं वह नहीं चला पाई।",
                       "hinglish": "मैं wo run नहीं कर पाई।"},
+    "no_board":      {"en": "There's no screen here to open the board on.",
+                      "hi": "यहाँ कोई स्क्रीन नहीं है जिस पर बोर्ड खुले।",
+                      "hinglish": "यहाँ कोई screen नहीं है jis पर board खुले।"},
     "unknown":       {"en": "I can't do that one yet.",
                       "hi": "यह काम मैं अभी नहीं कर सकती।",
                       "hinglish": "यह काम मैं अभी नहीं कर सकती।"},
@@ -1123,6 +1129,10 @@ def execute_action(name, param, language="en"):
         reason, detail = model3d_do_action(param)
     elif name == "camera_off":
         reason, detail = ("ok", "") if camera.stop_live("she was asked to") else ("already", "")
+    elif name in ("board_open", "board_close"):
+        reason, detail = board_action(name == "board_open")
+    elif name == "offer_visual":
+        reason, detail = offer_visual_action(param, language)
     else:
         print(f"[ACTION] Unknown action {name!r}.", flush=True)
 
@@ -1147,7 +1157,8 @@ def execute_action(name, param, language="en"):
 # whole of the delay. Drawing it costs about a twentieth of a second, so it
 # lands while she is still on her first word.
 IMMEDIATE_ACTIONS = {"stop_media", "close_file", "show_visual", "hide_visual",
-                     "enlarge_visual", "shrink_visual", "model3d_do", "camera_off"}
+                     "enlarge_visual", "shrink_visual", "model3d_do", "camera_off",
+                     "board_open", "board_close", "offer_visual"}
 
 
 def show_visual_action(param):
@@ -1163,6 +1174,20 @@ def show_visual_action(param):
     # the live plotter as "graph" instead of falling through it to a PNG. See
     # visuals.resolve_kind: nothing is rejected here, only renamed.
     kind = visuals.resolve_kind(kind)
+    if kind == "solution":
+        return _show_solution(payload)
+    # A geometry solid or a flat figure goes to the lab, where it can be
+    # turned and its corners, edges and faces tapped and measured -- a cube
+    # asked for "in 3D" included. A solid asked for as a `shape` is still the
+    # textbook's flat drawing of it, hidden edges dashed.
+    head = payload.split(";")[0]
+    if (kind == "geometry"
+            or (kind == "model3d" and _geometry_solid(head))
+            or (kind == "shape" and geometry.flat_name(head) and not _geometry_solid(head))):
+        shown = _show_geometry(payload)
+        if shown[0] == "ok":
+            return shown
+        kind = "shape"
     # A FORMULA is not a picture. "y = x^2" comes back as a spec the screen
     # plots itself, with a slider for every number in it, because the answer to
     # that question is a thing to play with rather than a thing to look at --
@@ -1213,8 +1238,280 @@ def show_visual_action(param):
     return "ok", ""
 
 
+def _geometry_solid(head):
+    try:
+        import models3d
+        return models3d.find_solid(head) is not None
+    except Exception:
+        return False
+
+
+def _show_geometry(payload):
+    """The geometry lab, on the figure the payload names, pointing at what its
+    pick = names. With that figure up already, it only points: she can show
+    the student the space diagonal without turning their cube back round."""
+    try:
+        figure = geometry.build(payload)
+    except Exception as exc:
+        print(f"[GEOMETRY] Could not build {payload!r}: {exc}", flush=True)
+        figure = None
+    if figure is None:
+        return "no_visual", "I can't measure that one"
+    picks = geometry.picks_from_words(figure, geometry.picks_in(payload)) or None
+    ui = state.ui_instance
+    current = getattr(ui, "geometry_figure", lambda: None)() if ui is not None else None
+    if current is not None and current.title == figure.title:
+        ui_invoke("geometry_pick", picks)
+    else:
+        ui_invoke("show_geometry", figure, picks)
+    state.current_visual = {"kind": "geometry", "title": figure.describe(), "steps": []}
+    state.current_graph = None
+    print(f"[GEOMETRY] {figure.title}"
+          + (f", pointing at {', '.join(figure.element_name(p) for p in picks)}" if picks else ""),
+          flush=True)
+    return "ok", ""
+
+
 DESCRIBED_KINDS = {"equation", "formula", "maths", "reaction", "molecule", "report",
                    "forces", "circuit", "model3d"}
+
+
+def _show_solution(payload):
+    """Worked steps: on the small board as one picture, with a pip per step
+    lighting as she says it -- and, when the board is open full screen,
+    beside the student's own writing as a column she lights step by step.
+    See solution.py.
+
+    Both are set here, on the action's thread, because mathtext is the slow
+    part and the screen must only ever have to arrange what is already set."""
+    worked = solution.parse(payload)
+    if worked is None:
+        return "no_visual", "there was no working to write out"
+    path, why = visuals.render_visual("solution", payload)
+    labels = solution.step_labels(worked)
+    state.current_visual = {"kind": "solution", "title": solution.describe(worked),
+                            "steps": labels}
+    state.current_graph = None
+    if path:
+        # Quietly, never enlarged: with the page open, the working goes beside
+        # their writing rather than over it.
+        ui_invoke("show_visual", path, labels, False)
+    ui = state.ui_instance
+    if whiteboard.available(ui):
+        try:
+            ui_invoke("show_solution", solution.Panel(worked, ui.WB_PANEL_W))
+        except Exception as exc:
+            print(f"[SOLUTION] Could not lay out the working for the board: {exc}",
+                  flush=True)
+    if worked.see:
+        # The try-it as a button wherever the working is: under it on the
+        # page, and under the board's picture of it on the home screen.
+        kind, see_payload, settings = worked.see
+        set_offers([make_offer(kind, see_payload, worked.hindi, settings)])
+    print(f"[SOLUTION] {worked.title!r}: {len(worked.steps)} step(s)"
+          + (f", then {worked.see[0]}" if worked.see else ""), flush=True)
+    return ("ok", "") if path else ("no_visual", why)
+
+
+# ---------- buttons instead of "would you like to see it?" ----------
+def make_offer(kind, payload, hindi=False, settings=()):
+    """One button's worth: what it shows, and what it says on it."""
+    kind = visuals.resolve_kind(kind)
+    words, sub = visuals.offer_label(kind, payload, hindi)
+    return {"kind": kind, "payload": payload, "settings": list(settings or ()),
+            "label": words, "sub": sub}
+
+
+def set_offers(offers):
+    """Put these buttons up -- replacing whatever was offered before."""
+    state.current_offers = list(offers)
+    ui_invoke("show_offers", list(offers))
+
+
+def clear_offers():
+    if state.current_offers:
+        state.current_offers = []
+        ui_invoke("show_offers", [])
+
+
+def offer_visual_action(param, language="en"):
+    """[ACTION: offer_visual:<kind> | <payload>] -- a button for something
+    worth seeing, in place of asking "would you like to see it?". Asked that,
+    a child has to answer out loud, and a short "yes" is exactly what the
+    microphone throws away as noise; logs/liza.log has two of them dropped in
+    a row before a third, longer one got through. A button is answered with a
+    finger. Up to three, separated by ||."""
+    offers = []
+    for chunk in (param or "").split("||")[:3]:
+        kind, _, payload = chunk.partition("|")
+        if not payload.strip():
+            kind, _, payload = chunk.strip().partition(" ")
+        if kind.strip() and payload.strip():
+            offers.append(make_offer(kind.strip(), payload.strip(), language == "hi"))
+    if not offers:
+        return "already", ""
+    set_offers(offers)
+    print(f"[OFFER] {len(offers)} button(s): "
+          + "; ".join(f"{o['label']} ({o['kind']} | {o['payload'][:60]})" for o in offers),
+          flush=True)
+    return "ok", ""
+
+
+# ---------- a button for what they asked about, whatever she did ----------
+# Whether a button appears must not depend on the model remembering to put one
+# up: asked "tell me about projectile motion" three times, it offered the
+# simulation once. So when a reply has no tag at all and the QUESTION names a
+# thing this device can show in 3D -- a simulation in the engine, a model in
+# models3d, a geometry solid -- the button goes up anyway (assistant.ai_loop).
+# The student's words only, never hers: an answer about tides that mentions
+# gravity is not a question about orbits.
+_TOPIC_SKIP = {"current", "charge", "spring", "wave", "mirror", "sugar", "alcohol",
+               "bones", "momentum", "resistor", "planets", "the planets", "natural gas",
+               "energy molecule", "my heart", "my brain", "nuclei", "harmonics",
+               "carbon", "iron", "sodium", "helium", "chlorine", "hydrogen", "oxygen",
+               "nitrogen", "water", "glucose"}
+# models3d's own, by the words a question uses for them.
+_LOCAL_TOPICS = [
+    (r"\bsolar system\b", "solar system"),
+    (r"\b(?:dna|double helix)\b", "DNA"),
+    (r"\bneurons?\b|\bnerve cells?\b", "neuron"),
+    (r"\bred blood cells?\b|\brbcs?\b", "red blood cells"),
+    (r"\bbacteriophages?\b", "bacteriophage"),
+    (r"\bviruse?s?\b", "virus"),
+    (r"\bbacteri(?:a|um)\b", "bacterium"),
+    (r"\bchloroplasts?\b", "chloroplast"),
+    (r"\bplant cells?\b", "plant cell"),
+    (r"\bhuman eye\b|\bhow (?:do|does) (?:we|the eye|our eyes?) see\b", "human eye"),
+    (r"\blayers of the earth\b|\binside the earth\b|\bearth'?s (?:core|crust|mantle)\b",
+     "layers of the earth"),
+    (r"\bbar magnet\b|\bmagnetic field of a magnet\b", "bar magnet"),
+    (r"\bsolenoids?\b", "solenoid"),
+    (r"\bsound waves?\b", "sound wave"),
+    (r"\bdispersion\b|\bwhite light\b.*\bprism\b|\bprism\b.*\blight\b|\brainbow\b",
+     "white light through a glass prism"),
+    (r"\bflowers?\b(?! pot)", "flower"),
+]
+
+
+def _topic_payload(question):
+    """What in the question this device can show in 3D: a payload for
+    show_visual:model3d, or None."""
+    text = " " + re.sub(r"[^\w'\u0900-\u097F]+", " ", (question or "").lower()) + " "
+    import models3d
+    for pattern, builder in models3d.GEOMETRY:
+        if re.search(pattern, text):
+            return builder(text)["title"] if builder else None
+    try:
+        import viewer3d
+        catalogue = viewer3d.engine_catalog()
+    except Exception:
+        catalogue = {}
+    names = sorted(((alias, info.get("name") or alias) for info in catalogue.values()
+                    for alias in info.get("aliases", [])
+                    if len(alias) > 3 and alias not in _TOPIC_SKIP),
+                   key=lambda pair: len(pair[0]), reverse=True)
+    for alias, _name in names:
+        if f" {alias} " in text:
+            return alias
+    for pattern, payload in _LOCAL_TOPICS:
+        if re.search(pattern, text):
+            return payload
+    return None
+
+
+def offer_for_topic(question, language="en"):
+    """A button for the thing the question is about, or None."""
+    payload = _topic_payload(question)
+    if not payload:
+        return None
+    current = state.current_visual or {}
+    words = set(re.findall(r"\w+", payload.lower()))
+    if current.get("kind") == "model3d" and words <= set(
+            re.findall(r"\w+", (current.get("title") or "").lower())):
+        return None     # it is on the board already
+    return make_offer("model3d", payload, language in ("hi", "hinglish"))
+
+
+def run_offer(offer):
+    """Show what a button offered, as if she had tagged show_visual for it.
+    Any thread but Tk's: a reaction is drawn by matplotlib, a molecule may be
+    looked up, a simulation is built in its worker and then told its numbers."""
+    reason, detail = show_visual_action(f"{offer['kind']} | {offer['payload']}")
+    if reason not in ("ok", "already", "model3d_picture"):
+        print(f"[OFFER] Could not show {offer['kind']}: {reason} {detail}", flush=True)
+        return False
+    for name, value in offer.get("settings") or ():
+        # The simulation takes a moment to come up in its worker, and a
+        # setting sent before then is dropped -- so it is tried again.
+        for _attempt in range(5):
+            time.sleep(1.2)
+            reason, _ = model3d_do_action(f"change the {name} to {value}")
+            if reason != "already":
+                break
+    return True
+
+
+# "Yes", "show me", "हाँ दिखाओ" -- the whole of what was said, when a button is
+# up. Every word has to be one of these, so "yes but why is the sky blue?" is a
+# question and goes to her as one.
+_YES = {"yes", "yeah", "yep", "yup", "ok", "okay", "sure", "haan", "han", "haa", "ha",
+        "हाँ", "हां", "जी", "हम्म", "please", "plz", "go", "ahead", "course", "of", "obviously",
+        "definitely", "alright", "fine"}
+_SHOW = {"show", "open", "play", "run", "start", "see", "dikhao", "dikha", "chalao",
+         "दिखाओ", "दिखा", "दिखाइए", "चलाओ", "खोलो", "देखना", "देखूँ"}
+_FILL = {"me", "it", "that", "this", "the", "a", "do", "dena", "दो", "दे", "दीजिए", "liza",
+         "lisa", "hey", "now", "can", "you", "i", "want", "to", "would", "like", "let's",
+         "lets", "us", "one", "wala", "वाला", "वो", "ये", "मुझे", "करो", "please", "just",
+         "first", "second", "third", "1st", "2nd", "3rd", "pehla", "dusra", "पहला", "दूसरा"}
+_WHICH = {"model3d": ("3d", "model", "simulation", "simulate", "सिमुलेशन"),
+          "graph": ("graph", "plot", "ग्राफ"),
+          "reaction": ("reaction", "chemical", "equation", "अभिक्रिया"),
+          "molecule": ("molecule", "structure", "अणु"), "picture": ("picture", "photo", "image", "तस्वीर"),
+          "steps": ("diagram", "steps", "process", "चित्र"), "cycle": ("cycle", "diagram", "चक्र"),
+          "shape": ("shape", "figure", "drawing", "आकृति"), "solution": ("working", "solution", "steps", "हल")}
+_ORDINALS = {"first": 0, "1st": 0, "pehla": 0, "पहला": 0, "second": 1, "2nd": 1,
+             "dusra": 1, "दूसरा": 1, "third": 2, "3rd": 2}
+
+
+def offer_asked_for(text, offers):
+    """Which button "yes, show me the reaction" means: its index, or None when
+    the words are anything but a plain yes -- those go to her."""
+    words = [w for w in re.findall(r"[\w'ँ-ॿ]+", (text or "").lower()) if w]
+    if not offers or not words or len(words) > 9:
+        return None
+    known = _YES | _SHOW | _FILL | _ORDINALS.keys() | {w for ws in _WHICH.values() for w in ws}
+    if any(w not in known for w in words) or not (set(words) & (_YES | _SHOW)):
+        return None
+    for word in words:
+        if word in _ORDINALS and _ORDINALS[word] < len(offers):
+            return _ORDINALS[word]
+    for index, offer in enumerate(offers):
+        if any(w in _WHICH.get(offer["kind"], ()) for w in words):
+            return index
+    return 0 if len(offers) == 1 else None
+
+
+def offers_line():
+    """BUTTONS: for the device state -- what is on the screen to tap."""
+    offers = getattr(state, "current_offers", None) or []
+    if not offers:
+        return "None"
+    return ("on the screen now, waiting for a tap: "
+            + "; ".join(f"{i}) {o['label']} -- {o['kind']} | {o['payload'][:90]}"
+                        for i, o in enumerate(offers, 1))
+            + ". If they say yes or ask for one, show_visual it with that payload")
+
+
+def board_action(opening):
+    """[ACTION: board_open] / [ACTION: board_close]: the Transcribe Board,
+    full screen to write on, or back to the home screen."""
+    ui = state.ui_instance
+    if not whiteboard.available(ui):
+        return "no_board", ""
+    if ui.board_is_open() == opening:
+        return "already", ""
+    ui_invoke("board_command", "open" if opening else "close")
+    return "ok", ""
 
 
 def _show_model3d(payload):
@@ -1243,6 +1540,10 @@ def _show_model3d(payload):
         print(f"[3D] No 3D model of {payload!r} ({why}); showing a picture.", flush=True)
         return "picture"
     title = f"3D model of {scene['title']}"
+    if scene.get("formulas"):
+        # A geometry solid: what is written on it, so "what's the volume?" is
+        # answered with the numbers the student is looking at.
+        title += " (" + "; ".join(scene["formulas"]) + ")"
     if scene.get("kind") == "engine":
         # Name the parts, so "show me the left ventricle" and "what is this
         # valve" can be answered against what is actually on the board.
@@ -1374,7 +1675,21 @@ def device_state_block():
             f"CURRENT_UI_MODE: {ui_mode}\n"
             f"LAST_GRAPH: {graph or 'None (you have not plotted one)'}\n"
             f"ON_BOARD: {on_board_line()}\n"
-            f"CAMERA: {camera.state_line()}")
+            f"CAMERA: {camera.state_line()}\n"
+            f"WHITEBOARD: {whiteboard.state_line(state.ui_instance)}\n"
+            f"GEOMETRY: {geometry_line()}\n"
+            f"BUTTONS: {offers_line()}")
+
+
+def geometry_line():
+    """The geometry lab, for the model: what is open and what is picked."""
+    lab = getattr(state, "current_geometry", None)
+    if not lab:
+        return "None (the geometry lab is not open)"
+    return (f"OPEN, full screen: {lab}. They turn it with a finger and tap corners, "
+            "edges and faces; the screen measures what they pick. Explain THAT -- the "
+            "numbers are on their screen -- and point at parts with show_visual:geometry "
+            "and pick = (rule 7, section I)")
 
 
 def on_board_line():
@@ -1386,6 +1701,8 @@ def on_board_line():
         return ("your live camera view -- it stays until they want it off "
                 "(or the board wiped): then camera_off, never hide_visual")
     kind = visual["kind"]
+    if kind == "solution":
+        return f"{visual['title']} -- step by step, each step lit as you say it"
     if visual["steps"]:
         return (f"a {kind} diagram, its stages in this order: "
                 + "; ".join(visual["steps"]))

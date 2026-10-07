@@ -46,11 +46,17 @@ import kg_content
 import media
 import profiles
 import chatlog
+import solution
 import store
 import visuals
-from config import (KG_COUNT_END_SILENCE_S, KG_COUNT_PHRASE_LIMIT_S,
+import geometry
+import whiteboard
+from config import (BOARD_ENABLED, BOARD_READ_LIVE, BOARD_READ_PAUSE_S,
+                    KG_COUNT_END_SILENCE_S, KG_COUNT_PHRASE_LIMIT_S,
                     KG_COUNT_START_TIMEOUT_S, KG_SPELL_END_SILENCE_S,
                     KG_SPELL_PHRASE_LIMIT_S, KG_SPELL_START_TIMEOUT_S)
+from prompts import (BOARD_ASK_QUESTIONS, BOARD_SOLVE_QUESTIONS, GEOMETRY_ABOUT_QUESTIONS,
+                     GEOMETRY_ASK_QUESTIONS)
 
 UI_W, UI_H = 800, 480
 FRAME_MS = 60
@@ -942,6 +948,15 @@ def _fmt_clock(seconds):
     seconds = max(0, int(seconds or 0))
     return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
+def _same_thing(a, b):
+    """"Cube" and "a cube", "y = x^2 - 3" and "y = x² − 3": one button's worth."""
+    def key(text):
+        text = (text or "").lower().replace("²", "^2").replace("³", "^3").replace("−", "-")
+        text = re.sub(r"\b(?:a|an|the)\b", " ", text)
+        return re.sub(r"[\s*]+", "", text)
+    return key(a) == key(b)
+
+
 class TutorUI:
     def __init__(self, root):
         self.root = root
@@ -1010,6 +1025,7 @@ class TutorUI:
         self._kg_listening = False
 
         self.font_family = self._pick_font()
+        self._wb_init()
         # NO POINTER. This is a touch screen, and X draws the arrow wherever the
         # last finger landed and leaves it there, over her face or the board.
         # Set on the root and the canvas; the chat panes and everything else
@@ -1134,7 +1150,7 @@ class TutorUI:
 
     def _overlay_text(self, x, y, text, size, bold=False, fill=COL_TEXT,
                       anchor="center", tags=None, width=None, justify="center",
-                      max_lines=None, canvas=None):
+                      max_lines=None, canvas=None, photos=None):
         """canvas.create_text for modal screens, except Hindi comes out spelled
         right -- see devanagari_image. Latin text is left to Tk unchanged.
 
@@ -1142,7 +1158,10 @@ class TutorUI:
         ellipsis, which is what _ellipsize does for Tk text.
 
         `canvas` draws on a different canvas -- the scrolling panes of the chat
-        history, which are canvases of their own inside this one."""
+        history, which are canvases of their own inside this one.
+
+        `photos` is the list that keeps a Hindi line's image alive, for text
+        that is not on a modal screen and so is not swept up with one."""
         tags = tags or self.OVERLAY_TAG
         canvas = canvas or self.canvas
         if has_devanagari(text):
@@ -1151,7 +1170,7 @@ class TutorUI:
                                      justify=justify, max_lines=max_lines)
             if image is not None:
                 photo = ImageTk.PhotoImage(image)
-                self._overlay_photos.append(photo)
+                (self._overlay_photos if photos is None else photos).append(photo)
                 return canvas.create_image(x, y, image=photo, anchor=anchor,
                                            tags=tags)
         font = self._font(size, bold)
@@ -1788,6 +1807,9 @@ class TutorUI:
         # connected" is one more thing on the screen that does nothing.
         if camera.sensor():
             self.set_camera_button(False)
+        # And in the other corner, the way to write on it: the whole board,
+        # full screen. See the whiteboard section.
+        self.set_board_button()
 
     # ---------- action buttons ----------
     BUTTON_ART = {"SPEAK": "Speak Button.png", "STOP": "Stop Button.png",
@@ -1926,11 +1948,17 @@ class TutorUI:
         # The two sets come from the same PNGs, so mascot_index is valid in
         # either and the animation does not jump when the big set arrives.
         frames = frames or self.mascot_frames.get(bucket) or []
-        if frames:
+        # Under the full-screen page she cannot be seen, and every new frame
+        # would only make Tk repaint the page over her.
+        if frames and not self._wb_open:
             # Asleep she should look settled, not idling, so the loop is parked.
             if self.current_state != "sleeping":
                 self.mascot_index = (self.mascot_index + 1) % len(frames)
             self.canvas.itemconfig(self.mascot_item, image=frames[self.mascot_index])
+        if self._wb_open:
+            self._wb_tick_state()
+            if self.frame % 8 == 0:
+                self._wb_guard()
 
         for i, (dot, dx, dy) in enumerate(self.head_dots):
             swing = math.sin(self.phase * 2.3 + i * 0.9) ** 2
@@ -2107,6 +2135,8 @@ class TutorUI:
             keep.add(self.bg_item)
 
         if mode == "3d":
+            # She fills the screen in 3D mode; the page cannot be under her.
+            self.close_whiteboard()
             self._hidden_items = []
             for item in self.canvas.find_all():
                 if item in keep:
@@ -2242,8 +2272,9 @@ class TutorUI:
     # to a set of instructions..." laid out to y=416 against a card ending at 392.
     def _fit_transcript(self, text):
         """The longest leading part of `text` that stays inside the card."""
-        # Clear of the status dots, which start at BOARD_Y1 - 19.
-        bottom = BOARD_Y1 - 24
+        # Clear of the status dots, which start at BOARD_Y1 - 19 -- and of the
+        # buttons she has offered, when there are any.
+        bottom = BOARD_Y1 - (58 if self._offers else 24)
         def fits(candidate):
             """Lay `candidate` out in the real item and see where it ends."""
             self.canvas.itemconfig(self.transcript_id, text=candidate)
@@ -2298,6 +2329,7 @@ class TutorUI:
                 # The same line that reaches the board decides which stage is
                 # lit, so the pip moves exactly when she says the word.
                 self._match_step(text)
+                self._wb_match_step(text)
         except Exception:
             # A caption is never worth taking the screen down for.
             pass
@@ -2316,7 +2348,7 @@ class TutorUI:
     # left and the close cross on the right. The microphone is already live, so
     # stopping her is also the way to start talking.
     STOP_PILL_TAG = "stoppill"
-    FULL_SCREEN_TAGS = ("big3d", "bigvisual", "biggraph")
+    FULL_SCREEN_TAGS = ("big3d", "bigvisual", "biggraph", "wboard", "geolab")
 
     def _update_stop_pill(self):
         speaking = playback_active.is_set() or not audio_queue.empty()
@@ -2384,8 +2416,12 @@ class TutorUI:
                                     fill=COL_STOP, width=3, capstyle="round",
                                     tags=tag)
 
-    def show_visual(self, path, steps=None):
+    def show_visual(self, path, steps=None, enlarge=None):
         """Put a rendered diagram, equation, graph or picture on the board.
+
+        `enlarge` opens it full screen as well. Left as None, that happens when
+        the board is open full screen to write on, where a picture put on the
+        small board underneath would never be seen.
 
         `steps` are the stages the diagram was asked to show, in order. They are
         drawn as a strip of pips under the picture and one of them lights up as
@@ -2408,15 +2444,18 @@ class TutorUI:
         # top of it. The student turns it back on by asking her to look.
         camera.stop_live("a picture is going on the board")
         self.canvas.delete(self.VISUAL_TAG)
-        self.canvas.delete(self.GRAPH_TAG)
-        self.canvas.delete(self.BIG_GRAPH_TAG)
-        self._graph = None
+        self._drop_graph()
+        self._drop_geometry()
         app_state.current_graph = None
         self._visual_source = image
         self._visual_steps = list(steps or [])
         self._step_current = -1
         self._step_views = {}
         x0, y0, x1, y1 = self.VISUAL_BOX
+        if self._offers:
+            # Buttons she offered are standing along the foot of the board:
+            # the picture goes above them rather than under them.
+            y1 = self.OFFER_ROW[1] - 8
         strip = self.STEP_STRIP_H if self._visual_steps else 0
         fitted = image.copy()
         fitted.thumbnail((x1 - x0, y1 - y0 - strip), Image.LANCZOS)
@@ -2442,6 +2481,9 @@ class TutorUI:
         print(f"[UI] Visual on the board: {os.path.basename(path)}"
               + (f", {len(self._visual_steps)} stages" if self._visual_steps else ""),
               flush=True)
+        if enlarge or (enlarge is None and self._wb_open):
+            self._enlarge_visual()
+        self._restack()
 
     def _enlarge_visual(self, event=None):
         """The same picture, over the whole screen, until it is tapped again.
@@ -2512,6 +2554,9 @@ class TutorUI:
         return cx - width / 2, cx + width / 2
 
     def open_viewfinder(self):
+        # The live picture is on the small board; a page over it would hide
+        # what she is looking at from the one person holding it up.
+        self.close_whiteboard()
         self.close_viewfinder()
         self._camera_open = True
         self._camera_photo = None
@@ -2546,6 +2591,7 @@ class TutorUI:
         self._close_icon(right - 17, y0 + 17, (tag, self.CAMERA_X_TAG))
         self.canvas.tag_bind(tag, "<Button-1>", self._viewfinder_tapped)
         self.canvas.tag_raise(tag)
+        self._restack()
 
     def _viewfinder_tapped(self, event=None):
         """The cross turns the camera off. The picture itself does nothing --
@@ -2602,9 +2648,1355 @@ class TutorUI:
         self.canvas.create_oval(cx - 4, cy - 3, cx + 4, cy + 5, outline=ink,
                                 width=2, tags=tag)
         self.canvas.tag_bind(tag, "<Button-1>", self._camera_button_tapped)
+        # Made fresh, so on top of everything -- the full-screen page included.
+        self._wb_restack()
 
     def _camera_button_tapped(self, event=None):
         camera.toggle_live()
+        return "break"
+
+    # -----------------------------------------------------------------
+    # the whiteboard: the Transcribe Board, full screen, to write on
+    # -----------------------------------------------------------------
+    # The board's corner button, or "open the board", lays a white page over
+    # the whole screen: four pens, a rubber, undo and clear along the top, what
+    # she is saying along the bottom, and everything between them to write and
+    # draw on with a finger. whiteboard.py is the half with no screen in it --
+    # the picture of the page she is sent, her reading of it, the spoken
+    # commands -- and solution.py sets the working she writes beside it.
+    #
+    # NOT AN OVERLAY, for the reason show_visual gives: an overlay parks the
+    # microphone, and the whole point of this page is asking her about it. It
+    # is canvas items under one tag stacked over everything, so closing it is
+    # one delete and the home screen underneath was never touched. The writing
+    # lives in self._wb_strokes, not in the items, so it survives the page
+    # being closed and opened again -- until Clear, or a different student.
+    WB_TAG = "wboard"
+    WB_PAGE = "wbpage"          # the page and its dots: a press here starts a line
+    WB_INK = "wbink"            # the lines: a press on one starts a new line too
+    WB_TOOLBAR = "wbtoolbar"
+    WB_BAR = "wbbar"
+    WB_CHIP = "wbchip"
+    WB_PANEL = "wbpanel"
+    WB_GRAPH_TAG = "wbgraph"    # a graph, as a card on the page beside the writing
+    WB_SUGGEST_TAG = "wbsuggest"  # what can be done with the writing, under it
+    WB_MEASURE_TAG = "wbmeasure"  # a drawn figure, tidied, its angles written in
+    BOARD_BTN_TAG = "boardbtn"
+    # The page, between the tools along the top and her words along the bottom.
+    WB_TOP, WB_BOTTOM = 52, 432
+    # Ink, then blue, red and green for marking things up: a ring round the
+    # part they are asking about reads to her as exactly that.
+    WB_PENS = ("#1E2233", "#1D4ED8", "#DC2626", "#059669")
+    WB_PEN_W = 4
+    WB_RUBBER_W = 30
+    # The working she writes beside theirs: on the right of the page, or on
+    # the left when that is where there is less of their writing to cover.
+    WB_PANEL_RIGHT = (446, 60, 792, 426)
+    WB_PANEL_LEFT = (8, 60, 354, 426)
+    WB_PANEL_W = WB_PANEL_RIGHT[2] - WB_PANEL_RIGHT[0] - 8
+    # The narrowest a graph card is made to keep it off the end of a line.
+    WB_GRAPH_MIN_W = 250
+    WB_HINT_MS = 3500
+
+    def _wb_init(self):
+        """The page's state. Called from __init__, before anything is drawn."""
+        self._wb_open = False
+        self._wb_strokes = []         # {"points", "colour", "width", "erase", "item"}
+        self._wb_undo = []            # ("stroke", stroke) | ("clear", [strokes])
+        self._wb_current = None       # the line under the finger right now
+        self._wb_pen = 0
+        self._wb_erasing = False
+        self._wb_version = 0          # bumped on every change to the writing
+        # What ai_loop is handed: (version, strokes as plain tuples, page size).
+        # Replaced whole on the Tk thread and only ever read whole on the other,
+        # so the reader never sees half of a change. See board_page.
+        self._wb_frozen = (0, (), (UI_W, self.WB_BOTTOM - self.WB_TOP))
+        self._wb_read_job = None
+        self._wb_read_version = -1
+        self._wb_chip = (None, "")
+        self._wb_hint_job = None
+        self._wb_caption = ("", "hint")
+        self._wb_panel = None         # a solution.Panel, beside the writing
+        self._wb_panel_open = False
+        self._wb_panel_box = self.WB_PANEL_RIGHT
+        self._wb_step = -1
+        self._wb_scroll = 0
+        self._wb_column = None        # (step, column image, spans) last laid out
+        self._wb_body_item = None
+        self._wb_slots = {}           # PhotoImages by what they belong to
+        self._wb_lid = None
+        self._wb_shown_state = None
+        self._wb_offer_left = UI_W - 14
+        self._wb_graph_open = False   # the graph as a card on the page
+        self._wb_suggestions = []     # buttons under the writing, from the reading
+        self._wb_measure = None       # whiteboard.measure_polygon's, while shown
+        # Buttons she has offered: see the "buttons for something worth
+        # seeing" section. Here because the transcript is fitted around them.
+        self._offers = []
+        self._offer_photos = []
+        self._wb_reader = whiteboard.Reader(
+            lambda version, found: self.root.after(
+                0, lambda: self._wb_read_done(version, found)),
+            hindi=lambda: self._wb_language() == "hi")
+
+    # ---- the way in, on the board itself ----
+    def set_board_button(self):
+        """The full-screen switch in the right-hand corner of the board's
+        heading, the mirror of the camera switch in the left-hand one."""
+        self.canvas.delete(self.BOARD_BTN_TAG)
+        if not BOARD_ENABLED:
+            return
+        cx, cy = BOARD_X1 - 28, BOARD_Y0 + 26
+        self._expand_icon(cx, cy, self.BOARD_BTN_TAG)
+        # A pencil between the brackets. A picture on the board has the same
+        # full-screen brackets on its own corner, a hand's width below this;
+        # the pencil is what says this one is for writing on.
+        self.canvas.create_line(cx - 3, cy + 3, cx + 4, cy - 4, fill=COL_INDIGO,
+                                width=3, capstyle="round", tags=self.BOARD_BTN_TAG)
+        self.canvas.create_polygon(cx - 3, cy + 1, cx - 1, cy + 3, cx - 5, cy + 5,
+                                   fill=COL_INDIGO, outline="", tags=self.BOARD_BTN_TAG)
+        self.canvas.tag_bind(self.BOARD_BTN_TAG, "<ButtonPress-1>",
+                             self._board_button_tapped)
+
+    def _board_button_tapped(self, event=None):
+        if event is not None:
+            self._tap_handled = event.serial
+        self.open_whiteboard()
+        return "break"
+
+    def _collapse_icon(self, cx, cy, tag):
+        """Four corner brackets pointing in: the way back out of full screen."""
+        self._round_rect(cx - self.ICON_R, cy - self.ICON_R,
+                         cx + self.ICON_R, cy + self.ICON_R, 8,
+                         fill="#FFFFFF", outline="#D8E0F0", tags=tag)
+        g, a = self.ICON_GLYPH, self.ICON_ARM
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            x, y = cx + (g - a) * sx, cy + (g - a) * sy
+            self.canvas.create_line(x, y, x + a * sx, y, fill=COL_INDIGO,
+                                    width=2, capstyle="round", tags=tag)
+            self.canvas.create_line(x, y, x, y + a * sy, fill=COL_INDIGO,
+                                    width=2, capstyle="round", tags=tag)
+
+    # ---- open and close ----
+    def board_is_open(self):
+        """Any thread: is the page up?"""
+        return self._wb_open
+
+    def board_page(self):
+        """Any thread: (version, strokes, page size) while the page is up, else
+        None. The strokes are plain tuples, points from the page's corner."""
+        return self._wb_frozen if self._wb_open else None
+
+    def board_buttons(self):
+        """Any thread: the buttons under their writing, by label -- "Plot
+        them", "Solve it" -- while the page is up."""
+        return [o["label"] for o in self._wb_suggestions] if self._wb_open else []
+
+    def board_measured(self):
+        """Any thread: the figure measured on the page, in words, or ""."""
+        m = self._wb_measure
+        if not (self._wb_open and m):
+            return ""
+        letters = "ABCDEFGH"
+        name = re.split(r"[;,(]", m.get("name") or "figure")[0].strip().lower()
+        return (f"their {name} has angles "
+                + ", ".join(f"{letters[i]} = {a}°" for i, a in enumerate(m["angles"]))
+                + f" (adding up to {sum(m['angles'])}°)")
+
+    def board_working(self):
+        """Any thread: the worked solution beside their writing, for the model."""
+        panel = self._wb_panel
+        if not (self._wb_open and self._wb_panel_open and panel is not None):
+            return ""
+        return solution.describe(panel.solution)
+
+    def board_command(self, command):
+        """"open", "close", "clear" or "undo", said rather than tapped."""
+        {"open": self.open_whiteboard, "close": self.close_whiteboard,
+         "clear": self._wb_clear, "undo": self._wb_undo_last}.get(command, lambda: None)()
+
+    def open_whiteboard(self):
+        if self._wb_open or not BOARD_ENABLED:
+            return
+        # Her own full-screen views go first, and so does the camera: its
+        # picture is on the small board, under the page, where nobody can see
+        # what it is looking at.
+        camera.stop_live("the board is open full screen")
+        self.shrink_current()
+        self._wb_open = True
+        self._wb_caption = ("Write or draw anything, then tap Ask Liza \u2014 or just ask me.",
+                            "hint")
+        self._wb_draw()
+        print(f"[BOARD] Open full screen ({len(self._wb_strokes)} line(s) on it).",
+              flush=True)
+
+    def close_whiteboard(self):
+        if not self._wb_open:
+            return
+        self._wb_current = None
+        self._wb_open = False
+        self._wb_cancel_read()
+        if self._wb_hint_job:
+            self.root.after_cancel(self._wb_hint_job)
+            self._wb_hint_job = None
+        self.canvas.delete(self.WB_TAG)
+        if self._graph is not None:
+            self._graph["views"].pop(self.WB_GRAPH_TAG, None)
+        self._wb_slots = {}
+        self._wb_body_item = self._wb_lid = None
+        self._wb_shown_state = None
+        self._wb_offer_left = UI_W - 14
+        print("[BOARD] Back to the home screen.", flush=True)
+
+    def _wb_reset(self):
+        """A different student: their page is not the last one's."""
+        self.close_whiteboard()
+        self._wb_strokes, self._wb_undo = [], []
+        self._wb_panel, self._wb_panel_open = None, False
+        self._wb_graph_open = False
+        self._wb_suggestions = []
+        self._wb_measure = None
+        self._wb_version += 1
+        self._wb_freeze()
+        self._wb_chip = (None, "")
+
+    # ---- drawing it ----
+    def _wb_draw(self):
+        """The whole page, from what is remembered."""
+        c, tag = self.canvas, self.WB_TAG
+        c.delete(tag)
+        self._wb_slots = {}
+        self._wb_body_item = None
+        c.create_rectangle(0, 0, UI_W, UI_H, fill="#FFFFFF", outline="", tags=(tag,))
+        c.create_rectangle(0, self.WB_TOP, UI_W, self.WB_BOTTOM, fill="#FFFFFF",
+                           outline="", tags=(tag, self.WB_PAGE))
+        c.create_image(0, self.WB_TOP, image=self._wb_grid(), anchor="nw",
+                       tags=(tag, self.WB_PAGE))
+        # Every line goes in just UNDER this, so it lands above the lines before
+        # it and below the chip, the working and the bars -- Tk stacks items in
+        # the order they were made, and a new line made last would sit on top
+        # of all of them.
+        self._wb_lid = c.create_line(0, 0, 1, 1, fill="", state="hidden", tags=(tag,))
+        for stroke in self._wb_strokes:
+            stroke["item"] = self._wb_line(stroke)
+        for target in (self.WB_PAGE, self.WB_INK):
+            c.tag_bind(target, "<ButtonPress-1>", self._wb_press)
+            c.tag_bind(target, "<B1-Motion>", self._wb_drag)
+            c.tag_bind(target, "<ButtonRelease-1>", self._wb_lift)
+        if self._wb_panel is not None and self._wb_panel_open:
+            self._wb_draw_panel()
+        elif self._wb_graph_open and self._graph is not None:
+            self._wb_draw_graph_card()
+        self._wb_draw_measure()
+        self._wb_draw_suggestions()
+        self._wb_draw_offers()
+        self._wb_draw_chip()
+        self._wb_draw_toolbar()
+        self._wb_draw_bar()
+        self._wb_restack()
+
+    def _wb_grid(self):
+        """The faint dots a child keeps their writing straight by. One image,
+        built once: four hundred little ovals would each be redrawn under every
+        stroke."""
+        if getattr(self, "_wb_grid_photo", None) is None:
+            w, h = UI_W, self.WB_BOTTOM - self.WB_TOP
+            image = Image.new("RGB", (w, h), "#FFFFFF")
+            draw = ImageDraw.Draw(image)
+            for y in range(14, h, 28):
+                for x in range(14, w, 28):
+                    draw.ellipse((x - 1, y - 1, x + 1, y + 1), fill="#DCE2F0")
+            self._wb_grid_photo = ImageTk.PhotoImage(image)
+        return self._wb_grid_photo
+
+    def _restack(self):
+        """After something is drawn on the board: the buttons she offered stay
+        over it -- a picture put up by tapping one of two would otherwise
+        cover the other -- and the full-screen page stays over everything."""
+        if self.canvas.find_withtag(self.OFFER_TAG):
+            self.canvas.tag_raise(self.OFFER_TAG)
+        self._wb_restack()
+        # The geometry lab, open, is over all of it -- the page too.
+        if self.canvas.find_withtag(self.GEO_TAG):
+            self.canvas.tag_raise(self.GEO_TAG)
+            if self.canvas.find_withtag(self.STOP_PILL_TAG):
+                self.canvas.tag_raise(self.STOP_PILL_TAG)
+
+    def _wb_restack(self):
+        """The page over everything on the home screen, and under what is
+        meant to go over it: her own full-screen views, a modal screen, and
+        the Stop pill."""
+        if not self._wb_open:
+            return
+        c = self.canvas
+        c.tag_raise(self.WB_TAG)
+        for tag in (self.BIG_VISUAL_TAG, self.BIG_GRAPH_TAG, self.BIG_MODEL3D_TAG,
+                    self.GEO_TAG, self.OVERLAY_TAG, self.STOP_PILL_TAG):
+            if c.find_withtag(tag):
+                c.tag_raise(tag)
+
+    def _wb_guard(self):
+        """Put the page back on top if something on the home screen has been
+        drawn over it -- the weather glyph is redrawn on a timer, the camera
+        switch when the camera stops. Cheap: it only walks down from the top
+        of the stack until it reaches the page."""
+        if not self._wb_open:
+            return
+        if self._wb_current is not None:
+            return      # never mid-line: the restack can wait for the lift
+        # What is allowed above the page: everything meant to cover it.
+        allowed = {self.WB_TAG, self.BIG_VISUAL_TAG, self.BIG_GRAPH_TAG,
+                   self.BIG_MODEL3D_TAG, self.GEO_TAG, self.OVERLAY_TAG, self.STOP_PILL_TAG}
+        for item in reversed(self.canvas.find_all()):
+            tags = set(self.canvas.gettags(item))
+            if self.WB_TAG in tags:
+                return
+            if not tags & allowed and self.canvas.itemcget(item, "state") != "hidden":
+                self._wb_restack()
+                return
+
+    def _wb_slot(self, name):
+        """A fresh list to hold one element's PhotoImages. Replacing the old
+        list is what lets the old images go."""
+        self._wb_slots[name] = []
+        return self._wb_slots[name]
+
+    def _wb_text(self, x, y, text, size, tags, slot, bold=False, fill=COL_TEXT,
+                 anchor="w", width=None, max_lines=None):
+        """Words on the page: Hindi shaped (see devanagari_image), English cut
+        to `max_lines` with an ellipsis rather than spilling out of its strip."""
+        if width and max_lines and not has_devanagari(text):
+            text = self._fit_lines(text, self._font(size, bold), width, max_lines)
+            width = None
+        return self._overlay_text(x, y, text, size, bold=bold, fill=fill,
+                                  anchor=anchor, tags=tags, width=width,
+                                  justify="left", max_lines=max_lines,
+                                  photos=self._wb_slot(slot))
+
+    def _fit_lines(self, text, font, width, max_lines):
+        """`text` wrapped into at most `max_lines` lines of `width`, the last
+        one ellipsized -- create_text's width= wraps, but never stops."""
+        lines, line = [], ""
+        for word in text.split():
+            trial = f"{line} {word}" if line else word
+            if line and font.measure(trial) > width:
+                lines.append(line)
+                line = word
+            else:
+                line = trial
+        lines.append(line)
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+            lines[-1] = self._ellipsize(lines[-1] + " …", font, width)
+        return "\n".join(lines)
+
+    def _wb_draw_toolbar(self):
+        c = self.canvas
+        c.delete(self.WB_TOOLBAR)
+        base = (self.WB_TAG, self.WB_TOOLBAR)
+        c.create_rectangle(0, 0, UI_W, self.WB_TOP, fill="#FFFFFF", outline="", tags=base)
+        c.create_line(0, self.WB_TOP, UI_W, self.WB_TOP, fill=COL_FRAME, width=2, tags=base)
+        cy = self.WB_TOP / 2
+
+        def tool(name, cx, draw, command, half=17):
+            tag = f"wbtool_{name}"
+            tags = base + (tag,)
+            # The target is bigger than the glyph: a fingertip is 40px wide.
+            c.create_rectangle(cx - half, cy - 20, cx + half, cy + 20, fill="#FFFFFF",
+                               outline="", tags=tags)
+            draw(cx, tags)
+            c.tag_bind(tag, "<ButtonPress-1>",
+                       lambda e: self._wb_tapped(e, command))
+
+        for index, colour in enumerate(self.WB_PENS):
+            chosen = index == self._wb_pen and not self._wb_erasing
+
+            def pen(cx, tags, colour=colour, chosen=chosen):
+                if chosen:
+                    c.create_oval(cx - 15, cy - 15, cx + 15, cy + 15, outline=colour,
+                                  width=3, tags=tags)
+                c.create_oval(cx - 10, cy - 10, cx + 10, cy + 10, fill=colour,
+                              outline="", tags=tags)
+            tool(f"pen{index}", 26 + index * 36, pen,
+                 lambda i=index: self._wb_pick(pen=i))
+
+        def rubber(cx, tags):
+            if self._wb_erasing:
+                c.create_oval(cx - 16, cy - 16, cx + 16, cy + 16, outline=COL_INDIGO,
+                              width=3, tags=tags)
+            # A block rubber lying at an angle, its working end in pink.
+            body = [(-9, 4), (1, -8), (10, -1), (0, 11)]
+            c.create_polygon(*[v for x, y in body for v in (cx + x, cy + y)],
+                             fill="#F9A8D4", outline="#9D174D", width=2, tags=tags)
+            c.create_line(cx - 4, cy - 2, cx + 5, cy + 5, fill="#9D174D", width=2,
+                          tags=tags)
+        tool("rubber", 182, rubber, lambda: self._wb_pick(rubber=True))
+
+        live = bool(self._wb_undo)
+        ink = COL_INDIGO if live else COL_TEXT_FAINT
+
+        def undo(cx, tags):
+            c.create_arc(cx - 9, cy - 8, cx + 9, cy + 10, start=200, extent=-250,
+                         style="arc", outline=ink, width=3, tags=tags)
+            c.create_polygon(cx - 13, cy - 1, cx - 4, cy - 1, cx - 9, cy + 6,
+                             fill=ink, outline="", tags=tags)
+        tool("undo", 226, undo, self._wb_undo_last)
+
+        live = bool(self._wb_strokes)
+        bin_ink = COL_STOP if live else COL_TEXT_FAINT
+
+        def clear(cx, tags):
+            c.create_line(cx - 10, cy - 7, cx + 10, cy - 7, fill=bin_ink, width=2,
+                          capstyle="round", tags=tags)
+            c.create_line(cx - 3, cy - 10, cx + 3, cy - 10, fill=bin_ink, width=2,
+                          capstyle="round", tags=tags)
+            c.create_polygon(cx - 7, cy - 4, cx + 7, cy - 4, cx + 6, cy + 11,
+                             cx - 6, cy + 11, fill="", outline=bin_ink, width=2,
+                             tags=tags)
+            for dx in (-3, 0, 3):
+                c.create_line(cx + dx, cy - 1, cx + dx, cy + 8, fill=bin_ink,
+                              width=1, tags=tags)
+        tool("clear", 268, clear, self._wb_clear)
+
+        # The cards that can come back beside the writing: her working, and
+        # the graph. Either takes the other's place, so whichever is not up
+        # has a button here.
+        cards = []
+        if self._graph is not None and not self._wb_graph_open:
+            cards.append(("graph", "Graph", self._wb_show_graph))
+        if self._wb_panel is not None and not self._wb_panel_open:
+            cards.append(("steps", "Steps", self._wb_show_panel))
+
+        # The name, where the Stop pill goes while she talks -- unless both
+        # cards are waiting, which need its room.
+        if len(cards) < 2:
+            c.create_text(UI_W / 2, cy, text="Transcribe Board", font=self._font(14, True),
+                          fill="#7C3AED", tags=base)
+
+        right = 588
+        for name, words, command in cards:
+            tag = f"wbtool_{name}"
+            self._round_rect(right - 80, cy - 16, right, cy + 16, 14, fill="#FFFFFF",
+                             outline=COL_INDIGO, width=2, tags=base + (tag,))
+            c.create_text(right - 40, cy, text=words, font=self._font(11, True),
+                          fill=COL_INDIGO, tags=base + (tag,))
+            c.tag_bind(tag, "<ButtonPress-1>",
+                       lambda e, command=command: self._wb_tapped(e, command))
+            right -= 92
+
+        tag = "wbtool_ask"
+        self._round_rect(602, cy - 18, 738, cy + 18, 16, fill=COL_INDIGO,
+                         outline=COL_INDIGO, tags=base + (tag,))
+        self._sparkle(626, cy, 7, "#FFFFFF", base + (tag,))
+        c.create_text(680, cy, text="Ask Liza", font=self._font(13, True),
+                      fill="#FFFFFF", tags=base + (tag,))
+        c.tag_bind(tag, "<ButtonPress-1>", lambda e: self._wb_tapped(e, self._wb_ask))
+
+        tag = "wbtool_close"
+        self._collapse_icon(UI_W - 28, cy, base + (tag,))
+        c.tag_bind(tag, "<ButtonPress-1>",
+                   lambda e: self._wb_tapped(e, lambda: self.root.after_idle(
+                       self.close_whiteboard)))
+        self._wb_restack()
+
+    def _sparkle(self, cx, cy, s, colour, tags):
+        """The four-pointed star the board's own artwork is scattered with."""
+        self.canvas.create_polygon(
+            cx, cy - s, cx + s * 0.3, cy - s * 0.3, cx + s, cy, cx + s * 0.3, cy + s * 0.3,
+            cx, cy + s, cx - s * 0.3, cy + s * 0.3, cx - s, cy, cx - s * 0.3, cy - s * 0.3,
+            fill=colour, outline="", tags=tags)
+
+    def _wb_tapped(self, event, command):
+        """A control on the page. Marked handled, so tap_to_wake leaves it."""
+        if event is not None:
+            self._tap_handled = event.serial
+        command()
+        return "break"
+
+    def _wb_pick(self, pen=None, rubber=False):
+        if rubber:
+            self._wb_erasing = not self._wb_erasing
+        else:
+            self._wb_pen, self._wb_erasing = pen, False
+        self._wb_draw_toolbar()
+
+    def _wb_draw_bar(self):
+        """What she is doing and saying, along the bottom: the page covers her
+        face and the home screen's board, which is where those used to be."""
+        c = self.canvas
+        c.delete(self.WB_BAR)
+        tags = (self.WB_TAG, self.WB_BAR)
+        c.create_rectangle(0, self.WB_BOTTOM, UI_W, UI_H, fill=COL_BG, outline="", tags=tags)
+        c.create_line(0, self.WB_BOTTOM, UI_W, self.WB_BOTTOM, fill=COL_FRAME, width=2,
+                      tags=tags)
+        cx, cy = 30, (self.WB_BOTTOM + UI_H) / 2
+        mic = tags + ("wbmic",)
+        self._wb_mic = c.create_oval(cx - 19, cy - 19, cx + 19, cy + 19, fill=COL_INDIGO,
+                                     outline="", tags=mic)
+        self._round_rect(cx - 5, cy - 11, cx + 5, cy + 3, 5, fill="#FFFFFF",
+                         outline="#FFFFFF", tags=mic)
+        c.create_arc(cx - 9, cy - 6, cx + 9, cy + 8, start=180, extent=180, style="arc",
+                     outline="#FFFFFF", width=2, tags=mic)
+        c.create_line(cx, cy + 8, cx, cy + 12, fill="#FFFFFF", width=2, tags=mic)
+        c.tag_bind("wbmic", "<ButtonPress-1>", lambda e: self._wb_tapped(e, self.wake_up))
+        self._wb_state_item = c.create_text(58, cy, text="", anchor="w",
+                                            font=self._font(9, True), fill=COL_INDIGO,
+                                            tags=tags)
+        self._wb_shown_state = None
+        self._wb_tick_state()
+        self._wb_draw_caption()
+
+    def _wb_draw_caption(self):
+        c = self.canvas
+        c.delete("wbcaption")
+        text, who = self._wb_caption
+        if not text:
+            return
+        cy = (self.WB_BOTTOM + UI_H) / 2
+        if who == "hint":
+            line, colour = text, COL_TEXT_DIM
+        else:
+            line = f"{'Liza' if who == 'liza' else 'You'}: {text}"
+            colour = COL_TEXT
+        self._wb_text(150, cy, line, 11, (self.WB_TAG, self.WB_BAR, "wbcaption"),
+                      "caption", fill=colour, width=UI_W - 150 - 14, max_lines=2)
+
+    def _wb_tick_state(self):
+        """Her state on the mic button and beside it. From _animate, so it
+        follows her the way the caption under her face does."""
+        if not self._wb_open or getattr(self, "_wb_state_item", None) is None:
+            return
+        state_now = self.current_state
+        if state_now == self._wb_shown_state:
+            return
+        self._wb_shown_state = state_now
+        label, colour, _ = STATE_STYLE.get(state_now, STATE_STYLE["idle"])
+        self.canvas.itemconfig(self._wb_state_item, text=label.upper(), fill=colour)
+        self.canvas.itemconfig(self._wb_mic, fill=colour)
+
+    def _wb_set_caption(self, text, speaker):
+        self._wb_caption = (text, speaker)
+        if self._wb_open:
+            self._wb_draw_caption()
+
+    # ---- the ink ----
+    def _wb_flat(self, points):
+        """Canvas coordinates for a line. A tap is one point, and Tk will not
+        draw a line through one point, so it gets a second a hair away."""
+        if len(points) == 1:
+            x, y = points[0]
+            return (x, y, x + 0.5, y + 0.5)
+        return tuple(v for point in points for v in point)
+
+    def _wb_line(self, stroke):
+        item = self.canvas.create_line(
+            *self._wb_flat(stroke["points"]), fill=stroke["colour"],
+            width=stroke["width"], capstyle="round", joinstyle="round",
+            smooth=True, splinesteps=4, tags=(self.WB_TAG, self.WB_INK))
+        if self._wb_lid is not None:
+            self.canvas.tag_lower(item, self._wb_lid)
+        return item
+
+    def _wb_clamp(self, x, y):
+        return (max(2, min(UI_W - 2, x)),
+                max(self.WB_TOP + 3, min(self.WB_BOTTOM - 3, y)))
+
+    def _wb_press(self, event):
+        self._tap_handled = event.serial
+        if not self._wb_open:
+            return "break"
+        x, y = self._wb_clamp(event.x, event.y)
+        erase = self._wb_erasing
+        stroke = {"points": [(x, y)], "erase": erase,
+                  "colour": "#FFFFFF" if erase else self.WB_PENS[self._wb_pen],
+                  "width": self.WB_RUBBER_W if erase else self.WB_PEN_W}
+        stroke["item"] = self._wb_line(stroke)
+        self._wb_current = stroke
+        # They are still writing: whatever she was about to read is out of date,
+        # and so are the buttons for what was there -- which would otherwise sit
+        # on top of the new line until the finger lifts.
+        self._wb_cancel_read()
+        self.canvas.delete(self.WB_SUGGEST_TAG)
+        return "break"
+
+    def _wb_drag(self, event):
+        stroke = self._wb_current
+        if stroke is None:
+            return "break"
+        x, y = self._wb_clamp(event.x, event.y)
+        last_x, last_y = stroke["points"][-1]
+        # A finger held still still reports a stream of motion; points closer
+        # than this only make the line slower to redraw.
+        if abs(x - last_x) + abs(y - last_y) < 2:
+            return "break"
+        stroke["points"].append((x, y))
+        self.canvas.coords(stroke["item"], *self._wb_flat(stroke["points"]))
+        return "break"
+
+    def _wb_lift(self, event=None):
+        stroke, self._wb_current = self._wb_current, None
+        if stroke is None:
+            return "break"
+        self._wb_strokes.append(stroke)
+        self._wb_undo.append(("stroke", stroke))
+        self._wb_changed()
+        return "break"
+
+    def _wb_undo_last(self):
+        if not self._wb_undo:
+            return
+        kind, what = self._wb_undo.pop()
+        if kind == "stroke":
+            if what in self._wb_strokes:
+                self._wb_strokes.remove(what)
+            if self._wb_open and what.get("item"):
+                self.canvas.delete(what["item"])
+        else:
+            # A Clear taken back: its lines go back UNDER anything written
+            # since, which is where they were.
+            self._wb_strokes = what + self._wb_strokes
+            if self._wb_open:
+                self.canvas.delete(self.WB_INK)
+                for stroke in self._wb_strokes:
+                    stroke["item"] = self._wb_line(stroke)
+        self._wb_changed()
+
+    def _wb_clear(self):
+        """Wipe the page. Undo brings it back: a child's whole sum lost to one
+        stray tap on the bin would be the one thing worse than no Clear."""
+        if not self._wb_strokes:
+            return
+        self._wb_undo.append(("clear", self._wb_strokes))
+        if self._wb_open:
+            self.canvas.delete(self.WB_INK)
+        self._wb_strokes = []
+        # A clean page is for something new: the working and the graph of
+        # what was there step aside too, one tap away on Steps and Graph.
+        if self._wb_panel_open:
+            self._wb_panel_open = False
+            self.canvas.delete(self.WB_PANEL)
+            self._wb_body_item = None
+        self._wb_hide_graph(redraw=False)
+        self._wb_changed()
+        if self._wb_open:
+            self._wb_draw_offers()
+            self._wb_draw_chip()
+
+    def _wb_freeze(self):
+        top = self.WB_TOP
+        strokes = tuple((tuple((x, y - top) for x, y in s["points"]), s["colour"],
+                         s["width"], s["erase"]) for s in self._wb_strokes)
+        self._wb_frozen = (self._wb_version, strokes,
+                           (UI_W, self.WB_BOTTOM - self.WB_TOP))
+
+    def _wb_has_ink(self):
+        return whiteboard.ink_box(self._wb_frozen[1]) is not None
+
+    def _wb_changed(self):
+        self._wb_version += 1
+        self._wb_freeze()
+        if self._wb_suggestions:
+            self._wb_suggestions = []
+            self.canvas.delete(self.WB_SUGGEST_TAG)
+        if self._wb_measure is not None:
+            # Measured on the figure as it WAS.
+            self._wb_measure = None
+            self.canvas.delete(self.WB_MEASURE_TAG)
+        if not self._wb_open:
+            return
+        self._wb_draw_toolbar()
+        if self._wb_has_ink():
+            self._wb_schedule_read()
+        else:
+            self._wb_cancel_read()
+            self._wb_set_chip(None)
+
+    # ---- her reading of it, live ----
+    def _wb_cancel_read(self):
+        if self._wb_read_job is not None:
+            self.root.after_cancel(self._wb_read_job)
+            self._wb_read_job = None
+
+    def _wb_schedule_read(self):
+        """Read the page once the writing has stopped for BOARD_READ_PAUSE_S.
+        Every new line pushes it back, so she reads a pause, not a scribble."""
+        if not BOARD_READ_LIVE:
+            return
+        self._wb_cancel_read()
+        self._wb_read_job = self.root.after(int(BOARD_READ_PAUSE_S * 1000),
+                                            self._wb_read_now)
+
+    def _wb_read_now(self):
+        self._wb_read_job = None
+        if not self._wb_open or self._wb_current is not None:
+            return
+        version, strokes, size = self._wb_frozen
+        if version == self._wb_read_version or not self._wb_has_ink():
+            return
+        self._wb_set_chip("reading")
+        self._wb_reader.request(version, strokes, size)
+
+    def _wb_read_done(self, version, found):
+        """Tk thread. Dropped if the page has changed since: a reading of the
+        page as it WAS is worse than none.
+
+        `found` is whiteboard.read's: the line for the chip, and the buttons
+        for what is written -- Plot it, Solve it, See it in 3D -- which go up
+        under the writing straight away, with no model between the reading
+        and the button. See whiteboard.suggestions."""
+        if version != self._wb_version or not self._wb_open:
+            return
+        self._wb_read_version = version
+        text = found.get("read", "")
+        self._wb_set_chip("read" if text else None, text)
+        self._wb_suggestions = list(found.get("suggest") or [])
+        self._wb_draw_suggestions()
+        if self._wb_suggestions:
+            print("[BOARD] Buttons under the writing: "
+                  + ", ".join(o["label"] for o in self._wb_suggestions), flush=True)
+
+    def _wb_set_chip(self, mode, text=""):
+        if self._wb_hint_job and mode != "hint":
+            self.root.after_cancel(self._wb_hint_job)
+            self._wb_hint_job = None
+        self._wb_chip = (mode, text)
+        if self._wb_open:
+            self._wb_draw_chip()
+
+    def _wb_hint(self, text):
+        """A word from the page itself, gone again after a few seconds."""
+        before = self._wb_chip if self._wb_chip[0] != "hint" else (None, "")
+        self._wb_set_chip("hint", text)
+        if self._wb_hint_job:
+            self.root.after_cancel(self._wb_hint_job)
+
+        def back():
+            self._wb_hint_job = None
+            if self._wb_chip[0] == "hint":
+                self._wb_set_chip(*before)
+        self._wb_hint_job = self.root.after(self.WB_HINT_MS, back)
+
+    def _wb_draw_chip(self):
+        """"I read: 2x + 3 = 7", on the page, in the corner nobody starts
+        writing in."""
+        c = self.canvas
+        c.delete(self.WB_CHIP)
+        mode, text = self._wb_chip
+        if mode is None:
+            return
+        if mode == "reading":
+            words, ink, ground = "Reading what you wrote…", COL_TEXT_DIM, "#F3F5FD"
+        elif mode == "read":
+            words, ink, ground = f"I read:  {text}", "#3730A3", "#EEF2FF"
+        else:
+            words, ink, ground = text, "#9A3412", "#FFF7ED"
+        x0, right = 12, UI_W - 14
+        card = self._wb_card_box()
+        if card is not None:
+            if card[0] < UI_W / 4:
+                x0 = card[2] + 12
+            else:
+                right = card[0] - 14
+        # And clear of the buttons she has offered, at the same height.
+        right = min(right, self._wb_offer_left - 10)
+        cy = self.WB_BOTTOM - 24
+        tags = (self.WB_TAG, self.WB_CHIP)
+        item = self._wb_text(x0 + 34, cy, words, 11, tags, "chip", bold=(mode == "read"),
+                             fill=ink, width=right - x0 - 50, max_lines=1)
+        box = c.bbox(item)
+        if box is None:
+            return
+        ground_item = self._round_rect(x0, cy - 16, box[2] + 14, cy + 16, 15, fill=ground,
+                                       outline=_mix(ink, "#FFFFFF", 0.6), tags=tags)
+        c.tag_lower(ground_item, item)
+        # An eye: she is looking at it.
+        c.create_oval(x0 + 9, cy - 6, x0 + 27, cy + 6, outline=ink, width=2, tags=tags)
+        c.create_oval(x0 + 15, cy - 3, x0 + 21, cy + 3, fill=ink, outline="", tags=tags)
+        self._wb_restack()
+
+    # ---- asking her ----
+    def _wb_language(self):
+        """The language a tapped question is asked in: whatever they asked
+        her to use, else whatever they last spoke in."""
+        try:
+            asked = assistant.language_preference()
+        except Exception:
+            asked = None
+        if asked in BOARD_ASK_QUESTIONS:
+            return asked
+        text, who = self._wb_caption
+        said = text if who == "user" else (self.transcript if self.speaker == "user" else "")
+        return "hi" if has_devanagari(said) else "en"
+
+    def _wb_ask(self, what=None):
+        """Ask Liza: the page goes to her with a question about it. Handed to
+        ai_loop through whiteboard.ask, the way a mode tap hands over its
+        intro -- this is the Tk thread, and only ai_loop may speak or listen.
+        `what` is a button's own question -- "solve" or "balance"."""
+        if not self._wb_has_ink():
+            self._wb_hint("Write or draw something first, then tap Ask Liza.")
+            return
+        language = self._wb_language()
+        questions = BOARD_SOLVE_QUESTIONS.get(what, BOARD_ASK_QUESTIONS)
+        whiteboard.ask(questions.get(language, questions["en"]), language)
+        print(f"[BOARD] {'Ask Liza' if what is None else what.capitalize() + ' it'} tapped.",
+              flush=True)
+        self.asleep = False
+        sleep_event.clear()
+        # She stops for it, the way she stops for Speak: the page IS the question.
+        if playback_active.is_set() or not audio_queue.empty():
+            assistant.interrupt_playback()
+        self.set_state("thinking")
+
+    # ---- the working she writes beside it ----
+    def show_solution(self, panel):
+        """A worked solution from her (a solution.Panel, laid out already on
+        the thread that made it). Beside their writing when the page is up;
+        otherwise kept, and offered by the Steps button when it next opens."""
+        self._wb_panel = panel
+        self._wb_step = -1
+        self._wb_scroll = 0
+        self._wb_column = None
+        self._wb_panel_open = self._wb_open
+        if self._wb_open:
+            self._wb_hide_graph(redraw=False)
+            self._wb_panel_box = self._wb_pick_side()
+            self._wb_draw_panel()
+            self._wb_draw_toolbar()
+            self._wb_draw_offers()
+            self._wb_draw_chip()
+            self._wb_draw_suggestions()
+
+    def _wb_pick_side(self):
+        """The half of the page with less of their writing under it, so the
+        working covers as little of theirs as it can. Right on a tie."""
+        def ink_under(box):
+            x0, y0, x1, y1 = box
+            return sum(1 for s in self._wb_strokes if not s["erase"]
+                       for x, y in s["points"] if x0 <= x <= x1 and y0 <= y <= y1)
+        if ink_under(self.WB_PANEL_LEFT) < ink_under(self.WB_PANEL_RIGHT):
+            return self.WB_PANEL_LEFT
+        return self.WB_PANEL_RIGHT
+
+    def _wb_show_panel(self):
+        if self._wb_panel is None:
+            return
+        self._wb_hide_graph(redraw=False)
+        self._wb_panel_box = self._wb_pick_side()
+        self._wb_panel_open = True
+        self._wb_draw_panel()
+        self._wb_draw_toolbar()
+        self._wb_draw_offers()
+        self._wb_draw_chip()
+        self._wb_draw_suggestions()
+
+    def _wb_hide_panel(self):
+        self._wb_panel_open = False
+        self.canvas.delete(self.WB_PANEL)
+        self._wb_body_item = None
+        self._wb_draw_toolbar()
+        self._wb_draw_offers()
+        self._wb_draw_chip()
+        self._wb_draw_suggestions()
+
+    def _wb_card_box(self):
+        """Where the card beside the writing is -- the working or a graph --
+        or None when neither is up."""
+        if (self._wb_panel is not None and self._wb_panel_open) or self._wb_graph_open:
+            return self._wb_panel_box
+        return None
+
+    # ---- a graph, as a card beside the writing ----
+    # Like the board in the reference: the curves drawn on the page next to
+    # the formulas they come from, with the letters on sliders under them.
+    # It is a third VIEW of the one graph (see "the live graph"), so a drag
+    # here moves the board's copy and the enlarged one too.
+    def _wb_show_graph(self):
+        if self._graph is None or not self._wb_open:
+            return
+        if self._wb_panel_open:
+            # The working steps aside; the Steps button brings it back.
+            self._wb_panel_open = False
+            self.canvas.delete(self.WB_PANEL)
+            self._wb_body_item = None
+        self._wb_panel_box = self._wb_graph_box()
+        self._wb_graph_open = True
+        self._wb_draw_graph_card()
+        self._wb_draw_toolbar()
+        self._wb_draw_offers()
+        self._wb_draw_chip()
+        self._wb_draw_suggestions()
+
+    def _wb_graph_box(self):
+        """Where the graph card goes: the working's place on the side with
+        less writing -- narrowed to the room beside the writing when a line
+        runs into that side, rather than laid over the end of it, as long as
+        what is left is a graph worth reading."""
+        side = self._wb_pick_side()
+        ink = whiteboard.ink_box(self._wb_frozen[1])
+        if ink is None:
+            return side
+        x0, y0, x1, y1 = side
+        if side == self.WB_PANEL_RIGHT and ink[2] + 12 > x0:
+            if x1 - (ink[2] + 12) >= self.WB_GRAPH_MIN_W:
+                return (ink[2] + 12, y0, x1, y1)
+        elif side == self.WB_PANEL_LEFT and ink[0] - 12 < x1:
+            if (ink[0] - 12) - x0 >= self.WB_GRAPH_MIN_W:
+                return (x0, y0, ink[0] - 12, y1)
+        return side
+
+    def _wb_draw_graph_card(self):
+        c, tag = self.canvas, self.WB_GRAPH_TAG
+        c.delete(tag)
+        if self._graph is None:
+            return
+        self._graph["views"].pop(tag, None)
+        x0, y0, x1, y1 = self._wb_panel_box
+        self._round_rect(x0 + 2, y0 + 3, x1 + 2, y1 + 4, 16, fill="#D5DBEB",
+                         outline="", tags=(self.WB_TAG, tag))
+        self._draw_graph(self._wb_panel_box, tag, "card")
+        cy = y0 + self.GRAPH_SIZES["card"]["title"] / 2 + 1
+        bigger = tag + "big"
+        self._expand_icon(x1 - 58, cy, bigger)
+        c.addtag_withtag(tag, bigger)
+        c.tag_bind(bigger, "<ButtonPress-1>", self._enlarge_graph)
+        close = tag + "close"
+        self._close_icon(x1 - 22, cy, close)
+        c.addtag_withtag(tag, close)
+        c.tag_bind(close, "<ButtonPress-1>",
+                   lambda e: self._wb_tapped(e, self._wb_hide_graph))
+        c.addtag_withtag(self.WB_TAG, tag)
+        self._wb_restack()
+
+    def _wb_hide_graph(self, redraw=True):
+        if not self._wb_graph_open:
+            return
+        self._wb_graph_open = False
+        self.canvas.delete(self.WB_GRAPH_TAG)
+        if self._graph is not None:
+            self._graph["views"].pop(self.WB_GRAPH_TAG, None)
+        if redraw and self._wb_open:
+            self._wb_draw_toolbar()
+            self._wb_draw_offers()
+            self._wb_draw_chip()
+            self._wb_draw_suggestions()
+
+    def _wb_body_box(self):
+        x0, y0, x1, y1 = self._wb_panel_box
+        panel = self._wb_panel
+        head = 18 + (panel.title.height if panel and panel.title else 18)
+        foot = 50 if panel is not None and panel.see else 6
+        return x0 + 4, y0 + head, x1 - 4, y1 - foot
+
+    def _wb_draw_panel(self):
+        c = self.canvas
+        c.delete(self.WB_PANEL)
+        self._wb_body_item = None
+        panel = self._wb_panel
+        if panel is None:
+            return
+        tags = (self.WB_TAG, self.WB_PANEL)
+        x0, y0, x1, y1 = self._wb_panel_box
+        self._round_rect(x0 + 2, y0 + 3, x1 + 2, y1 + 4, 16, fill="#D5DBEB",
+                         outline="", tags=tags)
+        self._round_rect(x0, y0, x1, y1, 16, fill="#FFFFFF", outline="#C7D2FE",
+                         width=2, tags=tags)
+        if panel.title is not None:
+            photo = ImageTk.PhotoImage(panel.title)
+            self._wb_slot("panel_title").append(photo)
+            c.create_image(x0 + 14, y0 + 10, image=photo, anchor="nw", tags=tags)
+        close = "wbpanel_close"
+        self._close_icon(x1 - 22, y0 + 22, tags + (close,))
+        c.tag_bind(close, "<ButtonPress-1>", lambda e: self._wb_tapped(e, self._wb_hide_panel))
+        bx0, by0, bx1, by1 = self._wb_body_box()
+        c.create_line(x0 + 10, by0 - 3, x1 - 10, by0 - 3, fill=COL_TRACK, width=2, tags=tags)
+        if panel.see:
+            see = "wbpanel_see"
+            sy0, sy1 = y1 - 44, y1 - 8
+            self._round_rect(x0 + 12, sy0, x1 - 12, sy1, 16, fill=COL_INDIGO,
+                             outline=COL_INDIGO, tags=tags + (see,))
+            mid = (sy0 + sy1) / 2
+            c.create_polygon(x0 + 30, mid - 8, x0 + 30, mid + 8, x0 + 43, mid,
+                             fill="#FFFFFF", outline="", tags=tags + (see,))
+            self._wb_text(x0 + 54, mid, panel.see_text, 12, tags + (see,), "panel_see",
+                          bold=True, fill="#FFFFFF", width=x1 - x0 - 80, max_lines=1)
+            c.tag_bind(see, "<ButtonPress-1>", lambda e: self._wb_tapped(e, self._wb_see))
+        self._wb_render_body()
+        body = "wbpanel_body"
+        c.tag_bind(body, "<ButtonPress-1>", self._wb_panel_press)
+        c.tag_bind(body, "<B1-Motion>", self._wb_panel_drag)
+        self._wb_restack()
+
+    def _wb_render_body(self, follow=False):
+        """The steps, lit where she is, scrolled to `self._wb_scroll` -- or,
+        with `follow`, to wherever keeps the lit step in view."""
+        panel = self._wb_panel
+        if panel is None or not self._wb_open or not self._wb_panel_open:
+            return
+        if self._wb_column is None or self._wb_column[0] != self._wb_step:
+            column, spans = panel.image(self._wb_step)
+            self._wb_column = (self._wb_step, column, spans)
+        _, column, spans = self._wb_column
+        bx0, by0, bx1, by1 = self._wb_body_box()
+        height = int(by1 - by0)
+        most = max(0, column.height - height)
+        if follow and 0 <= self._wb_step < len(spans):
+            top, bottom = spans[self._wb_step]
+            if top < self._wb_scroll:
+                self._wb_scroll = top - 6
+            elif bottom > self._wb_scroll + height:
+                self._wb_scroll = bottom - height + 6
+        self._wb_scroll = int(max(0, min(self._wb_scroll, most)))
+        view = Image.new("RGBA", (column.width, height), (255, 255, 255, 255))
+        view.alpha_composite(column.crop((0, self._wb_scroll, column.width,
+                                          self._wb_scroll + height)))
+        photo = ImageTk.PhotoImage(view)
+        self._wb_slots["panel_body"] = [photo]
+        c = self.canvas
+        if self._wb_body_item is None or not c.find_withtag(self._wb_body_item):
+            self._wb_body_item = c.create_image(bx0 + 2, by0, image=photo, anchor="nw",
+                                                tags=(self.WB_TAG, self.WB_PANEL,
+                                                      "wbpanel_body"))
+        else:
+            c.itemconfig(self._wb_body_item, image=photo)
+        c.delete("wbpanel_thumb")
+        if most > 0:
+            # Where in the working the view is, when there is more than fits.
+            length = max(24, height * height / column.height)
+            top = by0 + (height - length) * self._wb_scroll / most
+            c.create_line(bx1 - 3, top, bx1 - 3, top + length, fill="#C7D2FE",
+                          width=4, capstyle="round",
+                          tags=(self.WB_TAG, self.WB_PANEL, "wbpanel_thumb"))
+
+    def _wb_panel_press(self, event):
+        self._tap_handled = event.serial
+        self._wb_drag_from = (event.y, self._wb_scroll)
+        return "break"
+
+    def _wb_panel_drag(self, event):
+        start = getattr(self, "_wb_drag_from", None)
+        if start is None:
+            return "break"
+        self._wb_scroll = start[1] - (event.y - start[0])
+        self._wb_render_body()
+        return "break"
+
+    def _wb_match_step(self, line):
+        """Light the step she is saying. See solution.match_step."""
+        panel = self._wb_panel
+        if not (self._wb_open and self._wb_panel_open and panel is not None and line):
+            return
+        step = solution.match_step(panel.tokens, self._wb_step, line)
+        if step != self._wb_step:
+            self._wb_step = step
+            self._wb_render_body(follow=True)
+
+    def _wb_see(self):
+        """The one thing worth trying after the working: the graph with its
+        numbers on sliders, the simulation set to the problem's own numbers,
+        the balanced reaction. It opens over the page; closing it comes back.
+        Run exactly the way an offered button is -- see actions.run_offer."""
+        panel = self._wb_panel
+        if panel is None or not panel.see:
+            return
+        kind, payload, settings = panel.see
+        print(f"[BOARD] See it: {kind} | {payload}"
+              + (f" with {settings}" if settings else ""), flush=True)
+
+        def run():
+            import actions
+            if not actions.run_offer({"kind": kind, "payload": payload,
+                                      "settings": settings}):
+                self.root.after(0, lambda: self._wb_hint("I couldn't open that one, sorry."))
+        threading.Thread(target=run, daemon=True, name="board-see").start()
+
+    # -----------------------------------------------------------------
+    # buttons for something worth seeing
+    # -----------------------------------------------------------------
+    # She used to ASK -- "Would you like to see a simulation of it?" -- and a
+    # child then had to say yes out loud, which the microphone keeps throwing
+    # away as noise (two "Yes."es in a row in logs/liza.log before a longer one
+    # got through). Now she offers it as a button, [ACTION: offer_visual], and a
+    # finger answers. On the home screen the buttons stand along the foot of the
+    # Transcribe Board; on the full-screen page, at its bottom right. A tap shows
+    # the thing exactly as if she had been asked for it (actions.run_offer).
+    OFFER_TAG = "offers"
+    WB_OFFER_TAG = "wboffers"
+    OFFER_ROW = (BOARD_X0 + 14, BOARD_Y1 - 50, BOARD_X1 - 44, BOARD_Y1 - 14)
+
+    def show_offers(self, offers):
+        """Tk thread: these buttons, replacing any there were. [] takes them down."""
+        self._offers = list(offers or [])
+        self._draw_offers()
+        if self._wb_open:
+            self._wb_draw_offers()
+            self._wb_draw_chip()
+        # The words on the board end above the buttons now -- or may have the
+        # room back.
+        if self.transcript:
+            self.canvas.itemconfig(self.transcript_id, text=self._fit_transcript(self.transcript))
+
+    def take_offer(self, index=0):
+        """The first button, taken by voice ("yes, show me")."""
+        if 0 <= index < len(self._offers):
+            self._offer_tapped(None, self._offers[index])
+
+    def _offer_pill(self, box, offer, tags, compact, on_tap=None, photos=None):
+        """One button: a play mark, what it shows, and what it is of."""
+        photos = self._offer_photos if photos is None else photos
+        on_tap = on_tap or self._offer_tapped
+        x0, y0, x1, y1 = box
+        c = self.canvas
+        self._round_rect(x0, y0, x1, y1, min(16, (y1 - y0) / 2), fill="#EEF2FF",
+                         outline=COL_INDIGO, width=2, tags=tags)
+        cy, r = (y0 + y1) / 2, 9 if compact else 11
+        cx = x0 + r + 7
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=COL_INDIGO, outline="", tags=tags)
+        c.create_polygon(cx - r * 0.35, cy - r * 0.55, cx - r * 0.35, cy + r * 0.55,
+                         cx + r * 0.6, cy, fill="#FFFFFF", outline="", tags=tags)
+        text_x = cx + r + 6
+        room = max(30, x1 - text_x - 8)
+        sub = offer.get("sub") or ""
+        self._overlay_text(text_x, cy - (7 if sub else 0), offer["label"], 9 if compact else 10,
+                           bold=True, fill=COL_INDIGO, anchor="w", tags=tags, width=room,
+                           max_lines=1, justify="left", photos=photos)
+        if sub:
+            self._overlay_text(text_x, cy + 8, sub, 7 if compact else 8, fill=COL_TEXT_DIM,
+                               anchor="w", tags=tags, width=room, max_lines=1,
+                               justify="left", photos=photos)
+        c.tag_bind(tags[-1], "<ButtonPress-1>", lambda e, o=offer: on_tap(e, o))
+
+    def _draw_offers(self):
+        """Along the foot of the Transcribe Board, two at most."""
+        c = self.canvas
+        c.delete(self.OFFER_TAG)
+        self._offer_photos = []
+        offers = self._offers[:2]
+        if not offers:
+            return
+        x0, y0, x1, y1 = self.OFFER_ROW
+        if len(offers) > 1:
+            # Two need the whole width, the status dots' corner too: each word
+            # on a half-width button was being cut to "See the reacti...".
+            x1 = BOARD_X1 - 14
+        # A clean strip: a picture on the board may run under the buttons.
+        self._round_rect(x0 - 6, y0 - 6, x1 + 4, y1 + 5, 12, fill="#FFFFFF", outline="",
+                         tags=(self.OFFER_TAG,))
+        gap = 8
+        width = (x1 - x0 - gap * (len(offers) - 1)) / len(offers)
+        for index, offer in enumerate(offers):
+            left = x0 + index * (width + gap)
+            self._offer_pill((left, y0, left + width, y1), offer,
+                             (self.OFFER_TAG, f"offer{index}"), compact=len(offers) > 1)
+        self._wb_restack()
+
+    def _wb_draw_offers(self):
+        """At the bottom right of the full-screen page, beside the reading."""
+        c = self.canvas
+        c.delete(self.WB_OFFER_TAG)
+        self._wb_offer_left = UI_W - 14
+        if not self._wb_open:
+            return
+        panel = self._wb_panel
+        offers = [o for o in self._offers
+                  # The working's own try-it is on its own button already.
+                  if not (panel is not None and self._wb_panel_open and panel.see
+                          and (o["kind"], o["payload"]) == (panel.see[0], panel.see[1]))
+                  # And so is anything under their writing: one "See it in 3D".
+                  and not any(s["kind"] == o["kind"] and _same_thing(s["payload"], o["payload"])
+                              for s in self._wb_suggestions)]
+        right = UI_W - 14
+        card = self._wb_card_box()
+        if card is not None and card[0] >= UI_W / 4:
+            right = card[0] - 12
+        cy = self.WB_BOTTOM - 24
+        photos = self._wb_slot("offers")
+        keep, self._offer_photos = self._offer_photos, photos
+        for index, offer in reversed(list(enumerate(offers[:3]))):
+            words = max(self._font(10, True).measure(offer["label"]),
+                        self._font(8).measure(offer.get("sub") or ""))
+            width = min(230, words + 52)
+            if right - width < 160:
+                break
+            self._offer_pill((right - width, cy - 17, right, cy + 17), offer,
+                             (self.WB_TAG, self.WB_OFFER_TAG, f"wboffer{index}"),
+                             compact=False)
+            right -= width + 8
+        self._offer_photos = keep
+        self._wb_offer_left = right
+        self._wb_restack()
+
+    # ---- buttons under the writing ----
+    # What can be done with what is written -- Plot it, Solve it, See it in
+    # 3D -- straight from the page's reading, under the writing it is about,
+    # the way the board in the reference puts its tools under a selection.
+    # No model in between, so they are up a moment after the reading is, and
+    # whatever she goes on to say. See whiteboard.suggestions.
+    def _wb_draw_suggestions(self):
+        c = self.canvas
+        c.delete(self.WB_SUGGEST_TAG)
+        offers = list(self._wb_suggestions)
+        if not (self._wb_open and offers) or self._wb_current is not None:
+            return
+        box = whiteboard.ink_box(self._wb_frozen[1])
+        if box is None:
+            return
+        ink_x0, ink_y0 = box[0], box[1] + self.WB_TOP
+        ink_y1 = box[3] + self.WB_TOP
+        label_font, sub_font = self._font(10, True), self._font(8)
+        widths = [min(210, max(label_font.measure(o["label"]),
+                               sub_font.measure(o.get("sub") or "")) + 52) for o in offers]
+        left, right = 10, UI_W - 10
+        card = self._wb_card_box()
+        if card is not None and card[0] < UI_W / 4:
+            left = card[2] + 10
+        elif card is not None:
+            right = card[0] - 10
+        gap, height = 8, 38
+        while widths and sum(widths) + gap * (len(widths) - 1) > right - left:
+            widths.pop()
+        offers = offers[:len(widths)]
+        if not offers:
+            return
+        total = sum(widths) + gap * (len(widths) - 1)
+        x = max(left, min(ink_x0, right - total))
+        # Under the writing; over it when there is no room under; and when
+        # there is room for neither, at the foot of the page, above her chip.
+        floor = self.WB_BOTTOM - 50
+        y = ink_y1 + 14
+        if y + height > floor:
+            y = ink_y0 - 14 - height
+            if y < self.WB_TOP + 8:
+                y = floor - height
+        tags = (self.WB_TAG, self.WB_SUGGEST_TAG)
+        ground = self.WB_SUGGEST_TAG + "ground"
+        self._round_rect(x - 7, y - 7, x + total + 7, y + height + 7, 18, fill="#FFFFFF",
+                         outline="#C7D2FE", width=1, tags=tags + (ground,))
+        c.tag_bind(ground, "<ButtonPress-1>", self._swallow_press)
+        photos = self._wb_slot("suggest")
+        for index, (offer, width) in enumerate(zip(offers, widths)):
+            self._offer_pill((x, y, x + width, y + height), offer,
+                             tags + (f"wbsuggest{index}",), compact=False,
+                             on_tap=self._wb_suggestion_tapped, photos=photos)
+            x += width + gap
+        self._wb_restack()
+
+    def _wb_draw_measure(self):
+        """Their figure, tidied: straight sides through the corners found in
+        the ink, a letter at each corner, each angle written inside it, and
+        what the angles add up to underneath."""
+        c = self.canvas
+        c.delete(self.WB_MEASURE_TAG)
+        m = self._wb_measure
+        if not (self._wb_open and m):
+            return
+        pts = [(x, y + self.WB_TOP) for x, y in m["corners"]]
+        n = len(pts)
+        tags = (self.WB_TAG, self.WB_MEASURE_TAG)
+        ink = "#7C3AED"
+        c.create_polygon(*[v for p in pts for v in p], fill="", outline=ink, width=3,
+                         joinstyle="round", tags=tags)
+        cx, cy = sum(x for x, _ in pts) / n, sum(y for _, y in pts) / n
+        shortest = min(math.dist(pts[i], pts[i - 1]) for i in range(n))
+        radius = max(10, min(22, shortest * 0.22))
+        font = self._font(11 if n <= 4 else 9, True)
+        letters = "ABCDEFGH"
+        for i, (x, y) in enumerate(pts):
+            (ax, ay), (bx, by) = pts[i - 1], pts[(i + 1) % n]
+            # Tk measures arcs anticlockwise from east with y UP.
+            first = math.degrees(math.atan2(y - ay, ax - x))
+            second = math.degrees(math.atan2(y - by, bx - x))
+            extent = (second - first) % 360
+            start = first
+            if extent > 180:
+                start, extent = second, 360 - extent
+            c.create_arc(x - radius, y - radius, x + radius, y + radius, start=start,
+                         extent=extent, style="arc", outline=ink, width=2, tags=tags)
+            middle = math.radians(start + extent / 2)
+            reach = radius + (16 if extent > 60 else 24)
+            lx, ly = x + math.cos(middle) * reach, y - math.sin(middle) * reach
+            words = f"{m['angles'][i]}°"
+            box = font.measure(words) / 2 + 4
+            self._round_rect(lx - box, ly - 10, lx + box, ly + 10, 8, fill="#FFFFFF",
+                             outline="", tags=tags)
+            c.create_text(lx, ly, text=words, font=font, fill=ink, tags=tags)
+            dx, dy = x - cx, y - cy
+            away = math.hypot(dx, dy) or 1.0
+            c.create_text(x + dx / away * 17, y + dy / away * 17, text=letters[i],
+                          font=self._font(12, True), fill=COL_TEXT, tags=tags)
+        total = (n - 2) * 180
+        words = " + ".join(letters[:n]) + f" = {total}°" if n <= 4 else f"The angles add up to {total}°"
+        width = self._font(12, True).measure(words) / 2 + 12
+
+        def inside(px, py):
+            # On the inner side of every edge (the corners go clockwise).
+            return all((bx - ax) * (py - ay) - (by - ay) * (px - ax) >= 0
+                       for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]))
+        # Inside the figure when it fits there -- under it is where the
+        # buttons for it are -- else over the top of it, else beside it.
+        lift = 16 if n == 3 else 0
+        x, y = cx, cy + lift
+        if not all(inside(x + dx, y + dy) for dx in (-width, width) for dy in (-14, 14)):
+            x, y = cx, min(py for _, py in pts) - 34
+            if y < self.WB_TOP + 18:
+                x, y = max(px for px, _ in pts) + width + 24, cy
+        x = max(12 + width, min(UI_W - 12 - width, x))
+        self._round_rect(x - width, y - 14, x + width, y + 14, 14, fill="#F5F3FF",
+                         outline="#DDD6FE", tags=tags)
+        c.create_text(x, y, text=words, font=self._font(12, True), fill=ink, tags=tags)
+        # The marks are on THEIR page: a line started on one is a line, like
+        # anywhere else on it (and the marks go, the figure having changed).
+        c.tag_bind(self.WB_MEASURE_TAG, "<ButtonPress-1>", self._wb_press)
+        c.tag_bind(self.WB_MEASURE_TAG, "<B1-Motion>", self._wb_drag)
+        c.tag_bind(self.WB_MEASURE_TAG, "<ButtonRelease-1>", self._wb_lift)
+        self._wb_restack()
+
+    def _wb_suggestion_tapped(self, event, offer):
+        if event is not None:
+            self._tap_handled = event.serial
+        print(f"[BOARD] Tapped under the writing: {offer['label']} "
+              f"({offer['kind']} | {offer['payload'][:60]})", flush=True)
+        if offer["kind"] == "ask":
+            self._wb_ask(offer["payload"])
+            return "break"
+        if offer["kind"] == "measure":
+            # On and off again: the figure is theirs, the marks are hers.
+            self._wb_measure = None if self._wb_measure else offer.get("measure")
+            self._wb_draw_measure()
+            return "break"
+        if offer["kind"] == "explore" and offer.get("measure"):
+            measured = offer["measure"]
+            figure = geometry.from_drawing(measured["corners"], measured.get("name"))
+            app_state.current_visual = {"kind": "geometry", "title": figure.describe(),
+                                        "steps": []}
+            self.show_geometry(figure)
+            return "break"
+
+        def run():
+            import actions
+            if not actions.run_offer(offer):
+                self.root.after(0, lambda: self._wb_open and self._wb_hint(
+                    "I couldn't open that one, sorry."))
+        threading.Thread(target=run, daemon=True, name="board-button").start()
+        return "break"
+
+    def _offer_tapped(self, event, offer):
+        if event is not None:
+            self._tap_handled = event.serial
+        if offer not in self._offers:
+            return "break"
+        remaining = [o for o in self._offers if o is not offer]
+        app_state.current_offers = remaining
+        self.show_offers(remaining)
+        print(f"[OFFER] Tapped: {offer['label']} ({offer['kind']} | {offer['payload'][:60]})",
+              flush=True)
+
+        def run():
+            import actions
+            if not actions.run_offer(offer):
+                self.root.after(0, lambda: self._wb_open and self._wb_hint(
+                    "I couldn't open that one, sorry."))
+        threading.Thread(target=run, daemon=True, name="offer").start()
         return "break"
 
     # -----------------------------------------------------------------
@@ -2682,6 +4074,7 @@ class TutorUI:
                              lambda e: self._open_model3d())
         self._renderer3d().show(scene, self._model3d_big_size())
         self._open_model3d(first=True)
+        self._restack()
         print(f"[UI] 3D model: {scene.get('title')}", flush=True)
 
     def _open_model3d(self, first=False):
@@ -2731,6 +4124,16 @@ class TutorUI:
         self._model3d_button(UI_W / 2 + 20, bottom, "Reset", self._model3d_reset, width=96)
         self.canvas.create_text(UI_W - 20, bottom, text="drag to turn it", anchor="e",
                                 fill="#8891A8", font=self._font(9), tags=tag)
+        if scene.get("formulas"):
+            # What a geometry solid is FOR -- its volume and surface area,
+            # worked out when the measurements were given -- set big, in the
+            # corner under the cross, rather than in the small print below.
+            y = 62
+            for line in scene["formulas"]:
+                item = self.canvas.create_text(UI_W - 20, y, text=line, anchor="ne",
+                                               fill="#FFE066", font=self._font(12, bold=True),
+                                               tags=tag)
+                y = self.canvas.bbox(item)[3] + 4
         if scene.get("note"):
             # "Not to scale", "Spreading exaggerated": the honest small print,
             # in the free corner left of the buttons.
@@ -2828,7 +4231,9 @@ class TutorUI:
             self.canvas.delete(self.MODEL3D_TAG + "wait")
             self.canvas.itemconfig(self._model3d_board_item, image=photo)
             self._model3d_board_photo = photo
-            self.canvas.tag_raise(self.MODEL3D_TAG + "badge")
+            # Just over the still, not over everything: to the top of the
+            # stack it came up through the full-screen page.
+            self.canvas.tag_raise(self.MODEL3D_TAG + "badge", self._model3d_board_item)
 
     def _model3d_failed(self, reason):
         """From the renderer's thread: the worker could not draw. Say so on the
@@ -2887,6 +4292,8 @@ class TutorUI:
     # kind of thing on the board off the model's hands: it asks for bigger, and
     # whichever of the two enlargers applies is picked here.
     def enlarge_current(self):
+        if getattr(self, "_geo", None) is not None:
+            return self._geo_open()
         if self._graph is not None:
             return self._enlarge_graph()
         if getattr(self, "_model3d_scene", None) is not None:
@@ -2902,6 +4309,8 @@ class TutorUI:
         self.hide_big_visual()
         self.hide_big_graph()
         self.hide_big_model3d()
+        if getattr(self, "_geo", None) is not None and self._geo["big"]:
+            self._geo_close()
 
     def clear_visual(self, keep_renderer=False):
         """Take the picture off the board. It belonged to the last question.
@@ -2913,9 +4322,8 @@ class TutorUI:
         self._visual_photos = []
         self._big_visual_photos = []
         self._visual_source = None
-        self.canvas.delete(self.GRAPH_TAG)
-        self.canvas.delete(self.BIG_GRAPH_TAG)
-        self._graph = None
+        self._drop_graph()
+        self._drop_geometry()
         self._visual_steps = []
         self._step_current = -1
         self._step_views = {}
@@ -3034,58 +4442,65 @@ class TutorUI:
     GRAPH_LINE = "#1D4ED8"
     GRAPH_AXIS = "#98A4BE"
     GRAPH_GRID = "#EDF1FA"
+    # Three sizes of the one graph: on the home screen's board ("small"), as a
+    # card beside the writing on the full-screen page ("card"), and over the
+    # whole screen ("big"). Everything that differs between them is here.
+    GRAPH_SIZES = {
+        "small": dict(corner=10, title=14, heading=7, pad=8, label=20, axis=6, line=2,
+                      legend=13, legend_font=7, row=20, knob=6, track=4, name=7,
+                      readout=34, edge=10),
+        "card": dict(corner=16, title=34, heading=12, pad=12, label=26, axis=8, line=3,
+                     legend=20, legend_font=10, row=32, knob=10, track=6, name=11,
+                     readout=46, edge=14),
+        "big": dict(corner=16, title=30, heading=12, pad=26, label=34, axis=9, line=4,
+                    legend=26, legend_font=12, row=38, knob=11, track=7, name=11,
+                    readout=62, edge=30),
+    }
 
     def show_graph(self, spec):
-        """Put a formula on the board as a curve with its numbers on sliders."""
+        """Put a formula on the board as a curve with its numbers on sliders --
+        several formulas as several curves, each in its own colour. With the
+        page open full screen it goes ON the page, as a card beside the
+        writing, the way a teacher draws the graph next to the sum."""
         camera.stop_live("a graph is going on the board")
         self.clear_visual()
         self._graph = {"spec": spec,
                        "values": [k["value"] for k in spec["knobs"]],
                        "views": {}}
         app_state.current_graph = visuals.describe(spec, self._graph["values"])
-        self._draw_graph(self.VISUAL_BOX, self.GRAPH_TAG, small=True)
+        self._draw_graph(self.VISUAL_BOX, self.GRAPH_TAG, "small")
         print(f"[UI] Live graph on the board: {spec['source']}", flush=True)
+        if self._wb_open:
+            self._wb_show_graph()
+        self._restack()
 
-    def _graph_window(self, points):
-        """The y range to draw between, given what the curve actually did.
+    def _drop_graph(self):
+        """The graph is gone from every view: the board, the big screen, and
+        the card on the page."""
+        self.canvas.delete(self.GRAPH_TAG)
+        self.canvas.delete(self.BIG_GRAPH_TAG)
+        self.canvas.delete(self.WB_GRAPH_TAG)
+        had_card = self._wb_graph_open
+        self._graph = None
+        self._wb_graph_open = False
+        if had_card and self._wb_open:
+            self._wb_draw_toolbar()
+            self._wb_draw_offers()
+            self._wb_draw_chip()
+            self._wb_draw_suggestions()
 
-        The full spread, normally -- clipping the top off a parabola to make it
-        tidy is drawing a different parabola. The exception is an asymptote:
-        1/x near zero runs to eighty and turns every other value on the graph
-        into the same flat line along the axis. So when the extremes are more
-        than six times the span the middle ninety per cent occupies, the middle
-        ninety per cent is what gets drawn.
-        """
-        values = sorted(y for _, y in points if y is not None)
-        if not values:
-            return -1.0, 1.0
-        low, high = values[0], values[-1]
-        inner_low = values[int(len(values) * 0.05)]
-        inner_high = values[int(len(values) * 0.95) - 1]
-        inner = inner_high - inner_low
-        if inner > 0 and (high - low) > 6 * inner:
-            low, high = inner_low, inner_high
-        if high - low < 1e-9:
-            low, high = low - 1, high + 1
-        pad = (high - low) * 0.1
-        low, high = low - pad, high + pad
-        # Bring the x axis into view when it is nearly there anyway. A school
-        # graph that does not show where zero is has lost half its meaning.
-        span = high - low
-        if low > 0 and low < span * 0.25:
-            low = 0.0
-        elif high < 0 and -high < span * 0.25:
-            high = 0.0
-        return low, high
+    def _graph_curves(self):
+        spec = self._graph["spec"]
+        return spec.get("curves") or [{"label": spec["source"], "colour": self.GRAPH_LINE}]
 
-    def _graph_curve(self, view):
-        """The screen points for the curve as the knobs stand, in Tk's order.
+    def _graph_curve(self, view, curve=0):
+        """The screen points for one curve as the knobs stand, in Tk's order.
 
         A list per unbroken run, so a hole in the function is a gap on the
         screen and not a line drawn straight through the asymptote.
         """
         spec = self._graph["spec"]
-        points = visuals.sample(spec, self._graph["values"])
+        points = visuals.sample(spec, self._graph["values"], curve)
         x0, y0, x1, y1 = view["plot"]
         low, high = view["y_low"], view["y_high"]
         left, right = spec["x_low"], spec["x_high"]
@@ -3142,41 +4557,60 @@ class TutorUI:
             value += step
         return ticks
 
-    def _draw_graph(self, box, tag, small):
-        """One view of the current graph, board-sized or full-screen."""
+    def _draw_graph(self, box, tag, size):
+        """One view of the current graph: "small", "card" or "big"."""
         graph = self._graph
         if graph is None:
             return
         spec = graph["spec"]
+        m = self.GRAPH_SIZES[size]
+        c = self.canvas
         x0, y0, x1, y1 = box
-        row = 20 if small else 38
-        title_h = 14 if small else 30
-        pad = 8 if small else 26
         sliders = spec["knobs"]
-        self._round_rect(x0, y0, x1, y1, 10 if small else 16,
-                         fill="#FFFFFF", outline="#D8E0F0",
-                         tags=(tag,))
-        heading = spec["title"] or spec["source"]
-        self.canvas.create_text((x0 + x1) / 2, y0 + title_h / 2 + 2, text=heading,
-                                font=self._font(7 if small else 12, True),
-                                fill=COL_INDIGO, tags=(tag,))
+        curves = self._graph_curves()
+        ground = tag + "ground"
+        self._round_rect(x0, y0, x1, y1, m["corner"], fill="#FFFFFF",
+                         outline="#C7D2FE" if size == "card" else "#D8E0F0",
+                         width=2 if size == "card" else 1, tags=(tag, ground))
+        heading = spec["title"] or (spec["source"] if len(curves) == 1 else "")
+        top = y0 + m["pad"] / 2
+        if size == "card":
+            # Left-aligned, clear of the enlarge and close buttons on its right.
+            words = self._ellipsize(heading or "Graph", self._font(m["heading"], True),
+                                    x1 - x0 - 110)
+            c.create_text(x0 + 16, y0 + m["title"] / 2 + 2, text=words, anchor="w",
+                          font=self._font(m["heading"], True), fill=COL_INDIGO, tags=(tag,))
+            top = y0 + m["title"]
+        elif heading:
+            c.create_text((x0 + x1) / 2, y0 + m["title"] / 2 + 2,
+                          text=self._ellipsize(heading, self._font(m["heading"], True),
+                                               x1 - x0 - 44),
+                          font=self._font(m["heading"], True), fill=COL_INDIGO, tags=(tag,))
+            top = y0 + m["title"]
+        if len(curves) > 1:
+            top = self._draw_graph_legend(curves, (x0 + m["edge"], top, x1 - m["edge"]),
+                                          m, tag)
         # The plot keeps everything the sliders do not need. Axis numbers hang
         # below and to the left of it, so it is inset for them rather than
         # sitting on the card's edge.
-        label = 20 if small else 34
-        plot = (x0 + pad + label, y0 + title_h + pad / 2,
-                x1 - pad, y1 - pad - label / 2 - len(sliders) * row)
-        view = {"plot": plot, "box": box, "small": small, "rows": []}
+        label = m["label"]
+        plot = (x0 + m["pad"] + label, top + m["pad"] / 2,
+                x1 - m["pad"], y1 - m["pad"] - label / 2 - len(sliders) * m["row"])
+        view = {"plot": plot, "box": box, "size": size, "small": size == "small",
+                "rows": [], "extra": (self.WB_TAG,) if tag == self.WB_GRAPH_TAG else ()}
         graph["views"][tag] = view
-        view["y_low"], view["y_high"] = self._graph_window(
-            visuals.sample(spec, graph["values"]))
-        self._draw_graph_frame(view, tag, small)
+        # The same window in every view, whatever its shape: the card, the
+        # board and the big screen should be showing one graph, not three.
+        view["y_low"], view["y_high"] = visuals.y_window(spec, graph["values"])
+        self._draw_graph_frame(view, tag)
         view["lines"] = []
         self._repaint_graph(tag)
+        name_font = self._font(m["name"], True)
+        view["label_w"] = max([24] + [name_font.measure(k["label"]) + 14 for k in sliders])
         for index, knob in enumerate(sliders):
-            self._draw_slider(view, tag, index, knob, small, row,
-                              y1 - pad - (len(sliders) - index) * row)
-        if small:
+            self._draw_slider(view, tag, index, knob,
+                              y1 - m["pad"] - (len(sliders) - index) * m["row"])
+        if size == "small":
             # The same glyph in the same corner as a picture's. From the
             # student's side this IS the picture, and a board that marks the
             # same gesture two different ways teaches them to ignore both.
@@ -3189,8 +4623,40 @@ class TutorUI:
             self._expand_icon(x1 - 17, y0 + 17, icon)
             self.canvas.addtag_withtag(tag, icon)
             self.canvas.tag_bind(icon, "<Button-1>", self._enlarge_graph)
+        else:
+            # A press on the card is the card's: not a line started under it,
+            # and not a tap that wakes her.
+            c.tag_bind(ground, "<ButtonPress-1>", self._swallow_press)
 
-    def _draw_graph_frame(self, view, tag, small):
+    def _swallow_press(self, event):
+        """A press on something that is not a button but is in the way of
+        the page or the home screen under it: it goes nowhere."""
+        self._tap_handled = event.serial
+        return "break"
+
+    def _draw_graph_legend(self, curves, row, m, tag):
+        """Each formula in its curve's colour, with a stroke of that colour in
+        front of it: left to right, onto a second line when the first is full.
+        Returns where the plot can start."""
+        left, top, right = row
+        font = self._font(m["legend_font"], True)
+        swatch, gap = (14 if m["legend"] < 16 else 20), 14
+        x, y, lines = left, top + m["legend"] / 2, 1
+        for curve in curves:
+            words = self._ellipsize(curve["label"], font, right - left - swatch - 6)
+            width = swatch + 6 + font.measure(words)
+            if x > left and x + width > right:
+                if lines == 2:
+                    break
+                x, y, lines = left, y + m["legend"], lines + 1
+            self.canvas.create_line(x, y, x + swatch, y, fill=curve["colour"],
+                                    width=max(2, m["line"]), capstyle="round", tags=(tag,))
+            self.canvas.create_text(x + swatch + 6, y, text=words, anchor="w", font=font,
+                                    fill=curve["colour"], tags=(tag,))
+            x += width + gap
+        return top + lines * m["legend"]
+
+    def _draw_graph_frame(self, view, tag):
         """Grid, axes and the numbers along them. Fixed for the life of a view.
 
         The y window is settled when the view is built and does not move while
@@ -3199,16 +4665,19 @@ class TutorUI:
         drag was meant to show.
         """
         spec = self._graph["spec"]
+        m = self.GRAPH_SIZES[view["size"]]
         px0, py0, px1, py1 = view["plot"]
         low, high = view["y_low"], view["y_high"]
         left, right = spec["x_low"], spec["x_high"]
-        size = self._font(6 if small else 9)
+        size = self._font(m["axis"])
         items = (tag,)
-        for value in self._nice_ticks(left, right):
+        # A sine wave is marked in π, the way it is on paper: 0, π, 2π.
+        x_ticks = spec.get("x_ticks") or [(v, f"{v:g}") for v in self._nice_ticks(left, right)]
+        for value, words in x_ticks:
             sx = px0 + (value - left) / (right - left) * (px1 - px0)
             self.canvas.create_line(sx, py0, sx, py1, fill=self.GRAPH_GRID,
                                     tags=items)
-            self.canvas.create_text(sx, py1 + (6 if small else 11), text=f"{value:g}",
+            self.canvas.create_text(sx, py1 + m["axis"] + 1, text=words,
                                     font=size, fill=COL_TEXT_DIM, tags=items)
         for value in self._nice_ticks(low, high):
             sy = py1 - (value - low) / (high - low) * (py1 - py0)
@@ -3226,7 +4695,7 @@ class TutorUI:
                                     width=1, tags=items)
 
     def _repaint_graph(self, tag):
-        """Move the curve to wherever the knobs now are. The whole live part."""
+        """Move the curves to wherever the knobs now are. The whole live part."""
         view = self._graph["views"].get(tag)
         if view is None:
             return
@@ -3241,25 +4710,28 @@ class TutorUI:
         # on top of this view at that moment IS the last line of the grid.
         if "under" not in view:
             view["under"] = self.canvas.find_withtag(tag)[-1]
-        view["lines"] = [
-            self.canvas.create_line(*run, fill=self.GRAPH_LINE, smooth=True,
-                                    width=2 if view["small"] else 4,
-                                    tags=(tag, tag + "curve"))
-            for run in self._graph_curve(view)]
+        width = self.GRAPH_SIZES[view["size"]]["line"]
+        view["lines"] = []
+        for index, curve in enumerate(self._graph_curves()):
+            view["lines"] += [
+                self.canvas.create_line(*run, fill=curve["colour"], smooth=True,
+                                        width=width,
+                                        tags=(tag, tag + "curve") + view["extra"])
+                for run in self._graph_curve(view, index)]
         if view["lines"]:
             self.canvas.tag_raise(tag + "curve", view["under"])
         self.canvas.tag_bind(tag + "curve", "<Button-1>",
                              self._enlarge_graph if view["small"] else
-                             (lambda e: "break"))
+                             self._swallow_press)
 
-    def _draw_slider(self, view, tag, index, knob, small, row, top):
+    def _draw_slider(self, view, tag, index, knob, top):
         """Label, track and knob for one number, and the taps that move it."""
+        m = self.GRAPH_SIZES[view["size"]]
         x0, _, x1, _ = view["box"]
-        pad = 10 if small else 30
+        pad, row = m["edge"], m["row"]
         mid = top + row / 2
-        name = self._font(7 if small else 11, True)
-        wide = 54 if small else 96
-        track = (x0 + pad + wide, x1 - pad - (34 if small else 62))
+        name = self._font(m["name"], True)
+        track = (x0 + pad + view["label_w"], x1 - pad - m["readout"])
         row_tag = f"{tag}s{index}"
         # An invisible catcher across the whole row, so a finger that lands
         # anywhere near the track moves the knob. A three-pixel line is not a
@@ -3267,14 +4739,16 @@ class TutorUI:
         self.canvas.create_rectangle(x0 + pad, top, x1 - pad, top + row,
                                      fill="#FFFFFF", outline="",
                                      tags=(tag, row_tag))
+        # A letter's knob is in the colour of the curve it moves.
+        colour = knob.get("colour") or COL_INDIGO
         self.canvas.create_text(x0 + pad, mid, text=knob["label"], anchor="w",
-                                font=name, fill=COL_TEXT_DIM,
+                                font=name, fill=colour if knob.get("colour") else COL_TEXT_DIM,
                                 tags=(tag, row_tag))
         self.canvas.create_line(track[0], mid, track[1], mid, fill=COL_TRACK,
-                                width=4 if small else 7,
+                                width=m["track"], capstyle="round",
                                 tags=(tag, row_tag))
-        radius = 6 if small else 11
-        dot = self.canvas.create_oval(0, 0, 0, 0, fill=COL_INDIGO,
+        radius = m["knob"]
+        dot = self.canvas.create_oval(0, 0, 0, 0, fill=colour,
                                       outline="#FFFFFF", width=2,
                                       tags=(tag, row_tag))
         readout = self.canvas.create_text(x1 - pad, mid, text="", anchor="e",
@@ -3302,6 +4776,7 @@ class TutorUI:
 
     def _drag_knob(self, tag, index, event):
         """A finger on a slider. Every view redraws, not just the touched one."""
+        self._tap_handled = event.serial
         graph = self._graph
         if graph is None:
             return "break"
@@ -3325,19 +4800,20 @@ class TutorUI:
 
     def _enlarge_graph(self, event=None):
         """The same graph over the whole screen, sliders and all."""
+        if event is not None:
+            self._tap_handled = event.serial
         if self._graph is None:
             return "break"
         self.canvas.delete(self.BIG_GRAPH_TAG)
         self._graph["views"].pop(self.BIG_GRAPH_TAG, None)
-        ground = self.BIG_GRAPH_TAG + "ground"
+        ground = self.BIG_GRAPH_TAG + "edge"
         self.canvas.create_rectangle(0, 0, UI_W, UI_H, fill="#0B1020", outline="",
                                      tags=(self.BIG_GRAPH_TAG, ground))
-        self.canvas.tag_bind(ground, "<Button-1>", lambda e: self.hide_big_graph())
+        self.canvas.tag_bind(ground, "<Button-1>", lambda e: self.hide_big_graph(e))
         # The dark ground around the card is the close button, so it is left
         # wide enough to be hit with a thumb -- 30px up the sides and a clear
         # 46px strip along the bottom, where the words telling you so are.
-        self._draw_graph((30, 22, UI_W - 30, UI_H - 46), self.BIG_GRAPH_TAG,
-                         small=False)
+        self._draw_graph((30, 22, UI_W - 30, UI_H - 46), self.BIG_GRAPH_TAG, "big")
         self.canvas.create_text(UI_W / 2, UI_H - 16, text="tap the dark edge to close",
                                 font=self._font(9), fill="#8891A8",
                                 tags=(self.BIG_GRAPH_TAG,))
@@ -3347,15 +4823,673 @@ class TutorUI:
         close = self.BIG_GRAPH_TAG + "close"
         self._close_icon(UI_W - 26, 26, close)
         self.canvas.addtag_withtag(self.BIG_GRAPH_TAG, close)
-        self.canvas.tag_bind(close, "<Button-1>", lambda e: self.hide_big_graph())
+        self.canvas.tag_bind(close, "<Button-1>", lambda e: self.hide_big_graph(e))
         self.canvas.tag_raise(self.BIG_GRAPH_TAG)
+        if self.canvas.find_withtag(self.STOP_PILL_TAG):
+            self.canvas.tag_raise(self.STOP_PILL_TAG)
         return "break"
 
     def hide_big_graph(self, event=None):
+        if event is not None:
+            self._tap_handled = event.serial
         self.canvas.delete(self.BIG_GRAPH_TAG)
         if self._graph is not None:
             self._graph["views"].pop(self.BIG_GRAPH_TAG, None)
         return "break"
+
+    # -----------------------------------------------------------------
+    # the geometry lab: a solid or a figure to turn and tap
+    # -----------------------------------------------------------------
+    # A cube that turns under a finger, where a tap on edge AE and then on
+    # face ABCD says AE is perpendicular to it and draws the right angle where
+    # they meet; where three corners tapped are cut through, and a triangle's
+    # corner dragged changes its angles while they go on adding up to 180°.
+    #
+    # Drawn here with canvas items rather than by the 3D worker, and that is
+    # what makes the tapping possible: every corner, edge and face is drawn at
+    # a place on the screen this knows exactly, so a tap is a pick -- where a
+    # frame from the worker is only pixels. The measuring is geometry.py's;
+    # this is the glass and the finger. Like the live graph, there are two
+    # views of one figure: small on the board, and the lab over everything.
+    GEO_TAG = "geolab"
+    GEO_SMALL_TAG = "boardgeo"
+    GEO_TOP, GEO_BOTTOM = 52, 432
+    GEO_SPLIT = 522            # the figure left of this, the readings right of it
+    GEO_DRAG_DEG = 0.5         # degrees of turn per pixel of drag
+    GEO_FACE = "#DCE7FF"
+    GEO_EDGE = "#1E293B"
+    GEO_HIDDEN = "#94A3B8"
+    GEO_HINT_3D = ("Drag to turn it. Tap a corner, an edge or a face; tap two to see how "
+                   "they meet; tap three corners to cut through them.")
+    GEO_HINT_FLAT = ("Drag a corner to change the shape. Tap a corner for its angle, two "
+                     "sides for the angle between them, two corners for a diagonal.")
+
+    def show_geometry(self, figure, picks=None):
+        """Tk thread: the lab, open on this figure, pointing at these picks."""
+        camera.stop_live("a figure is going on the board")
+        self.clear_visual()
+        self._geo = {"figure": figure, "picks": list(picks or []),
+                     "yaw": 0.0 if figure.flat else -32.0,
+                     "pitch": 0.0 if figure.flat else 22.0,
+                     "big": False, "press": None, "frozen": None,
+                     "caption": ("", "hint")}
+        self._geo_job = None
+        self._geo_note()
+        self._geo_draw_small()
+        self._geo_open()
+        print(f"[GEOMETRY] Open: {figure.title}", flush=True)
+
+    def geometry_pick(self, picks):
+        """Tk thread: point at these parts of the figure that is up (None
+        keeps what was picked), and open the lab if it was shut."""
+        geo = getattr(self, "_geo", None)
+        if geo is None:
+            return
+        if picks is not None:
+            geo["picks"] = list(picks)
+        self._geo_note()
+        if geo["big"]:
+            self._geo_redraw()
+        else:
+            self._geo_draw_small()
+            self._geo_open()
+
+    def geometry_figure(self):
+        """Any thread: the figure in the lab, or None."""
+        geo = getattr(self, "_geo", None)
+        return geo["figure"] if geo else None
+
+    def geometry_open(self):
+        """Any thread: is the lab open full screen?"""
+        geo = getattr(self, "_geo", None)
+        return bool(geo and geo["big"])
+
+    def _geo_note(self):
+        """What the model is told about the lab (state.current_geometry), and
+        a line in the log for each change of pick."""
+        geo = self._geo
+        figure = geo["figure"]
+        app_state.current_geometry = geometry.lab_line(figure, geo["picks"])
+        if geo["picks"]:
+            print(f"[GEOMETRY] {app_state.current_geometry[:220]}", flush=True)
+
+    # ---- seeing it from where the finger has turned it ----
+    def _geo_view(self, box, small):
+        """Where the figure goes in `box`: its middle, its scale, its turn."""
+        geo = self._geo
+        if geo["frozen"] is not None and not small:
+            return geo["frozen"]
+        figure = geo["figure"]
+        x0, y0, x1, y1 = box
+        points = figure.points
+        low = [min(p[k] for p in points) for k in range(3)]
+        high = [max(p[k] for p in points) for k in range(3)]
+        centre = [(low[k] + high[k]) / 2 for k in range(3)]
+        if figure.flat:
+            width, height = max(high[0] - low[0], 1e-6), max(high[1] - low[1], 1e-6)
+            scale = min((x1 - x0) * 0.7 / width, (y1 - y0) * 0.68 / height)
+        else:
+            radius = max(math.dist(p, centre) for p in points) or 1.0
+            scale = min(x1 - x0, y1 - y0) * 0.43 / radius
+        return {"centre": centre, "scale": scale, "mid": ((x0 + x1) / 2, (y0 + y1) / 2),
+                "yaw": math.radians(geo["yaw"]), "pitch": math.radians(geo["pitch"])}
+
+    @staticmethod
+    def _geo_turn(view, v):
+        """A direction turned the way the figure is turned."""
+        yaw, pitch = view["yaw"], view["pitch"]
+        x, y, z = v
+        x, z = x * math.cos(yaw) + z * math.sin(yaw), -x * math.sin(yaw) + z * math.cos(yaw)
+        y, z = y * math.cos(pitch) - z * math.sin(pitch), y * math.sin(pitch) + z * math.cos(pitch)
+        return x, y, z
+
+    def _geo_project(self, view, p):
+        """(screen x, screen y, nearness) of a point of the figure."""
+        cx, cy, cz = view["centre"]
+        x, y, z = self._geo_turn(view, (p[0] - cx, p[1] - cy, p[2] - cz))
+        mx, my = view["mid"]
+        return mx + x * view["scale"], my - y * view["scale"], z
+
+    def _geo_draw_figure(self, tags, box, small):
+        """The figure, its picks and what they measure, into `box`. Returns
+        where everything landed, which is what a tap is matched against."""
+        c = self.canvas
+        geo = self._geo
+        figure = geo["figure"]
+        view = self._geo_view(box, small)
+        screen = [self._geo_project(view, p) for p in figure.points]
+        faces = figure.faces
+        if figure.flat:
+            visible = [True] * len(faces)
+        else:
+            visible = [self._geo_turn(view, figure.face_normal(k))[2] > 1e-6
+                       for k in range(len(faces))]
+        colours = {pick: geometry.PICK_COLOURS[i % len(geometry.PICK_COLOURS)]
+                   for i, pick in enumerate(geo["picks"])}
+        reading = geometry.measure(figure, geo["picks"])
+        light = (-0.35, 0.75, 0.55)
+
+        def flat_coords(indices):
+            return [v for i in indices for v in screen[i][:2]]
+
+        # Faces, the far ones first. Only the ones turned this way are filled:
+        # the others are behind, and show through as their dashed edges.
+        order = sorted(range(len(faces)),
+                       key=lambda k: sum(screen[i][2] for i in faces[k]) / len(faces[k]))
+        for k in order:
+            if not visible[k]:
+                continue
+            group = figure.groups.get(k)
+            picked = colours.get(("surface", group) if group else ("face", k))
+            if picked:
+                fill = _mix(picked, "#FFFFFF", 0.72)
+            elif figure.flat:
+                fill = "#EEF2FF"
+            else:
+                normal = self._geo_turn(view, figure.face_normal(k))
+                bright = max(0.0, sum(a * b for a, b in zip(normal, light)))
+                fill = _mix(self.GEO_FACE, "#FFFFFF", 0.15 + 0.55 * bright)
+            c.create_polygon(*flat_coords(faces[k]), fill=fill, outline="", tags=tags)
+        for mark in reading.marks:
+            if mark[0] == "polygon":
+                coords = [v for p in mark[1] for v in self._geo_project(view, p)[:2]]
+                c.create_polygon(*coords, fill=_mix(mark[2], "#FFFFFF", 0.35), stipple="gray50",
+                                 outline=mark[2], width=2, tags=tags)
+        # Edges: solid where they can be seen, dashed where they are behind.
+        for edge in figure.edges:
+            a, b = edge
+            beside = figure.edge_faces.get(edge, [])
+            seen = figure.flat or any(visible[k] for k in beside)
+            if edge in figure.smooth:
+                # Inside a curved surface: drawn only where it is the outline.
+                if len(beside) == 2 and visible[beside[0]] != visible[beside[1]]:
+                    c.create_line(*flat_coords((a, b)), fill=self.GEO_EDGE,
+                                  width=1 if small else 2, tags=tags)
+                continue
+            group = figure.groups.get(edge)
+            picked = colours.get(("rim", group) if group else ("edge", a, b))
+            if picked:
+                c.create_line(*flat_coords((a, b)), fill=picked, width=3 if small else 5,
+                              dash=() if seen else (7, 4), capstyle="round", tags=tags)
+            elif seen:
+                c.create_line(*flat_coords((a, b)), fill=self.GEO_EDGE,
+                              width=1.5 if small else 2.5, capstyle="round", tags=tags)
+            else:
+                c.create_line(*flat_coords((a, b)), fill=self.GEO_HIDDEN, width=1 if small else 1.5,
+                              dash=(5, 4), tags=tags)
+        # A round solid's radius and height, and what the picks drew.
+        for g, (_name, a, b) in enumerate(figure.guides):
+            picked = colours.get(("guide", g))
+            c.create_line(*flat_coords((a, b)), fill=picked or "#64748B",
+                          width=(3 if small else 4) if picked else 1.5,
+                          dash=() if picked else (4, 3), tags=tags)
+        arc_size = (max(math.dist(p, view["centre"]) for p in figure.points) or 1.0) * 0.16
+        placed = []     # the boxes of the angles' numbers, kept from landing on each other
+        for mark in reading.marks:
+            if mark[0] == "segment":
+                _kind, p, q, colour, dashed = mark
+                c.create_line(*self._geo_project(view, p)[:2], *self._geo_project(view, q)[:2],
+                              fill=colour, width=2 if small else 3,
+                              dash=(6, 4) if dashed else (), capstyle="round", tags=tags)
+            elif mark[0] == "arc" and not small:
+                self._geo_draw_arc(view, mark, arc_size, tags, placed)
+        # The corners, lettered, the letters pushed out from the middle.
+        mx, my = view["mid"]
+        font = self._font(8 if small else 13, True)
+        for i in sorted(figure.corners):
+            label = figure.labels[i]
+            sx, sy, _z = screen[i]
+            beside = [k for k, face in enumerate(faces) if i in face]
+            seen = figure.flat or not beside or any(visible[k] for k in beside)
+            picked = colours.get(("vertex", i))
+            dot = (5 if picked else 3) if small else (8 if picked else 4.5)
+            c.create_oval(sx - dot, sy - dot, sx + dot, sy + dot,
+                          fill=picked or (self.GEO_EDGE if seen else self.GEO_HIDDEN),
+                          outline="#FFFFFF" if picked else "", width=2, tags=tags)
+            if label:
+                dx, dy = sx - mx, sy - my
+                away = math.hypot(dx, dy) or 1.0
+                push = 11 if small else 19
+                c.create_text(sx + dx / away * push, sy + dy / away * push, text=label,
+                              font=font, fill=picked or (COL_TEXT if seen else COL_TEXT_DIM),
+                              tags=tags)
+        if (figure.flat and not small and figure.kind == "flat" and len(faces) == 1
+                and len(faces[0]) <= 10):
+            # A flat figure's sides, measured where they are.
+            ring = faces[0]
+            for a, b in zip(ring, ring[1:] + ring[:1]):
+                (ax, ay, _), (bx, by, _) = screen[a], screen[b]
+                ex, ey = (ax + bx) / 2 - mx, (ay + by) / 2 - my
+                away = math.hypot(ex, ey) or 1.0
+                length = math.dist(figure.points[a], figure.points[b])
+                c.create_text((ax + bx) / 2 + ex / away * 16, (ay + by) / 2 + ey / away * 16,
+                              text=geometry.number(length), font=self._font(9),
+                              fill=COL_TEXT_DIM, tags=tags)
+        return {"points": screen, "visible": visible, "order": order, "view": view}
+
+    def _geo_draw_arc(self, view, mark, size, tags, placed=None):
+        """An angle, drawn where it is: an arc between the two arms -- or the
+        little square of a right angle -- and its size beside it."""
+        _kind, centre, u, v, colour, words, facing = mark
+        if facing is not None and not self._geo["figure"].flat \
+                and self._geo_turn(view, facing)[2] < -0.05:
+            return      # drawn in a face on the far side
+        dot = sum(a * b for a, b in zip(u, v))
+        w = tuple(b - dot * a for a, b in zip(u, v))
+        length = math.sqrt(sum(x * x for x in w))
+        if length < 1e-9:
+            return
+        w = tuple(x / length for x in w)
+        theta = math.acos(max(-1.0, min(1.0, dot)))
+
+        def at(t, r):
+            return self._geo_project(view, tuple(
+                centre[k] + r * (math.cos(t) * u[k] + math.sin(t) * w[k]) for k in range(3)))[:2]
+        c = self.canvas
+        if abs(math.degrees(theta) - 90) < 0.5:
+            s = size * 0.6
+            corner = [tuple(centre[k] + s * u[k] for k in range(3)),
+                      tuple(centre[k] + s * u[k] + s * w[k] for k in range(3)),
+                      tuple(centre[k] + s * w[k] for k in range(3))]
+            c.create_line(*[v for p in corner for v in self._geo_project(view, p)[:2]],
+                          fill=colour, width=2, tags=tags)
+        else:
+            points = [at(theta * i / 16, size) for i in range(17)]
+            c.create_line(*[v for p in points for v in p], fill=colour, width=2, tags=tags)
+        # A narrow angle's number goes further out along it, clear of the
+        # numbers of the angles beside it at the same corner.
+        reach = 1.9 + max(0.0, (50.0 - math.degrees(theta)) / 50.0) * 1.8
+        font = self._font(10, True)
+        half = font.measure(words) / 2 + 5
+        placed = [] if placed is None else placed
+        for extra in (0.0, 0.8, 1.6, 2.4, 3.2):
+            lx, ly = at(theta / 2, size * (reach + extra))
+            box = (lx - half - 2, ly - 12, lx + half + 2, ly + 12)
+            if not any(box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3]
+                       for b in placed):
+                break
+        placed.append(box)
+        self._round_rect(lx - half, ly - 10, lx + half, ly + 10, 8, fill="#FFFFFF",
+                         outline=_mix(colour, "#FFFFFF", 0.5), tags=tags)
+        c.create_text(lx, ly, text=words, font=font, fill=colour, tags=tags)
+
+    # ---- on the board ----
+    def _geo_draw_small(self):
+        """The figure as it stands, small on the board; a tap opens the lab."""
+        c, tag = self.canvas, self.GEO_SMALL_TAG
+        c.delete(tag)
+        geo = getattr(self, "_geo", None)
+        if geo is None:
+            return
+        x0, y0, x1, y1 = self.VISUAL_BOX
+        self._round_rect(x0, y0, x1, y1, 10, fill="#FFFFFF", outline="#D8E0F0", tags=(tag,))
+        c.create_text(x0 + 12, y0 + 12, text=self._ellipsize(geo["figure"].title,
+                                                             self._font(8, True), x1 - x0 - 60),
+                      anchor="w", font=self._font(8, True), fill=COL_INDIGO, tags=(tag,))
+        self._geo_draw_figure((tag,), (x0 + 6, y0 + 22, x1 - 6, y1 - 6), small=True)
+        self._expand_icon(x1 - 17, y0 + 17, tag)
+        c.tag_bind(tag, "<Button-1>", self._geo_open)
+        self._restack()
+
+    # ---- the lab ----
+    def _geo_open(self, event=None):
+        if event is not None:
+            self._tap_handled = event.serial
+        geo = getattr(self, "_geo", None)
+        if geo is None:
+            return "break"
+        geo["big"] = True
+        self._geo_draw_big()
+        return "break"
+
+    def _geo_close(self, event=None):
+        if event is not None:
+            self._tap_handled = event.serial
+        geo = getattr(self, "_geo", None)
+        self.canvas.delete(self.GEO_TAG)
+        if geo is not None:
+            geo["big"] = False
+            geo["press"] = geo["frozen"] = None
+            self._geo_draw_small()
+        return "break"
+
+    def _drop_geometry(self):
+        """The figure is gone from both views."""
+        self.canvas.delete(self.GEO_TAG)
+        self.canvas.delete(self.GEO_SMALL_TAG)
+        if getattr(self, "_geo_job", None):
+            self.root.after_cancel(self._geo_job)
+        self._geo_job = None
+        self._geo = None
+        app_state.current_geometry = None
+
+    def _geo_draw_big(self):
+        c, tag = self.canvas, self.GEO_TAG
+        c.delete(tag)
+        c.create_rectangle(0, 0, UI_W, UI_H, fill="#FFFFFF", outline="", tags=(tag,))
+        area = tag + "area"
+        c.create_rectangle(0, self.GEO_TOP, self.GEO_SPLIT, self.GEO_BOTTOM, fill="#FFFFFF",
+                           outline="", tags=(tag, area))
+        fig = tag + "fig"
+        for target in (area, fig):
+            c.tag_bind(target, "<ButtonPress-1>", self._geo_press)
+            c.tag_bind(target, "<B1-Motion>", self._geo_drag)
+            c.tag_bind(target, "<ButtonRelease-1>", self._geo_release)
+        self._geo_draw_top()
+        self._geo_redraw()
+        self._geo_draw_bar()
+        c.tag_raise(tag)
+        if c.find_withtag(self.STOP_PILL_TAG):
+            c.tag_raise(self.STOP_PILL_TAG)
+
+    def _geo_redraw(self, figure_only=False):
+        """The figure, and -- unless only the view turned -- what it reads."""
+        geo = getattr(self, "_geo", None)
+        if geo is None or not geo["big"]:
+            return
+        c, tag = self.canvas, self.GEO_TAG
+        fig = tag + "fig"
+        c.delete(fig)
+        self._geo_screen = self._geo_draw_figure(
+            (tag, fig), (0, self.GEO_TOP, self.GEO_SPLIT, self.GEO_BOTTOM), small=False)
+        if not figure_only:
+            self._geo_draw_panel()
+            self._geo_draw_top()
+        # New lines land on top of everything; the panel and the bars stay over them.
+        for part in ("panel", "top", "bar"):
+            if c.find_withtag(tag + part):
+                c.tag_raise(tag + part)
+        if c.find_withtag(self.STOP_PILL_TAG):
+            c.tag_raise(self.STOP_PILL_TAG)
+
+    def _geo_schedule(self):
+        """A redraw soon -- one per frame, however many touches came in."""
+        if getattr(self, "_geo_job", None) is None:
+            self._geo_job = self.root.after(28, self._geo_frame)
+
+    def _geo_frame(self):
+        self._geo_job = None
+        geo = getattr(self, "_geo", None)
+        if geo is not None:
+            self._geo_redraw(figure_only=not geo["figure"].flat)
+
+    def _geo_draw_top(self):
+        c, tag = self.canvas, self.GEO_TAG
+        top = tag + "top"
+        c.delete(top)
+        geo = self._geo
+        tags = (tag, top)
+        c.create_rectangle(0, 0, UI_W, self.GEO_TOP, fill="#FFFFFF", outline="", tags=tags)
+        c.create_line(0, self.GEO_TOP, UI_W, self.GEO_TOP, fill=COL_FRAME, width=2, tags=tags)
+        cy = self.GEO_TOP / 2
+        title = self._ellipsize(geo["figure"].title, self._font(13, True),
+                                (480 if geo["figure"].flat else 486) - 16)
+        c.create_text(16, cy, text=title, anchor="w", font=self._font(13, True),
+                      fill=COL_INDIGO, tags=tags)
+
+        def button(name, x0, x1, words, command):
+            button_tag = f"{top}_{name}"
+            self._round_rect(x0, cy - 17, x1, cy + 17, 14, fill="#FFFFFF", outline=COL_INDIGO,
+                             width=2, tags=tags + (button_tag,))
+            c.create_text((x0 + x1) / 2, cy, text=words, font=self._font(11, True),
+                          fill=COL_INDIGO, tags=tags + (button_tag,))
+            c.tag_bind(button_tag, "<ButtonPress-1>",
+                       lambda e: self._wb_tapped(e, command))
+        if not geo["figure"].flat:
+            button("turn", 514, 616, "Turn back", self._geo_reset_view)
+        if geo["picks"]:
+            button("clear", 626, 712, "Clear", self._geo_clear)
+        close = top + "_close"
+        self._close_icon(UI_W - 26, cy, tags + (close,))
+        c.tag_bind(close, "<ButtonPress-1>",
+                   lambda e: self._wb_tapped(e, lambda: self.root.after_idle(self._geo_close)))
+
+    def _geo_draw_panel(self):
+        """What the picks measure, in their colours -- or, with nothing
+        picked, what there is to know about the figure and how to start."""
+        c, tag = self.canvas, self.GEO_TAG
+        panel = tag + "panel"
+        c.delete(panel)
+        geo = self._geo
+        figure = geo["figure"]
+        tags = (tag, panel)
+        x0, y0, x1, y1 = self.GEO_SPLIT, self.GEO_TOP + 2, UI_W, self.GEO_BOTTOM
+        # Its ground takes a stray press -- bound on the ground alone: a
+        # "break" bound to the whole panel would stop the Ask button's own.
+        ground = panel + "_ground"
+        c.create_rectangle(x0, y0, x1, y1, fill="#F8FAFF", outline="", tags=tags + (ground,))
+        c.tag_bind(ground, "<ButtonPress-1>", self._swallow_press)
+        c.create_line(x0, y0, x0, y1, fill=COL_FRAME, width=2, tags=tags)
+        left, width = x0 + 16, x1 - x0 - 30
+        ask_top = y1 - 52
+        y = y0 + 12
+        if geo["picks"]:
+            # A chip per pick, in its colour: what was tapped, in order.
+            x = left
+            for i, pick in enumerate(geo["picks"]):
+                colour = geometry.PICK_COLOURS[i % len(geometry.PICK_COLOURS)]
+                words = figure.element_name(pick)
+                chip = self._font(10, True).measure(words) + 22
+                if x + chip > x1 - 12:
+                    x, y = left, y + 30
+                self._round_rect(x, y, x + chip, y + 24, 12, fill=_mix(colour, "#FFFFFF", 0.85),
+                                 outline=colour, width=2, tags=tags)
+                c.create_text(x + chip / 2, y + 12, text=words, font=self._font(10, True),
+                              fill=colour, tags=tags)
+                x += chip + 6
+            y += 34
+            lines = geometry.measure(figure, geo["picks"]).lines
+        else:
+            lines = [(text, None, i == 0) for i, text in enumerate(self._geo_facts())]
+        for text, colour, bold in lines:
+            if y > ask_top - 18:
+                c.create_text(left, y, text="…", anchor="nw", font=self._font(10, True),
+                              fill=COL_TEXT_DIM, tags=tags)
+                break
+            item = c.create_text(left, y, text=text, anchor="nw", width=width,
+                                 font=self._font(11 if bold else 10, bold),
+                                 fill=colour or (COL_TEXT if bold else COL_TEXT_DIM), tags=tags)
+            y = c.bbox(item)[3] + (8 if bold else 5)
+        if not geo["picks"]:
+            item = c.create_text(left, y + 4, text=self.GEO_HINT_FLAT if figure.flat
+                                 else self.GEO_HINT_3D, anchor="nw", width=width,
+                                 font=self._font(10), fill="#7C3AED", tags=tags)
+            if c.bbox(item)[3] > ask_top - 6:
+                c.delete(item)
+        ask = panel + "_ask"
+        self._round_rect(left, ask_top, x1 - 14, y1 - 12, 18, fill=COL_INDIGO, outline=COL_INDIGO,
+                         tags=tags + (ask,))
+        self._sparkle(left + 24, (ask_top + y1 - 12) / 2, 7, "#FFFFFF", tags + (ask,))
+        c.create_text((left + x1 - 14) / 2 + 10, (ask_top + y1 - 12) / 2,
+                      text="Ask Liza about it" if geo["picks"] else "Ask Liza",
+                      font=self._font(12, True), fill="#FFFFFF", tags=tags + (ask,))
+        c.tag_bind(ask, "<ButtonPress-1>", lambda e: self._wb_tapped(e, self._geo_ask))
+
+    def _geo_facts(self):
+        """With nothing picked: a flat figure's angles as they stand -- live,
+        so dragging a corner shows them change and their total not -- and a
+        solid's counts and formulas."""
+        figure = self._geo["figure"]
+        if figure.flat and figure.kind == "flat" and len(figure.faces[0]) <= 10:
+            return geometry.live_facts(figure)
+        return [figure.title] + figure.facts
+
+    def _geo_draw_bar(self):
+        """Along the bottom: how to use it -- or her words, while she talks."""
+        c, tag = self.canvas, self.GEO_TAG
+        bar = tag + "bar"
+        c.delete(bar)
+        geo = self._geo
+        tags = (tag, bar)
+        self._geo_photos = []
+        c.create_rectangle(0, self.GEO_BOTTOM, UI_W, UI_H, fill=COL_BG, outline="", tags=tags)
+        c.create_line(0, self.GEO_BOTTOM, UI_W, self.GEO_BOTTOM, fill=COL_FRAME, width=2,
+                      tags=tags)
+        text, who = geo["caption"]
+        if not text:
+            # How to use it is in the panel; this strip is for her words.
+            text, who = "Pick something, then tap Ask Liza to hear why.", "hint"
+        colour = {"liza": STATE_STYLE["speaking"][1], "user": COL_INDIGO}.get(who, COL_TEXT_DIM)
+        line = text if who == "hint" else ("Liza: " if who == "liza" else "You: ") + text
+        self._overlay_text(16, (self.GEO_BOTTOM + UI_H) / 2, line, 11, fill=colour, anchor="w",
+                           tags=tags, width=UI_W - 32, max_lines=2, justify="left",
+                           photos=self._geo_photos)
+        c.tag_bind(bar, "<ButtonPress-1>", self._swallow_press)
+
+    def _geo_set_caption(self, text, speaker):
+        geo = getattr(self, "_geo", None)
+        if geo is None:
+            return
+        geo["caption"] = (text, speaker)
+        if geo["big"]:
+            self._geo_draw_bar()
+
+    # ---- the finger ----
+    def _geo_press(self, event):
+        self._tap_handled = event.serial
+        geo = self._geo
+        press = {"x": event.x, "y": event.y, "last": (event.x, event.y), "moved": False,
+                 "corner": None}
+        figure = geo["figure"]
+        if figure.flat and figure.kind == "flat":
+            # A corner under the finger is picked up to be moved, the view
+            # held still meanwhile so the corner stays under the finger.
+            screen = self._geo_screen["points"]
+            near = [(math.hypot(screen[i][0] - event.x, screen[i][1] - event.y), i)
+                    for i in figure.corners if figure.labels[i]]
+            near = [n for n in near if n[0] < 22]
+            if near:
+                press["corner"] = min(near)[1]
+                geo["frozen"] = self._geo_screen["view"]
+        geo["press"] = press
+        return "break"
+
+    def _geo_drag(self, event):
+        geo = getattr(self, "_geo", None)
+        press = geo and geo["press"]
+        if not press:
+            return "break"
+        if not press["moved"] and math.hypot(event.x - press["x"], event.y - press["y"]) < 7:
+            return "break"
+        press["moved"] = True
+        figure = geo["figure"]
+        if figure.flat:
+            if press["corner"] is not None:
+                view = geo["frozen"]
+                mx, my = view["mid"]
+                sx = min(max(event.x, 20), self.GEO_SPLIT - 20)
+                sy = min(max(event.y, self.GEO_TOP + 20), self.GEO_BOTTOM - 20)
+                figure.points[press["corner"]] = ((sx - mx) / view["scale"] + view["centre"][0],
+                                                  -(sy - my) / view["scale"] + view["centre"][1],
+                                                  0.0)
+                geometry.reshaped(figure)
+                self._geo_schedule()
+            return "break"
+        lx, ly = press["last"]
+        press["last"] = (event.x, event.y)
+        geo["yaw"] += (event.x - lx) * self.GEO_DRAG_DEG
+        geo["pitch"] = max(-85.0, min(85.0, geo["pitch"] + (event.y - ly) * self.GEO_DRAG_DEG))
+        self._geo_schedule()
+        return "break"
+
+    def _geo_release(self, event):
+        geo = getattr(self, "_geo", None)
+        if geo is None:
+            return "break"
+        press, geo["press"] = geo["press"], None
+        reshaped = press is not None and press["moved"] and press["corner"] is not None
+        geo["frozen"] = None
+        if press is not None and not press["moved"]:
+            element = self._geo_hit(event.x, event.y)
+            if element is not None:
+                geo["picks"] = geometry.add_pick(geo["figure"], geo["picks"], element)
+                self._geo_note()
+            self._geo_redraw()
+        elif reshaped:
+            self._geo_note()
+            self._geo_redraw()
+        return "break"
+
+    def _geo_hit(self, x, y):
+        """The corner, edge or face under a tap: a corner within a fingertip
+        first, then the nearest line, then the face in front."""
+        figure = self._geo["figure"]
+        screen = self._geo_screen
+        points, visible = screen["points"], screen["visible"]
+        best = None
+        for i in figure.corners:
+            if not figure.labels[i]:
+                continue
+            d = math.hypot(points[i][0] - x, points[i][1] - y)
+            if d < 18 and (best is None or d < best[0]):
+                best = (d, ("vertex", i))
+        if best:
+            return best[1]
+
+        def gap(a, b):
+            (ax, ay, _), (bx, by, _) = points[a], points[b]
+            dx, dy = bx - ax, by - ay
+            t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / max(1e-9, dx * dx + dy * dy)))
+            return math.hypot(ax + t * dx - x, ay + t * dy - y)
+        for edge in figure.edges:
+            if edge in figure.smooth:
+                continue
+            seen = figure.flat or any(visible[k] for k in figure.edge_faces.get(edge, []))
+            d = gap(*edge) + (0 if seen else 3)
+            if d < 11 and (best is None or d < best[0]):
+                group = figure.groups.get(edge)
+                best = (d, ("rim", group) if group else ("edge", edge[0], edge[1]))
+        for g, (_name, a, b) in enumerate(figure.guides):
+            d = gap(a, b)
+            if d < 11 and (best is None or d < best[0]):
+                best = (d, ("guide", g))
+        if best:
+            return best[1]
+        for k in reversed(screen["order"]):
+            if not visible[k]:
+                continue
+            ring = [points[i] for i in figure.faces[k]]
+            inside = False
+            for (ax, ay, _), (bx, by, _) in zip(ring, ring[1:] + ring[:1]):
+                if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay):
+                    inside = not inside
+            if inside:
+                group = figure.groups.get(k)
+                return ("surface", group) if group else ("face", k)
+        return None
+
+    def _geo_reset_view(self):
+        geo = self._geo
+        geo["yaw"], geo["pitch"] = -32.0, 22.0
+        self._geo_redraw()
+
+    def _geo_clear(self):
+        self._geo["picks"] = []
+        self._geo_note()
+        self._geo_redraw()
+
+    def _geo_ask(self):
+        """Ask Liza about what is picked: handed to ai_loop like the board's
+        Ask, with what was picked and what it measures in the question."""
+        geo = self._geo
+        figure = geo["figure"]
+        language = self._wb_language()
+        name = re.sub(r"^your\s+", "", figure.name, flags=re.IGNORECASE).lower()
+        if geo["picks"]:
+            headline = geometry.measure(figure, geo["picks"]).headline()
+            question = GEOMETRY_ASK_QUESTIONS.get(language, GEOMETRY_ASK_QUESTIONS["en"]).format(
+                figure=name, picks=", ".join(figure.element_name(p) for p in geo["picks"]),
+                reading=headline)
+        else:
+            question = GEOMETRY_ABOUT_QUESTIONS.get(
+                language, GEOMETRY_ABOUT_QUESTIONS["en"]).format(figure=name)
+        whiteboard.ask(question, language, source="geometry")
+        print("[GEOMETRY] Ask Liza tapped.", flush=True)
+        self.asleep = False
+        sleep_event.clear()
+        if playback_active.is_set() or not audio_queue.empty():
+            assistant.interrupt_playback()
+        self.set_state("thinking")
 
     def clear_transcript(self):
         """Put the board back to its opening line.
@@ -3367,6 +5501,10 @@ class TutorUI:
         self.speaker = "user"
         # A new student did not turn the camera on, and should not find it on.
         camera.stop_live("a different student")
+        # Nor write on somebody else's page, or tap their buttons.
+        self._wb_reset()
+        app_state.current_offers = []
+        self.show_offers([])
         self.clear_visual()
         app_state.current_graph = None
         app_state.current_visual = None
@@ -3409,6 +5547,10 @@ class TutorUI:
                                fill=STATE_STYLE["speaking"][1] if liza else COL_INDIGO)
         self.canvas.itemconfig(self.transcript_id, text=self._fit_transcript(text),
                                fill=COL_TEXT)
+        # The page covers this board, so it carries the same words along its
+        # own bottom edge -- and so does the geometry lab.
+        self._wb_set_caption(text, "liza" if liza else "user")
+        self._geo_set_caption(text, "liza" if liza else "user")
 
     def wake_up(self, event=None):
         """The Speak button. Wakes her from anything, including sleep."""
@@ -3456,9 +5598,18 @@ class TutorUI:
             # listening; waking on them set wake_event in the middle of a look,
             # and the next listen began as if Speak had been pressed.
             return
-        if self.MODEL3D_TAG in tags or self.BIG_MODEL3D_TAG in tags:
+        if (self.MODEL3D_TAG in tags or self.BIG_MODEL3D_TAG in tags
+                or self.GEO_TAG in tags or self.GEO_SMALL_TAG in tags):
             # Turning a 3D model is a dozen touches a minute. Each one waking
             # her would open the microphone on a child who is only looking.
+            # The geometry lab is turned and tapped the same way.
+            return
+        if self.OFFER_TAG in tags:
+            # A button she offered: it shows the thing, she need not listen.
+            return
+        if self.WB_TAG in tags or self.BOARD_BTN_TAG in tags or self._wb_open:
+            # Writing on the page is a hundred touches a minute, and none of
+            # them is "listen to me" -- that is the page's own mic button.
             return
         if self.asleep or self.overlay:
             # An overlay owns the whole screen, and every control on it is a
@@ -6684,6 +8835,27 @@ class HeadlessUI:
     def viewfinder_flash(self): pass
     def close_viewfinder(self): pass
     def set_camera_button(self, on): pass
+    # No screen, so no page to write on: whiteboard.available() says so.
+    def show_solution(self, panel): pass
+    # No lab to turn, but she is still told what was asked for.
+    def show_geometry(self, figure, picks=None):
+        import geometry
+        app_state.current_geometry = figure.describe() + (
+            "; picked " + ", ".join(figure.element_name(p) for p in picks) + ": "
+            + geometry.measure(figure, picks).sentence() if picks else "")
+    def geometry_pick(self, picks): pass
+    def geometry_figure(self): return None
+    def geometry_open(self): return False
+    def board_command(self, command): pass
+    def show_offers(self, offers): pass
+    def take_offer(self, index=0):
+        # No button to tap, but "yes, show me" still shows it.
+        offers = getattr(app_state, "current_offers", None) or []
+        if 0 <= index < len(offers):
+            import actions
+            app_state.current_offers = offers[:index] + offers[index + 1:]
+            threading.Thread(target=actions.run_offer, args=(offers[index],),
+                             daemon=True).start()
     def clear_transcript(self): pass
     def set_weather(self, reading): pass
     def set_now_playing(self, title, loading=False): pass

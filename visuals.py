@@ -36,6 +36,8 @@ from PIL import Image, ImageDraw, ImageFilter
 # equations over several lines. A leaf that reaches back into this module's
 # drawing helpers only at call time; see its header.
 import science
+# Worked solutions, step by step. A leaf of the same shape as science.
+import solution
 
 # The size everything is drawn at. The board shows it scaled down and the
 # full-screen view shows it nearly one-to-one, so one render serves both and the
@@ -715,6 +717,11 @@ _FUNCTIONS = {
     "floor": math.floor, "ceil": math.ceil, "round": round,
     "degrees": math.degrees, "radians": math.radians,
     "min": min, "max": max,
+    # What a Class 11 page has on it and Python does not: sec x, cosec x, cot x
+    # and the cube root. A zero underneath is a hole, like 1/x's (see _evaluate).
+    "sec": lambda v: 1 / math.cos(v), "csc": lambda v: 1 / math.sin(v),
+    "cot": lambda v: 1 / math.tan(v),
+    "cbrt": lambda v: math.copysign(abs(v) ** (1 / 3), v),
 }
 _CONSTANTS = {"pi": math.pi, "e": math.e, "tau": math.tau}
 _OPERATORS = {
@@ -820,27 +827,265 @@ def _evaluate(node, x, knobs):
     return None
 
 
-# "y = 2x^2" is what a person writes and "2*x**2" is what the parser reads.
-# Neither the model nor the student should have to know that, so the three
-# differences are closed here rather than in the prompt.
-def _normalise(text):
-    text = text.strip()
-    text = re.sub(r'^\s*[yf]\s*(?:\(\s*x\s*\))?\s*=\s*', '', text)
-    text = text.replace("^", "**").replace("\u00d7", "*").replace("\u00f7", "/")
-    # An implied multiplication: 2x, 3(x+1), x(x-1), 2pi, 2sin(x).
-    #
-    # The lookbehind is doing the real work. Without it the 10 in log10(x) is a
-    # number followed by a bracket like any other and the expression becomes
-    # log10*(x), which is a name this does not know multiplied by x -- so the
-    # one function whose name ends in a digit stopped plotting. A number only
-    # takes an implied * when nothing lettered or numeric runs into its front,
-    # which is exactly what distinguishes the 10 in "10x" from the 10 in
-    # "log10".
-    text = re.sub(r'(?<![A-Za-z_0-9.])(\d+(?:\.\d+)?)\s*(?=[A-Za-z(])',
-                  r'\1*', text)
-    text = re.sub(r'\b(x|pi|e)\s*\(', r'\1*(', text)
-    text = re.sub(r'\)\s*(?=[\dxA-Za-z(])', r')*', text)
+# ---- a formula as it is written, into something _check will read ----
+# "y = 2x^2" is what a person writes and "2*x**2" is what the parser reads, and
+# the board's reader copies a student's page AS WRITTEN: "y = A sin x + B",
+# "x² − 3", "√x", "|x|". So a formula is cut into tokens and put back together
+# with what a hand leaves out -- the multiplication sign (2x, A sin x), the
+# brackets round a function's argument (sin x) -- and in plain ASCII instead
+# of ², −, π and √. Neither the model nor the student should have to know.
+_SUPERSCRIPT = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺ˣⁿ⁽⁾", "0123456789-+xn()")
+_TO_SUPERSCRIPT = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+_SPELLED_ALIASES = {"ln": "log", "arcsin": "asin", "arccos": "acos", "arctan": "atan",
+                    "cosec": "csc", "lgten": "log10", "lgtwo": "log2"}
+# Longest first, so "sinh" is not sin then h, nor "cosec" cos then e and c.
+_SPELLED = sorted(set(_FUNCTIONS) | set(_SPELLED_ALIASES) | {"pi", "tau"},
+                  key=len, reverse=True)
+# "asinx" is far more often a·sin x than arcsin x, so these three only count
+# when nothing follows them: "asin(x)", the way a model writes it.
+_ONLY_WHOLE = {"asin", "acos", "atan"}
+_INVERSE = {"sin": "asin", "cos": "acos", "tan": "atan"}
+_FRACTIONS = {"½": "1/2", "⅓": "1/3", "⅔": "2/3", "¼": "1/4", "¾": "3/4", "⅕": "1/5",
+              "⅛": "1/8"}
+RE_TRIG_CALL = re.compile(r"\b(?:sin|cos|tan|sec|csc|cot)\(")
+RE_FORMULA_TOKEN = re.compile(r"(\d+\.?\d*|\.\d+)|([A-Za-zΑ-Ωα-ω]+)"
+                              r"|(\*\*|[-+*/^(),])|(\S)")
+# What names the curve on the left of "=": y, y₁, f(x), g(x). Not x itself --
+# "x = 3" is a line straight up, which is not a function of x.
+RE_NAMES_A_CURVE = re.compile(r"^\s*(?!x\s*$)[A-Za-z](?:_?\d+|[₀-₉]+)?\s*(?:\(\s*x\s*\))?\s*$")
+
+
+def _superscript(match):
+    power = match.group().translate(_SUPERSCRIPT)
+    return "^" + (power if re.fullmatch(r"-?\d+", power) else f"({power})")
+
+
+def _tidy_formula(text):
+    """The Unicode a page is copied in, as the ASCII the tokens are read from."""
+    text = (text or "").strip()
+    for dash in "−–—":
+        text = text.replace(dash, "-")
+    for times in "×·⋅∙✕":
+        text = text.replace(times, "*")
+    text = text.replace("÷", "/").replace("π", " pi ").replace("°", "")
+    for fraction, value in _FRACTIONS.items():
+        text = text.replace(fraction, f"({value})")
+    text = text.replace("∛", " cbrt ").replace("√", " sqrt ")
+    # Before the letters are split up, while "log10" is still one word.
+    text = re.sub(r"log_?(?:10|₁₀)", " lgten ", text)
+    text = re.sub(r"log_?(?:2|₂)(?![0-9])", " lgtwo ", text)
+    text = re.sub(r"\|([^|]+)\|", r" abs(\1) ", text)
+    text = text.translate(str.maketrans("[]{}", "()()"))
+    return re.sub(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺ˣⁿ⁽⁾]+", _superscript, text)
+
+
+def _letters(run):
+    """"Asinx" -> A, sin, x: the longest known word at each point, else one
+    letter. A word that is all unknown letters is a word, not maths."""
+    out, index = [], 0
+    while index < len(run):
+        word = None
+        for known in _SPELLED:
+            piece = run[index:index + len(known)]
+            if piece.lower() != known:
+                continue
+            # "Sin x" at the start of a line is still sin.
+            if not (piece.islower() or (index == 0 and piece[1:].islower())):
+                continue
+            if known in _ONLY_WHOLE and index + len(known) != len(run):
+                continue
+            word = known
+            break
+        if word is None:
+            out.append(("name", run[index]))
+            index += 1
+            continue
+        index += len(word)
+        word = _SPELLED_ALIASES.get(word, word)
+        out.append(("name" if word in _CONSTANTS else "func", word))
+    if len(run) >= 3 and all(kind == "name" and len(text) == 1 for kind, text in out):
+        raise _BadExpression(f"{run!r} is a word")
+    return out
+
+
+def _formula_tokens(text):
+    tokens = []
+    for number, letters, operator, other in RE_FORMULA_TOKEN.findall(text):
+        if other:
+            raise _BadExpression(f"cannot plot {other!r}")
+        if number:
+            tokens.append(("num", number))
+        elif letters:
+            tokens.extend(_letters(letters))
+        elif operator in "()":
+            tokens.append(("open" if operator == "(" else "close", operator))
+        elif operator == ",":
+            tokens.append(("comma", ","))
+        else:
+            tokens.append(("op", "^" if operator == "**" else operator))
+    return tokens
+
+
+def _bracket(tokens, start):
+    """The tokens inside the bracket opening at tokens[start], and the index
+    after it closes."""
+    depth = 0
+    for index in range(start, len(tokens)):
+        kind = tokens[index][0]
+        depth += (kind == "open") - (kind == "close")
+        if depth == 0:
+            return tokens[start + 1:index], index + 1
+    raise _BadExpression("a bracket that is never closed")
+
+
+def _python(tokens):
+    """Python source for some tokens, with the "*" a hand leaves out put back:
+    2x, 3(x+1), x(x-1), 2pi, A sin x, (x+1)(x-2)."""
+    pieces, after_value, index = [], False, 0
+
+    def put(text, starts_value, ends_value):
+        nonlocal after_value
+        if after_value and starts_value:
+            pieces.append("*")
+        pieces.append(text)
+        after_value = ends_value
+
+    while index < len(tokens):
+        kind, text = tokens[index]
+        if kind in ("num", "name"):
+            put(text, True, True)
+            index += 1
+        elif kind == "open":
+            inner, index = _bracket(tokens, index)
+            put("(" + _python(inner) + ")", True, True)
+        elif kind == "close":
+            raise _BadExpression("a bracket closed that was never opened")
+        elif kind == "func":
+            call, index = _call(tokens, index)
+            put(call, True, True)
+        else:
+            put("**" if text == "^" else text, False, False)
+            index += 1
+    return "".join(pieces)
+
+
+def _call(tokens, index):
+    """sin x, sin(2x), sin²x, sin⁻¹x: (Python for the call, the index after it)."""
+    name, index = tokens[index][1], index + 1
+    power = None
+    if index < len(tokens) and tokens[index] == ("op", "^"):
+        # sin²x -- the square is of sin x. And sin⁻¹x is not a power at all.
+        sign = int(index + 1 < len(tokens) and tokens[index + 1] == ("op", "-"))
+        if index + 1 + sign < len(tokens) and tokens[index + 1 + sign][0] == "num":
+            power = "-" * sign + tokens[index + 1 + sign][1]
+            index += 2 + sign
+    if power == "-1" and name in _INVERSE:
+        name, power = _INVERSE[name], None
+    if index < len(tokens) and tokens[index][0] == "open":
+        inner, index = _bracket(tokens, index)
+    else:
+        # No brackets: the argument is the term straight after it -- x, 2x,
+        # 3x², πx -- and it stops at the next sign, so "A sin x + B" is
+        # A·sin(x) + B and not A·sin(x + B).
+        end = index + int(index < len(tokens) and tokens[index] == ("op", "-"))
+        first = end
+        while end < len(tokens) and tokens[end][0] in ("num", "name"):
+            end += 1
+            if (end + 1 < len(tokens) and tokens[end] == ("op", "^")
+                    and tokens[end + 1][0] in ("num", "name")):
+                end += 2
+        if end == first:
+            raise _BadExpression(f"{name} of nothing")
+        inner, index = tokens[index:end], end
+    call = f"{name}({_python(inner)})"
+    return (f"{call}**{power}" if power is not None else call), index
+
+
+def _handwritten(text):
+    """(Python for one side of a formula, the letters in it other than x and
+    the constants, in the order they are written)."""
+    tokens = _formula_tokens(_tidy_formula(text))
+    if not tokens:
+        raise _BadExpression("nothing to plot")
+    depth = 0
+    for kind, _ in tokens:
+        depth += (kind == "open") - (kind == "close")
+        if kind == "comma" and depth == 0:
+            # "1,5" is a point, or a bar -- not a formula.
+            raise _BadExpression("a comma outside a function's brackets")
+    names = [t for kind, t in tokens if kind == "name"]
+    if "x" not in names and "θ" in names:
+        # y = sin θ is the same curve as y = sin x, drawn along the same axis.
+        tokens = [("name", "x") if token == ("name", "θ") else token for token in tokens]
+        names = ["x" if n == "θ" else n for n in names]
+    if "y" in names:
+        raise _BadExpression("y on both sides is a curve, not a function of x")
+    letters = []
+    for name in names:
+        if name != "x" and name not in _CONSTANTS and name not in letters:
+            letters.append(name)
+    return _python(tokens), letters
+
+
+def _curve_sides(part):
+    """The expressions one written formula draws. "y = x²" is one curve, and
+    so is "x² − 5x + 6 = 0" (the axis is already there to be the 0). "2x + 3
+    = 7" is two -- the line and the level it has to reach, which cross where
+    x is the answer."""
+    left, equals, right = part.partition("=")
+    if not equals:
+        return [part]
+    if "=" in right:
+        raise _BadExpression("two equals signs")
+    if left.strip() == "x":
+        raise _BadExpression("x = a number is a line straight up, not a function of x")
+    if RE_NAMES_A_CURVE.match(left):
+        return [right]
+    if re.fullmatch(r"\s*0+(?:\.0+)?\s*", right):
+        return [left]
+    return [left, right]
+
+
+def formula_label(text):
+    """A formula the way it looks on paper: "y = x^2 - 3" as y = x² − 3."""
+    text = re.sub(r"\s+", " ", (text or "").strip().replace("**", "^"))
+    text = re.sub(r"\^\(?(-?\d+)\)?", lambda m: m.group(1).translate(_TO_SUPERSCRIPT), text)
+    text = re.sub(r"(\d)\s*\*\s*(?=[A-Za-z(])", r"\1", text)
+    text = text.replace("*", "·").replace("sqrt", "√").replace("pi", "π")
+    text = re.sub(r"(?<=\S)-|-(?=\S)", "−", text)
+    if "=" not in text:
+        text = "y = " + text
     return text
+
+
+def _resting_value(trees, name):
+    """Where a free letter's slider starts. 0 where it is added on -- the B in
+    A sin x + B -- and 1 where it multiplies, so the curve opens as the plain
+    one, y = sin x, and the sliders move it from there. 2 as a power: x¹ is a
+    line, and the student wrote a letter there to bend something."""
+    parents, names = {}, []
+    for tree in trees:
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+            if isinstance(node, ast.Name) and node.id == name:
+                names.append(node)
+    roles = set()
+    for node in names:
+        parent = parents.get(node)
+        if isinstance(parent, ast.UnaryOp):
+            parent = parents.get(parent)
+        if isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Pow):
+            roles.add("power")
+        elif isinstance(parent, ast.BinOp) and isinstance(parent.op, (ast.Add, ast.Sub)):
+            roles.add("added")
+        else:
+            roles.add("times")
+    if "power" in roles:
+        return 2.0, (-3.0, 6.0, 1.0)
+    if roles == {"added"}:
+        return 0.0, (-5.0, 5.0, 0.1)
+    return 1.0, (-5.0, 5.0, 0.1)
 
 
 # One slider per number in the expression, and the position of the number is
@@ -898,51 +1143,152 @@ def _find_knobs(tree, parameters):
     return knobs
 
 
-def _looks_like_a_function(part):
-    """True for "y = x^2" and "sin(x)", false for "Mon=3" and "1,5"."""
-    return bool(re.search(r'(?<![A-Za-z])x(?![A-Za-z])', part))
+# One colour per curve, red first and then blue as on the board in the
+# reference, and each formula written underneath in its own colour -- so
+# which line is which is never a question. A single curve keeps the blue.
+GRAPH_ONE = "#1D4ED8"
+GRAPH_COLOURS = ("#DC2626", "#1D4ED8", "#059669", "#9333EA")
+MAX_CURVES = 4
+MAX_KNOBS = 3
+PI_TICKS = [(-2 * math.pi, "−2π"), (-math.pi, "−π"), (0.0, "0"),
+            (math.pi, "π"), (2 * math.pi, "2π")]
+RE_WINDOW = re.compile(r'^\s*x\s*(?:range)?\s*[:=]\s*(-?[\d.]+)\s*(?:\.\.|to|,)'
+                       r'\s*(-?[\d.]+)\s*$', re.IGNORECASE)
+# "a=1": a letter's starting value. One letter, so "Mon=3" is still a bar.
+RE_SETTING = re.compile(r'^\s*([A-Za-zα-ω])\s*=\s*(-?\d+(?:\.\d+)?)\s*$')
+RE_HAS_X = re.compile(r'(?<![A-Za-z_])x(?![A-Za-z_(])')
+
+
+def _curves_in(part):
+    """[(what to call it, Python, its letters)] for one part of a graph's
+    payload -- [] when the part is not a formula: a title, a bar's "Mon=3"."""
+    try:
+        sides = _curve_sides(part)
+        found = [(side.strip(),) + _handwritten(side) for side in sides]
+    except _BadExpression:
+        return []
+    left = part.partition("=")[0]
+    if len(sides) == 1 and "=" in part and RE_NAMES_A_CURVE.match(left):
+        return [(part.strip(), found[0][1], found[0][2])]
+    return [("y = " + side, python, letters) for side, python, letters in found]
 
 
 def plot_spec(kind, payload):
-    """A live-graph spec for "y = x^2", or None if this is not that.
+    """A live-graph spec for "y = x^2" -- or for several curves on one graph,
+    "y = x² − 3; y = A sin x + B" -- or None if this is not that.
 
     Returned to actions.show_visual_action, which sends it to the screen
     instead of rendering a PNG. None means "this was not a formula" and the
     ordinary picture path takes over, so bar data and x,y points are untouched.
+
+    A letter with no value given -- the A and B a student writes -- is a
+    slider of its own, starting where the curve is the plain one (see
+    _resting_value). Numbers become sliders only when there is one curve and
+    no letters: then every number in it is what there is to play with.
     """
     if (kind or "").strip().lower() not in ("graph", "plot", "chart", "bar"):
         return None
     parts = _split_labels(payload or "", limit=12)
-    formula_at = next((i for i, p in enumerate(parts)
-                       if _looks_like_a_function(p)), None)
-    if formula_at is None:
-        return None
-    title = "; ".join(parts[:formula_at]).strip() or None
-    expression = _normalise(parts[formula_at])
-    low, high = -5.0, 5.0
-    parameters = {}
-    for part in parts[formula_at + 1:]:
-        window = re.match(r'^\s*x\s*(?:range)?\s*[:=]\s*(-?[\d.]+)\s*(?:\.\.|to|,)'
-                          r'\s*(-?[\d.]+)\s*$', part, re.IGNORECASE)
-        if window:
-            low, high = float(window.group(1)), float(window.group(2))
+    title_parts, window, settings, curves = [], None, {}, []
+    for part in parts:
+        match = RE_WINDOW.match(part)
+        if match:
+            window = float(match.group(1)), float(match.group(2))
             continue
-        named = re.match(r'^\s*([a-zA-Z]\w*)\s*=\s*(-?\d+(?:\.\d+)?)\s*$', part)
-        if named and named.group(1) != "x":
-            parameters[named.group(1)] = float(named.group(2))
-    try:
-        tree = ast.parse(expression, mode="eval")
-        _check(tree, set(parameters) | {"x"})
-    except (SyntaxError, ValueError, _BadExpression) as exc:
-        print(f"[VISUAL] Not plotting {expression!r}: {exc}", flush=True)
+        match = RE_SETTING.match(part)
+        if match and match.group(1) not in ("x", "y"):
+            settings[match.group(1)] = float(match.group(2))
+            continue
+        found = _curves_in(part)
+        if not found:
+            if not curves:
+                title_parts.append(part)
+            continue
+        for source, python, letters in found:
+            try:
+                tree = ast.parse(python, mode="eval")
+                _check(tree, set(letters) | {"x"})
+            except (SyntaxError, ValueError, _BadExpression) as exc:
+                print(f"[VISUAL] Not plotting {python!r}: {exc}", flush=True)
+                continue
+            if len(curves) < MAX_CURVES:
+                curves.append({"source": source, "tree": tree, "python": python,
+                               "letters": letters})
+    # A level ("y = 7") means something beside a curve that crosses it, and
+    # nothing on its own.
+    if not any(RE_HAS_X.search(c["python"]) for c in curves):
         return None
-    if low >= high:
+    letters = []
+    for curve in curves:
+        letters += [n for n in curve["letters"] if n not in letters]
+    trees = [c["tree"] for c in curves]
+    knobs = []
+    for name in letters[:MAX_KNOBS]:
+        if name in settings:
+            value = settings[name]
+            low, high, step = _knob_range(value, False)
+        else:
+            value, (low, high, step) = _resting_value(trees, name)
+        knobs.append({"key": name, "label": name, "value": value,
+                      "low": low, "high": high, "step": step})
+    if len(letters) > MAX_KNOBS:
+        # The fourth letter has no slider, so it sits at its resting value.
+        for name in letters[MAX_KNOBS:]:
+            value = settings.get(name, _resting_value(trees, name)[0])
+            for tree in trees:
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Name) and node.id == name:
+                        node.id = repr(value)
+        curves = [dict(c, tree=ast.parse(ast.unparse(c["tree"]), mode="eval"))
+                  for c in curves]
+    if not letters and len(curves) == 1:
+        knobs = _find_knobs(curves[0]["tree"], {})
+    ticks = None
+    if window and window[0] < window[1]:
+        low, high = window
+    elif any(RE_TRIG_CALL.search(c["python"]) for c in curves):
+        # One whole turn either way: a sine wave reads as a sine wave.
+        low, high, ticks = -2 * math.pi, 2 * math.pi, PI_TICKS
+    else:
         low, high = -5.0, 5.0
-    return {"title": title, "source": parts[formula_at].strip(), "tree": tree,
-            "knobs": _find_knobs(tree, parameters), "x_low": low, "x_high": high}
+    colours = (GRAPH_ONE,) if len(curves) == 1 else GRAPH_COLOURS
+    spec = {"title": "; ".join(title_parts).strip() or None,
+            "source": "; ".join(c["source"] for c in curves),
+            "tree": curves[0]["tree"],
+            "curves": [{"source": c["source"], "label": formula_label(c["source"]),
+                        "tree": c["tree"], "colour": colours[i % len(colours)]}
+                       for i, c in enumerate(curves)],
+            "knobs": knobs, "x_low": low, "x_high": high, "x_ticks": ticks}
+    if len(curves) > 1:
+        # A letter's slider in the colour of the curve it moves: the A and B
+        # of "A sin x + B" are blue when that curve is.
+        for knob in knobs:
+            owner = next((i for i, c in enumerate(curves) if knob["key"] in c["letters"]),
+                         None)
+            if owner is not None:
+                knob["colour"] = spec["curves"][owner]["colour"]
+    if not window and ticks is None and _right_of_zero_only(spec):
+        # log x and √x have nothing left of the y axis: half a graph of nothing.
+        spec["x_low"], spec["x_high"] = -1.0, 9.0
+    return spec
 
 
-def sample(spec, values=None):
+def _right_of_zero_only(spec):
+    """True when no curve with x in it has a value left of the y axis."""
+    seen = False
+    for index, curve in enumerate(spec["curves"]):
+        if not RE_HAS_X.search(ast.unparse(curve["tree"])):
+            continue
+        for x, y in sample(spec, None, index):
+            if y is None:
+                continue
+            if x < -1e-9:
+                return False
+            seen = True
+    return seen
+
+
+def sample(spec, values=None, curve=0):
     """[(x, y) or (x, None)] across the window, for the knobs as they stand.
 
     The Nones are the holes -- 1/x at zero, sqrt of a negative -- and the screen
@@ -952,17 +1298,98 @@ def sample(spec, values=None):
     for index, knob in enumerate(spec["knobs"]):
         current = knob["value"] if values is None else values[index]
         knobs[knob["key"]] = current
+    curves = spec.get("curves")
+    tree = curves[curve]["tree"] if curves else spec["tree"]
     low, high = spec["x_low"], spec["x_high"]
     step = (high - low) / (SAMPLES - 1)
     points = []
     for index in range(SAMPLES):
         x = low + index * step
-        value = _evaluate(spec["tree"], x, knobs)
+        value = _evaluate(tree, x, knobs)
         if value is None or value != value or value in (float("inf"), float("-inf")):
             points.append((x, None))
         else:
             points.append((x, float(value)))
     return points
+
+
+def _spread(points):
+    """(lowest, highest) of one curve -- the middle ninety per cent of it when
+    the extremes are an asymptote's. None for a curve with no values at all."""
+    values = sorted(y for _, y in points if y is not None)
+    if not values:
+        return None
+    low, high = values[0], values[-1]
+    inner_low = values[int(len(values) * 0.05)]
+    inner_high = values[max(0, int(len(values) * 0.95) - 1)]
+    inner = inner_high - inner_low
+    if inner > 0 and (high - low) > 6 * inner:
+        low, high = inner_low, inner_high
+    return low, high
+
+
+def _landmarks(points):
+    """The heights a reader of a curve looks for: where it turns, where it
+    crosses the x axis, where it meets the y axis."""
+    found = []
+    defined = [(x, y) for x, y in points if y is not None]
+    for (x0, y0), (x1, y1), (_, y2) in zip(defined, defined[1:], defined[2:]):
+        if (y1 - y0) * (y2 - y1) < 0:
+            found.append(y1)
+        if y0 * y1 <= 0:
+            found.append(0.0)
+        if x0 <= 0 <= x1:
+            found.append(y0)
+    return found
+
+
+def y_window(spec, values=None, aspect=0.6):
+    """The y range a view of the graph is drawn between, given what the
+    curves actually do. `aspect` is a plot's height over its width, roughly.
+
+    The full spread, normally -- clipping the top off a parabola to make it
+    tidy is drawing a different parabola. The exception is an asymptote:
+    1/x near zero runs to eighty and turns every other value on the graph
+    into the same flat line along the axis. So when the extremes are more
+    than six times the span the middle ninety per cent occupies, the middle
+    ninety per cent is what gets drawn.
+
+    And with several curves, when one would flatten another -- x² − 3 reaches
+    thirty-six where sin x never passes one -- the window is built round
+    what matters in each, as a teacher draws both on one board: all of the
+    small one, and where the big one turns and crosses, with the y steps
+    about the size of the x steps. The big one runs off the top, as on paper.
+    """
+    runs = [sample(spec, values, i) for i in range(len(spec.get("curves") or [None]))]
+    spreads = [(s, run) for s, run in ((_spread(run), run) for run in runs) if s]
+    if not spreads:
+        return -1.0, 1.0
+    low = min(s[0] for s, _ in spreads)
+    high = max(s[1] for s, _ in spreads)
+    spans = [max(s[1] - s[0], 1e-9) for s, _ in spreads]
+    if len(spreads) > 1 and max(spans) > 4 * min(spans):
+        small = 4 * min(spans)
+        keep = []
+        for (s, run), span in zip(spreads, spans):
+            keep += list(s) if span <= small else (_landmarks(run) or list(s))
+        whole = high - low
+        low, high = min(keep), max(keep)
+        least = min(whole, (spec["x_high"] - spec["x_low"]) * aspect)
+        if high - low < least:
+            middle = (low + high) / 2
+            low, high = middle - least / 2, middle + least / 2
+    if high - low < 1e-9:
+        low, high = low - 1, high + 1
+    pad = (high - low) * 0.1
+    low, high = low - pad, high + pad
+    # Bring the x axis into view when it is nearly there anyway. A school
+    # graph that does not show where zero is has lost half its meaning.
+    span = high - low
+    if 0 < low < span * 0.25:
+        low = 0.0
+    elif high < 0 and -high < span * 0.25:
+        high = 0.0
+    return low, high
 
 
 def describe(spec, values=None):
@@ -980,6 +1407,9 @@ def describe(spec, values=None):
     knobs = spec["knobs"]
     current = [k["value"] if values is None else values[index]
                for index, k in enumerate(knobs)]
+    if len(spec.get("curves") or []) > 1:
+        return " and ".join(c["source"] for c in spec["curves"]) + "".join(
+            f", {k['key']}={value:g}" for k, value in zip(knobs, current))
     if not knobs or any(isinstance(k["key"], str) for k in knobs):
         text = spec["source"]
         for knob, value in zip(knobs, current):
@@ -1726,6 +2156,23 @@ def _measure_polygon(draw, points, notes, x0, y0, size):
     return leftover
 
 
+def drawable_shape(payload):
+    """True when _shape knows how to draw this one -- so a button for it
+    does not open onto "I have not learned to draw that yet"."""
+    parts = _split_labels(payload or "", limit=8)
+    if not parts:
+        return False
+    import models3d
+    if models3d.find_solid(parts[0]) is not None:
+        return True
+    wanted = re.sub(r'\s+', ' ', parts[0]).strip().lower().strip(".")
+    wanted = re.sub(r'^(?:a|an|the)\s+', '', wanted)
+    wanted = re.sub(r'\s*(?:shape|figure)$', '', wanted)
+    name = _POLYGON_ALIASES.get(wanted, wanted)
+    return name in _POLYGONS or name in ("circle", "वृत्त", "oval", "ellipse",
+                                         "semicircle", "half circle")
+
+
 def _shape(payload):
     """A flat shape, drawn big, with whatever measurements were given on it.
 
@@ -1740,6 +2187,11 @@ def _shape(payload):
     parts = _split_labels(payload, limit=8)
     if not parts:
         return None, "tell me which shape to draw"
+    # A cube or a cylinder is a solid: drawn the way the book draws one, with
+    # its measurements on and its volume worked out. See _solid.
+    import models3d
+    if models3d.find_solid(parts[0]) is not None:
+        return _solid(payload)
     wanted = re.sub(r'\s+', ' ', parts[0]).strip().lower().strip(".")
     wanted = re.sub(r'^(?:a|an|the)\s+', '', wanted)
     wanted = re.sub(r'\s*(?:shape|figure)$', '', wanted)
@@ -1786,6 +2238,298 @@ def _shape(payload):
         draw.text(((RENDER_W - width) / 2, RENDER_H - 46), text, font=note_font,
                   fill=INK_DIM)
     return image, ""
+
+
+# ---------------------------------------------------------------------------
+# solids, drawn flat the way a textbook draws them
+# ---------------------------------------------------------------------------
+# "Draw a cube" used to end in "I have not learned to draw a cube yet" and then
+# a picture from an image model -- the one kind of drawing this file exists to
+# keep away from numbers. So the school solids are drawn here in the textbook's
+# own convention: the front face square-on, the depth going back at an angle,
+# the edges you cannot see dashed. The measurements come from the same reading
+# the 3D models use (models3d.measurements), and the formulas underneath are
+# the 3D model's own, so the flat figure and the turning one never disagree.
+HIDDEN = "#8FA3C8"
+DEPTH_ANGLE = math.radians(35)
+
+
+def _dash(draw, a, b, colour, width=4, dash=12, gap=9):
+    """A dashed line: an edge at the back that the eye knows is there."""
+    (x0, y0), (x1, y1) = a, b
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 1:
+        return
+    ux, uy = (x1 - x0) / length, (y1 - y0) / length
+    t = 0.0
+    while t < length:
+        end = min(t + dash, length)
+        draw.line([(x0 + ux * t, y0 + uy * t), (x0 + ux * end, y0 + uy * end)],
+                  fill=colour, width=width)
+        t = end + gap
+
+
+def _arc_points(cx, cy, rx, ry, a0, a1, n=48):
+    """Points round an ellipse from angle a0 to a1 (degrees, 0 = right,
+    90 = down, as the screen counts)."""
+    return [(cx + rx * math.cos(math.radians(a0 + (a1 - a0) * i / n)),
+             cy + ry * math.sin(math.radians(a0 + (a1 - a0) * i / n))) for i in range(n + 1)]
+
+
+def _ellipse_edge(draw, cx, cy, rx, ry, colour, width=5, back_hidden=True):
+    """The rim of a circular face seen at an angle: the near half drawn, the
+    far half dashed when the solid hides it."""
+    near = _arc_points(cx, cy, rx, ry, 0, 180)
+    draw.line(near, fill=colour, width=width, joint="curve")
+    far = _arc_points(cx, cy, rx, ry, 180, 360)
+    if back_hidden:
+        for i in range(0, len(far) - 1, 2):
+            draw.line([far[i], far[i + 1]], fill=HIDDEN, width=width - 1)
+    else:
+        draw.line(far, fill=colour, width=width, joint="curve")
+
+
+def _say(draw, xy, text, anchor="mm", size=21, colour=INK):
+    if text:
+        draw.text(xy, text, font=_script_font(text, size), fill=colour, anchor=anchor)
+
+
+def _solid(payload):
+    import models3d
+    parts = _split_labels(payload, limit=8)
+    builder = models3d.find_solid(parts[0])
+    found, unit = models3d.measurements(payload)
+    model = builder(payload)
+    kind = builder.__name__
+    image, draw, top = _canvas(model["title"])
+    formulas = model.get("formulas") or []
+    room_h = RENDER_H - top - (29 * len(formulas) + 10 if formulas else 20)
+    box = (RENDER_W / 2 - 250, top + 4, RENDER_W / 2 + 250, top + room_h)
+    _draw_solid(draw, kind, found, unit, box, payload)
+    y = top + room_h + 2
+    for line in formulas:
+        _say(draw, (RENDER_W / 2, y + 13), line, size=20, colour=ACCENT)
+        y += 29
+    return image, ""
+
+
+def _measure(found, *names):
+    for name in names:
+        if found.get(name) is not None:
+            return found[name]
+    return None
+
+
+def _draw_solid(draw, kind, found, unit, box, payload=""):
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    ink, face, lw = STAGE_COLOURS[0], ACCENT_SOFT, 5
+    side_tint, top_tint = "#C9D7F2", "#E9F0FC"
+
+    def named(name, value):
+        return f"{name} = {_tidy(value)} {unit}".strip() if value is not None else name
+
+    if kind in ("cube", "cuboid"):
+        a = _measure(found, "a", "_")
+        l = _measure(found, "l") or a or (3.0 if kind == "cuboid" else 1.0)
+        b = _measure(found, "b") or a or (2.0 if kind == "cuboid" else 1.0)
+        hh = _measure(found, "h") or a or (1.5 if kind == "cuboid" else 1.0)
+        dx_u, dy_u = math.cos(DEPTH_ANGLE) * 0.55, math.sin(DEPTH_ANGLE) * 0.55
+        k = min((w - 120) / (l + b * dx_u), (h - 60) / (hh + b * dy_u))
+        W, H, dx, dy = l * k, hh * k, b * k * dx_u, -b * k * dy_u
+        X = cx - (W + dx) / 2
+        Y = cy + (H - dy) / 2
+        P = [(X, Y), (X + W, Y), (X + W, Y - H), (X, Y - H)]
+        Q = [(x + dx, y + dy) for x, y in P]
+        draw.polygon([P[1], Q[1], Q[2], P[2]], fill=side_tint)
+        draw.polygon([P[3], P[2], Q[2], Q[3]], fill=top_tint)
+        draw.polygon(P, fill=face)
+        for a_, b_ in ((Q[0], Q[1]), (Q[0], Q[3]), (P[0], Q[0])):
+            _dash(draw, a_, b_, HIDDEN)
+        for a_, b_ in ((P[0], P[1]), (P[1], P[2]), (P[2], P[3]), (P[3], P[0]),
+                       (Q[3], Q[2]), (Q[1], Q[2]), (P[2], Q[2]), (P[3], Q[3]), (P[1], Q[1])):
+            draw.line([a_, b_], fill=ink, width=lw)
+        if kind == "cube":
+            _say(draw, ((P[0][0] + P[1][0]) / 2, Y + 24), named("a", a))
+        else:
+            _say(draw, ((P[0][0] + P[1][0]) / 2, Y + 24), named("l", _measure(found, "l")))
+            _say(draw, (X - 14, Y - H / 2), named("h", _measure(found, "h")), anchor="rm")
+            _say(draw, ((P[1][0] + Q[1][0]) / 2 + 16, (P[1][1] + Q[1][1]) / 2 + 6),
+                 named("b", _measure(found, "b")), anchor="lm")
+    elif kind in ("cylinder", "cone"):
+        r = _measure(found, "r") or 1.0
+        hh = _measure(found, "h") or (2.0 if kind == "cylinder" else 2.2)
+        k = min((w - 200) / (2 * r), (h - 50) / (hh + 0.64 * r))
+        rx, H = r * k, hh * k
+        ry = rx * 0.32
+        top_y, base_y = cy - H / 2, cy + H / 2
+        if kind == "cylinder":
+            draw.rectangle([cx - rx, top_y, cx + rx, base_y], fill=face)
+            draw.ellipse([cx - rx, base_y - ry, cx + rx, base_y + ry], fill=face)
+            draw.ellipse([cx - rx, top_y - ry, cx + rx, top_y + ry], fill=top_tint)
+            draw.line([(cx - rx, top_y), (cx - rx, base_y)], fill=ink, width=lw)
+            draw.line([(cx + rx, top_y), (cx + rx, base_y)], fill=ink, width=lw)
+            _ellipse_edge(draw, cx, top_y, rx, ry, ink, back_hidden=False)
+            _ellipse_edge(draw, cx, base_y, rx, ry, ink)
+            draw.line([(cx, top_y), (cx + rx, top_y)], fill="#15803D", width=4)
+            draw.ellipse([cx - 5, top_y - 5, cx + 5, top_y + 5], fill="#15803D")
+            _say(draw, (cx + rx / 2, top_y - ry - 18), named("r", _measure(found, "r")))
+            _dash(draw, (cx, top_y), (cx, base_y), HIDDEN, width=3)
+            _say(draw, (cx + rx + 16, cy), named("h", _measure(found, "h")), anchor="lm")
+        else:
+            apex = (cx, top_y)
+            draw.polygon([apex, (cx - rx, base_y), (cx + rx, base_y)], fill=face)
+            draw.ellipse([cx - rx, base_y - ry, cx + rx, base_y + ry], fill=face)
+            draw.line([apex, (cx - rx, base_y)], fill=ink, width=lw)
+            draw.line([apex, (cx + rx, base_y)], fill=ink, width=lw)
+            _ellipse_edge(draw, cx, base_y, rx, ry, ink)
+            _dash(draw, apex, (cx, base_y), HIDDEN, width=3)
+            draw.line([(cx, base_y), (cx + rx, base_y)], fill="#15803D", width=4)
+            draw.ellipse([cx - 5, base_y - 5, cx + 5, base_y + 5], fill="#15803D")
+            _say(draw, (cx + rx + 14, base_y + 4), named("r", _measure(found, "r")), anchor="lm")
+            # Height on the left and slant on the right, each just outside the
+            # edge at that height, so neither sits on a line.
+            _say(draw, (cx - rx * 0.6 - 16, top_y + H * 0.6), named("h", _measure(found, "h")),
+                 anchor="rm")
+            slant = _measure(found, "slant")
+            if slant is None and _measure(found, "r") and _measure(found, "h"):
+                slant = math.hypot(found["r"], found["h"])
+            _say(draw, (cx + rx * 0.45 + 16, top_y + H * 0.45), named("l", slant), anchor="lm")
+    elif kind in ("sphere", "hemisphere"):
+        r = _measure(found, "r", "_")
+        R = min(w - 160, h - 40) / 2
+        ry = R * 0.3
+        if kind == "sphere":
+            draw.ellipse([cx - R, cy - R, cx + R, cy + R], fill=face, outline=ink, width=lw)
+            _ellipse_edge(draw, cx, cy, R, ry, ink, width=4)
+            base = cy
+        else:
+            R = min(w - 160, (h - 40) * 1.4) / 2
+            base = cy + R * 0.45
+            draw.pieslice([cx - R, base - R, cx + R, base + R], 180, 360, fill=face)
+            draw.arc([cx - R, base - R, cx + R, base + R], 180, 360, fill=ink, width=lw)
+            draw.ellipse([cx - R, base - ry, cx + R, base + ry], fill=top_tint)
+            _ellipse_edge(draw, cx, base, R, ry, ink, width=lw)
+        draw.line([(cx, base), (cx + R, base)], fill="#15803D", width=4)
+        draw.ellipse([cx - 6, base - 6, cx + 6, base + 6], fill="#15803D")
+        # Clear of the rim: outside a ball, above the line in a dome.
+        if kind == "sphere":
+            _say(draw, (cx + R + 14, base), named("r", r), anchor="lm")
+        else:
+            _say(draw, (cx + R / 2, base - ry - 18), named("r", r))
+    elif kind in ("polygon_pyramid", "tetrahedron"):
+        import models3d
+        n = 3 if kind == "tetrahedron" else models3d.polygon_sides(payload, default=4)
+        a = _measure(found, "a", "base", "_")
+        hh = _measure(found, "h")
+        radius = 1.0
+        side = 2 * radius * math.sin(math.pi / n)
+        if kind == "tetrahedron":
+            height = side * math.sqrt(2 / 3)
+        else:
+            height = (hh / a * side) if a and hh else 1.6
+        # The base lies flat and goes back at the same angle as the cube's
+        # depth: a point (u, v) on it is drawn at u + v·cos, up by v·sin.
+        depth = 0.55
+        # A triangle on its flat side puts one face exactly edge-on at this
+        # angle, and the solid reads as a flat triangle; a quarter turn more
+        # opens it out.
+        ring = models3d.regular_polygon(n, radius, turn=25.0 if n == 3 else 0.0)
+        flat = [(u + v * math.cos(DEPTH_ANGLE) * depth, v * math.sin(DEPTH_ANGLE) * depth)
+                for u, v in ring]
+        apex_up = height
+        span_x = max(p[0] for p in flat) - min(p[0] for p in flat)
+        span_y = (max(p[1] for p in flat) - min(p[1] for p in flat)) + apex_up
+        k = min((w - 140) / span_x, (h - 60) / span_y)
+        left = min(p[0] for p in flat)
+        bottom = min(p[1] for p in flat)
+        ox = cx - span_x * k / 2 - left * k
+        oy = cy + span_y * k / 2 + bottom * k
+        B = [(ox + x * k, oy - y * k) for x, y in flat]
+        A = (ox, oy - apex_up * k)
+        # A face shows when its outline keeps its winding on the page: the
+        # base is wound anticlockwise from above, each side (Pi, Pi+1, apex)
+        # anticlockwise from outside -- and an edge shows when either face it
+        # bounds does.
+        def turns(p, q, r):
+            return (q[0] - p[0]) * (-(r[1] - p[1])) - (-(q[1] - p[1])) * (r[0] - p[0])
+        shows = [turns(B[i], B[(i + 1) % n], A) > 0 for i in range(n)]
+        for i in range(n):
+            if shows[i]:
+                draw.polygon([B[i], B[(i + 1) % n], A], fill=face if i % 2 == 0 else side_tint)
+        for i in range(n):
+            j = (i + 1) % n
+            if shows[i]:
+                draw.line([B[i], B[j]], fill=ink, width=lw)
+            else:
+                _dash(draw, B[i], B[j], HIDDEN)
+            if shows[i] or shows[i - 1]:
+                draw.line([A, B[i]], fill=ink, width=lw)
+            else:
+                _dash(draw, A, B[i], HIDDEN)
+        foot = (ox, oy)
+        _dash(draw, A, foot, HIDDEN, width=3)
+        front = max(range(n), key=lambda i: B[i][1] + B[(i + 1) % n][1])
+        under = ((B[front][0] + B[(front + 1) % n][0]) / 2,
+                 max(B[front][1], B[(front + 1) % n][1]) + 24)
+        _say(draw, under, named("a", a))
+        leftmost = min(B, key=lambda p: p[0])
+        _say(draw, ((A[0] + leftmost[0]) / 2 - 14, (A[1] + leftmost[1]) / 2), named("h", hh),
+             anchor="rm")
+    elif kind == "polygon_prism":
+        import models3d
+        a = _measure(found, "a", "base")
+        length = _measure(found, "l", "h")
+        sides = models3d.polygon_sides(payload, default=3)
+        # Standing on a flat side, as the book draws it; y down on the page.
+        ring = [(x, -y) for x, y in models3d.regular_polygon(sides, 1.0)]
+        span_x = max(p[0] for p in ring) - min(p[0] for p in ring)
+        span_y = max(p[1] for p in ring) - min(p[1] for p in ring)
+        edge = 2 * math.sin(math.pi / sides)
+        depth = (length / a * edge if a and length else 2.4) * 0.5
+        dx_u, dy_u = math.cos(DEPTH_ANGLE) * depth, math.sin(DEPTH_ANGLE) * depth
+        k = min((w - 120) / (span_x + dx_u), (h - 60) / (span_y + dy_u))
+        dx, dy = dx_u * k, -dy_u * k
+        ox = cx - (span_x * k + dx) / 2 - min(p[0] for p in ring) * k
+        oy = cy + (span_y * k - dy) / 2 - max(p[1] for p in ring) * k
+        F = [(ox + px * k, oy + py * k) for px, py in ring]
+        G = [(x + dx, y + dy) for x, y in F]
+        # Which side faces show: the ones the depth runs away from the front
+        # face across -- outward normal of their front edge along (dx, dy).
+        # A back edge shows when its side face does; an edge running back
+        # from a corner shows when either side face beside it does.
+        centre = (sum(p[0] for p in F) / sides, sum(p[1] for p in F) / sides)
+        shows = []
+        for i in range(sides):
+            j = (i + 1) % sides
+            nx, ny = F[j][1] - F[i][1], -(F[j][0] - F[i][0])
+            mid_x, mid_y = (F[i][0] + F[j][0]) / 2, (F[i][1] + F[j][1]) / 2
+            if (mid_x - centre[0]) * nx + (mid_y - centre[1]) * ny < 0:
+                nx, ny = -nx, -ny
+            shows.append(nx * dx + ny * dy > 0)
+        for i in range(sides):
+            j = (i + 1) % sides
+            if shows[i]:
+                draw.polygon([F[i], F[j], G[j], G[i]], fill=side_tint)
+        draw.polygon(F, fill=face)
+        for i in range(sides):
+            j = (i + 1) % sides
+            if shows[i]:
+                draw.line([G[i], G[j]], fill=ink, width=lw)
+            else:
+                _dash(draw, G[i], G[j], HIDDEN)
+            if shows[i] or shows[i - 1]:
+                draw.line([F[i], G[i]], fill=ink, width=lw)
+            else:
+                _dash(draw, F[i], G[i], HIDDEN)
+        for i in range(sides):
+            draw.line([F[i], F[(i + 1) % sides]], fill=ink, width=lw)
+        low = max(range(sides), key=lambda i: F[i][1] + F[(i + 1) % sides][1])
+        _say(draw, ((F[low][0] + F[(low + 1) % sides][0]) / 2, max(p[1] for p in F) + 24),
+             named("a", a))
+        _say(draw, (max(p[0] for p in G) + 14, (min(p[1] for p in G) + max(p[1] for p in F)) / 2),
+             named("length", length), anchor="lm")
 
 
 def _written(payload):
@@ -2012,6 +2756,10 @@ KINDS = {
     # The RE-TELL verdict, written out. Asked for by the verdict prompt, never
     # chosen for a question.
     "report": _report,
+    # Working, step by step, with the answer boxed -- solution.py. Drawn here
+    # and never by an image model, for the reason science.py gives: a picture
+    # of a sum can be wrong in a way the child cannot see.
+    "solution": solution.board_image,
     # Not a picture of anything, just the words on a card. Never chosen by the
     # model -- render_visual falls back to it when nothing else can draw the
     # thing that was asked for.
@@ -2058,12 +2806,71 @@ KIND_ALIASES = {
     "ray_diagram": "picture",
     "report_card": "report", "feedback": "report", "verdict": "report",
     "scorecard": "report",
+    "worked_solution": "solution", "worked_example": "solution",
+    "step_by_step": "solution", "stepwise": "solution", "working": "solution",
+    "solutions": "solution", "solve": "solution", "solved": "solution",
 }
 
 # Kinds whose failure must not fall back to a generated picture: an image model
 # gets a reaction, a force diagram or a circuit wrong in ways a student cannot
 # see. They fall back to the words on a card instead.
-NO_PICTURE_FALLBACK = {"reaction", "forces", "circuit", "report"}
+NO_PICTURE_FALLBACK = {"reaction", "forces", "circuit", "report", "solution"}
+
+
+# What a button that shows something says on it: the verb for the kind, in the
+# student's language. Used for the buttons she offers instead of asking "would
+# you like to see it?" (offer_visual), and for the button under a worked
+# solution (solution.see_label).
+OFFER_WORDS = {
+    "model3d": ("See it in 3D", "3D में देखो"),
+    "graph": ("See the graph", "ग्राफ़ देखो"),
+    "reaction": ("See the reaction", "अभिक्रिया देखो"),
+    "molecule": ("See the molecule", "अणु देखो"),
+    "equation": ("See the formula", "सूत्र देखो"),
+    "cycle": ("See the cycle", "चक्र देखो"),
+    "steps": ("See the steps", "चरण देखो"),
+    "picture": ("See a picture", "तस्वीर देखो"),
+    "shape": ("See the shape", "आकृति देखो"),
+    "geometry": ("Explore it", "जाँचो"),
+    "angle": ("See the angle", "कोण देखो"),
+    "solution": ("See the working", "हल देखो"),
+    "number_line": ("On a number line", "संख्या रेखा पर देखो"),
+    "table": ("See the table", "तालिका देखो"),
+    "forces": ("See the forces", "बल देखो"),
+    "circuit": ("See the circuit", "परिपथ देखो"),
+    "timeline": ("See the timeline", "समयरेखा देखो"),
+    "compare": ("Compare them", "तुलना देखो"),
+    "tree": ("See the tree", "वृक्ष देखो"),
+    "fraction": ("See the fraction", "भिन्न देखो"),
+    "clock": ("See the clock", "घड़ी देखो"),
+    "array": ("See it as dots", "बिंदुओं में देखो"),
+}
+RE_SIMULATION = re.compile(r"motion|fall|pendulum|spring|orbit|wave|collision|circuit|"
+                           r"field|refraction|reflection|diffraction|interference|solar",
+                           re.IGNORECASE)
+
+
+def offer_label(kind, payload, hindi=False):
+    """(the words on the button, the small line under them) for showing
+    `kind | payload`: ("Run the simulation", "Projectile motion")."""
+    kind = resolve_kind(kind)
+    head = (payload or "").split(";")[0].strip()
+    if kind == "model3d" and RE_SIMULATION.search(payload or ""):
+        words = "सिमुलेशन चलाओ" if hindi else "Run the simulation"
+    else:
+        en, hi = OFFER_WORDS.get(kind, ("See it", "देखो"))
+        words = hi if hindi else en
+    if kind == "graph" and "=" not in head:
+        # "Parabola; y = x^2": the formula says more than the name.
+        formula = next((p.strip() for p in (payload or "").split(";") if "=" in p), "")
+        head = formula or head
+    head = re.sub(r"\^\{?(\d)\}?", lambda m: "⁰¹²³⁴⁵⁶⁷⁸⁹"[int(m.group(1))], head)
+    head = re.sub(r"\s*->\s*", " → ", head)
+    if len(head) > 34:
+        head = head[:33].rstrip() + "…"
+    if "=" not in head and "→" not in head:
+        head = head[:1].upper() + head[1:]
+    return words, head
 
 
 def _save(image):
