@@ -1,6 +1,6 @@
 # How the code is laid out
 
-`assist.py` used to be one 10,622-line file. It is now seventeen, and this is the
+`assist.py` used to be one 10,622-line file. It is now twenty-five, and this is the
 map. Start with the table: it says which file to open for the change you want to
 make.
 
@@ -8,36 +8,44 @@ make.
 |---|---|---|
 | `assist.py` | 22 | nothing — it only starts the program |
 | `uibridge.py` | 40 | how another thread calls the screen |
-| `state.py` | 190 | the state the parts share |
-| `audio.py` | 290 | how she speaks, and the subtitles |
-| `profiles.py` | 365 | who is using the device |
-| `kg.py` | 475 | the Kindergarten flow under the screens |
-| `store.py` | 529 | the database, the knowledge graph, the progress log |
+| `state.py` | 272 | the state the parts share |
+| `profiles.py` | 368 | who is using the device |
+| `audio.py` | 387 | how she speaks, and the subtitles |
+| `spoken.py` | 347 | **how maths, chemistry and units are said aloud** |
+| `geometry.py` | 1,383 | **the geometry lab's maths: solids and figures lettered as a book letters them, and what a tap measures** |
+| `whiteboard.py` | 756 | **the board full screen: the picture of the page, her reading of it, the buttons under the writing, measuring a drawn figure, the spoken commands** |
+| `kg.py` | 534 | the Kindergarten flow under the screens |
+| `store.py` | 549 | the database, the knowledge graph, the progress log |
 | `camera.py` | 644 | **what she sees: the live camera, and when to look** |
-| `prompts.py` | 573 | **what she is told to be, and every fixed line she says** |
-| `media.py` | 666 | music and video |
-| `config.py` | 869 | **the .env, and every number worth tuning** |
-| `books.py` | 883 | the textbooks: fetching, indexing and searching them |
+| `media.py` | 673 | music and video |
+| `solution.py` | 674 | worked solutions, step by step: the board picture and the column beside the page |
+| `prompts.py` | 1,058 | **what she is told to be, and every fixed line she says** |
+| `config.py` | 973 | **the .env, and every number worth tuning** |
+| `models3d.py` | 1,520 | 3D models built from shapes: physics, biology, and the geometry solids (prisms and pyramids on any base) |
+| `viewer3d.py` | 1,001 | the 3D view's worker: turning a model into frames, and which builder answers a name |
 | `science.py` | 1,059 | reactions, molecules, force diagrams, circuits, multi-line equations on the board |
-| `kg_content.py` | 1,380 | the alphabets, the words, the stories |
-| `actions.py` | 1,438 | what she can do on the device |
-| `speech.py` | 1,731 | the microphone, the voice detector, Whisper |
-| `visuals.py` | 1,995 | everything drawn on the board |
-| `ui.py` | 5,794 | **everything that draws** |
-| `assistant.py` | 3,161 | `ai_loop` — the turn-by-turn state machine |
+| `kg_content.py` | 1,436 | the alphabets, the words, the stories |
+| `actions.py` | 1,942 | what she can do on the device, and the buttons she puts up — one for what you asked about even when her answer forgot |
+| `speech.py` | 1,958 | the microphone, the voice detector, Whisper |
+| `visuals.py` | 2,981 | everything drawn on the board, and the live graph's maths: formulas read as handwritten, several curves, letters on sliders |
+| `books.py` | 2,722 | the textbooks: fetching, indexing and searching them |
+| `ui.py` | 8,896 | **everything that draws** — the full-screen page and the geometry lab included |
+| `assistant.py` | 4,059 | `ai_loop` — the turn-by-turn state machine |
 
-`ai_loop` is 1,442 of `assistant.py`'s lines. It stays whole on purpose: it is
+`ai_loop` is about 2,200 of `assistant.py`'s lines. It stays whole on purpose: it is
 one state machine, and cutting it into pieces would make it harder to follow,
 not easier.
 
 ## Two rules that keep it untangled
 
 **1. Leaves import nothing of ours.** `config`, `state`, `uibridge`, `prompts`,
-`media`, `profiles`, `store`, `visuals`, `kg_content`, `books` and `camera`
-never import the assistant. You can open a shell, import one, and poke at it. (`books`
-imports `store`, which is itself a leaf; that is as deep as it goes. `visuals`
-imports `science`, which reaches back into `visuals`' drawing helpers only
-inside its functions, at call time.)
+`media`, `profiles`, `store`, `visuals`, `kg_content`, `books`, `camera`,
+`whiteboard`, `solution`, `spoken` and `geometry` never import the assistant. You can open a shell,
+import one, and poke at it. (`books` imports `store`, which is itself a leaf;
+that is as deep as it goes. `visuals` imports `science` and `solution`, which
+reach back into `visuals`' drawing helpers only inside their functions, at call
+time; `whiteboard` reaches `visuals`, `models3d` and `viewer3d` the same way,
+only inside `suggestions()`, to check a button can really be shown.)
 
 **2. A module that the assistant imports FROM, and that also calls back, binds
 the back-reference at the FOOT of the file.**

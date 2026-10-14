@@ -141,9 +141,12 @@ def fibonacci_sphere(count, radius=1.0, centre=(0, 0, 0)):
 
 
 def scene(title, parts, labels=(), legend=(), note="", view=None, spin=True,
-          lighting="normal"):
+          lighting="normal", formulas=()):
+    """`formulas` are lines worth reading -- "Volume = a³ = 64 cm³" -- set big
+    in the corner of the view rather than in the small print of `note`."""
     return {"kind": "parts", "title": title, "parts": list(parts),
             "labels": list(labels), "legend": list(legend), "note": note,
+            "formulas": list(formulas),
             "view": dict(view or {}), "spin": spin, "lighting": lighting,
             "animated": any("orbit" in p or p["shape"] == "particles" for p in parts)}
 
@@ -974,6 +977,498 @@ def chloroplast(_payload=""):
 # ---------------------------------------------------------------------------
 # Tried in order, first match wins. More specific names first: "plant cell"
 # before "cell", "sound wave" before "wave", "bacteriophage" before "virus".
+# ===========================================================================
+# GEOMETRY: the solids in a maths book
+# ===========================================================================
+# "Show me a cube in 3D" used to fall all the way through to PubChem, which
+# knows a compound called "cube" -- rotenone, C23H22O6, from the cubé plant --
+# and that is what was drawn: a molecule, for a child asking about a box. So the
+# solids a school asks about are drawn here, the way the textbook draws them:
+# see-through faces, the edges picked out, the corners marked, the measurements
+# written on, and the counts and formulas underneath. With numbers ("a cube of
+# side 4 cm") it is drawn to those proportions and the answers are worked out.
+FACE = "#7FA8FF"
+EDGE = "#FFE066"
+CORNER = "#FF6B6B"
+MEASURE = "#7CF29A"
+FACE_OPACITY = 0.45
+
+RE_MEASURE = re.compile(
+    r"\b(?P<name>slant\s+height|side|edge|length|breadth|width|height|depth|radius|"
+    r"diameter|base|slant|[arhlbwds])\b\s*(?:=|:|of|is|-)?\s*(?P<value>\d+(?:\.\d+)?)",
+    re.IGNORECASE)
+RE_UNIT = re.compile(r"\d\s*(mm|cm|km|m|in|inches|ft|feet|units?)\b", re.IGNORECASE)
+RE_TRIPLE = re.compile(r"(\d+(?:\.\d+)?)\s*\w*\s*[x×*]\s*(\d+(?:\.\d+)?)\s*\w*\s*[x×*]\s*"
+                       r"(\d+(?:\.\d+)?)", re.IGNORECASE)
+_MEASURE_NAMES = {"side": "a", "edge": "a", "a": "a", "s": "a", "length": "l", "l": "l",
+                  "breadth": "b", "width": "b", "b": "b", "w": "b", "height": "h",
+                  "depth": "h", "h": "h", "radius": "r", "r": "r", "diameter": "d",
+                  "d": "d", "base": "base", "slant": "slant", "slant height": "slant"}
+
+
+def measurements(payload):
+    """({"a": 4.0, "r": 3.0, ...}, "cm") out of "Cube; side = 4 cm" and the like."""
+    text = payload or ""
+    found = {}
+    for match in RE_MEASURE.finditer(text):
+        name = _MEASURE_NAMES[re.sub(r"\s+", " ", match.group("name").lower())]
+        found.setdefault(name, float(match.group("value")))
+    triple = RE_TRIPLE.search(text)
+    if triple and not {"l", "b", "h"} & set(found):
+        found["l"], found["b"], found["h"] = (float(v) for v in triple.groups())
+    if "d" in found and "r" not in found:
+        found["r"] = found["d"] / 2
+    if not found:
+        # "a cube of 4 cm": one number and nothing to say what it is.
+        bare = re.search(r"(\d+(?:\.\d+)?)", text)
+        if bare:
+            found["_"] = float(bare.group(1))
+    unit = RE_UNIT.search(text)
+    return found, (unit.group(1).lower() if unit else "")
+
+
+def _num(value):
+    """4.0 -> "4", 2.5 -> "2.5", 1436.755 -> "1436.76"."""
+    return f"{value:.2f}".rstrip("0").rstrip(".") if value is not None else ""
+
+
+def _with_unit(value, unit, power=1):
+    if value is None:
+        return ""
+    sup = {1: "", 2: "²", 3: "³"}[power]
+    return f"{_num(value)} {unit}{sup}".strip() if unit else _num(value)
+
+
+def _wire(vertices, edges, size):
+    """The edges as bright rods and the corners as dots: what makes a solid
+    read as a solid with faces you can see through."""
+    vertices = [tuple(float(c) for c in v) for v in vertices]
+    parts = [part("tube", EDGE, points=[vertices[i], vertices[j]], radius=0.022 * size)
+             for i, j in edges]
+    parts.append(part("points", CORNER, centres=vertices, radius=0.06 * size))
+    return parts
+
+
+def edge_label(text, a, b, size, centre=(0, 0, 0), push=0.42):
+    """A measurement written just outside the edge it measures: pushed away
+    from the middle of the solid, sideways in the opening view, so the labels
+    of three edges that meet at one corner go three different ways."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    mid = (a + b) / 2
+    out = mid - np.asarray(centre, float)
+    out[1] = 0.0
+    norm = np.linalg.norm(out)
+    out = out / norm if norm > 1e-9 else np.array([0.0, 0.0, -1.0])
+    return label(text, mid + out * size * push, mid)
+
+
+def _counts(faces, edges, vertices, curved=0):
+    """The key under the title: how many of each, in the colour they are drawn."""
+    legend = []
+    if faces:
+        legend.append(("", f"{faces} flat face{'s' if faces != 1 else ''}"
+                       if curved else f"{faces} faces", FACE))
+    if curved:
+        legend.append(("", f"{curved} curved surface{'s' if curved != 1 else ''}", FACE))
+    if edges:
+        legend.append(("", f"{edges} edge{'s' if edges != 1 else ''}", EDGE))
+    if vertices:
+        legend.append(("", f"{vertices} vert{'ices' if vertices != 1 else 'ex'}", CORNER))
+    return legend
+
+
+def _scale(*values):
+    """A factor that makes the biggest measurement 3 model units, so a cube of
+    side 400 and one of side 4 both fill the view."""
+    biggest = max((v for v in values if v), default=1.0)
+    return 3.0 / biggest
+
+
+SOLID_VIEW = {"camera": "xz", "azimuth": -32, "elevation": 22, "zoom": 1.05}
+
+
+def _box_solid(title, l, b, h, unit, labels_for):
+    """A cube or a cuboid: l along x, b along y, h up."""
+    k = _scale(l, b, h)
+    x, y, z = l * k / 2, b * k / 2, h * k / 2
+    corners = [(-x, -y, -z), (x, -y, -z), (x, y, -z), (-x, y, -z),
+               (-x, -y, z), (x, -y, z), (x, y, z), (-x, y, z)]
+    edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+             (0, 4), (1, 5), (2, 6), (3, 7)]
+    size = max(x, y, z) * 2
+    parts = [part("box", FACE, size=(2 * x, 2 * y, 2 * z), opacity=FACE_OPACITY)]
+    parts += _wire(corners, edges, size)
+    labels = [
+        label("Face", (0, -y, z + size * 0.42), (0, -y, z * 0.35)),
+        label("Vertex", (x + size * 0.3, -y, z + size * 0.3), (x, -y, z)),
+    ]
+    # The measurements on three edges that meet at one corner, as a book does.
+    labels += [edge_label(text, a, b, size) for text, a, b in labels_for(x, y, z)]
+    return title, parts, labels
+
+
+def cube(payload=""):
+    found, unit = measurements(payload)
+    a = found.get("a") or found.get("l") or found.get("_")
+    side = a or 1.0
+    title = f"Cube (side {_with_unit(a, unit)})" if a else "Cube"
+    name = f"a = {_with_unit(a, unit)}" if a else "Side a"
+
+    def labels_for(x, y, z):
+        return [(name, (-x, -y, -z), (x, -y, -z)),
+                ("Edge", (-x, -y, -z), (-x, -y, z))]
+    title, parts, labels = _box_solid(title, side, side, side, unit, labels_for)
+    formulas = ["Volume = a³" + (f" = {_with_unit(a ** 3, unit, 3)}" if a else ""),
+                "Surface area = 6a²" + (f" = {_with_unit(6 * a * a, unit, 2)}" if a else "")]
+    return scene(title, parts, labels, _counts(6, 12, 8),
+                 "All 12 edges are equal. Faces + vertices − edges = 6 + 8 − 12 = 2",
+                 SOLID_VIEW, formulas=formulas)
+
+
+def cuboid(payload=""):
+    found, unit = measurements(payload)
+    l, b, h = found.get("l"), found.get("b"), found.get("h")
+    given = l is not None and b is not None and h is not None
+    L, B, H = (l, b, h) if given else (3.0, 2.0, 1.5)
+    title = (f"Cuboid ({_num(l)} × {_num(b)} × {_with_unit(h, unit)})" if given
+             else "Cuboid")
+
+    def labels_for(x, y, z):
+        return [(f"Length l = {_with_unit(l, unit)}" if given else "Length l",
+                 (-x, -y, -z), (x, -y, -z)),
+                (f"Breadth b = {_with_unit(b, unit)}" if given else "Breadth b",
+                 (x, -y, -z), (x, y, -z)),
+                (f"Height h = {_with_unit(h, unit)}" if given else "Height h",
+                 (-x, -y, -z), (-x, -y, z))]
+    title, parts, labels = _box_solid(title, L, B, H, unit, labels_for)
+    formulas = ["Volume = l × b × h" + (f" = {_with_unit(l * b * h, unit, 3)}" if given else ""),
+                "Surface area = 2(lb + bh + hl)"
+                + (f" = {_with_unit(2 * (l * b + b * h + h * l), unit, 2)}" if given else "")]
+    return scene(title, parts, labels, _counts(6, 12, 8),
+                 "Opposite faces are equal rectangles", SOLID_VIEW, formulas=formulas)
+
+
+def _radius_line(start, end, size):
+    return part("tube", MEASURE, points=[tuple(start), tuple(end)], radius=0.018 * size)
+
+
+def sphere(payload=""):
+    found, unit = measurements(payload)
+    r = found.get("r") or found.get("_")
+    R = 1.5
+    parts = [part("sphere", FACE, radius=R, opacity=FACE_OPACITY),
+             # The equator, so the eye reads a ball and not a disc.
+             part("tube", EDGE, points=circle(R, normal=(0, 0, 1)), radius=0.02,
+                  closed=True),
+             part("points", CORNER, centres=[(0.0, 0.0, 0.0)], radius=0.07),
+             _radius_line((0, 0, 0), (R, 0, 0), 3.0)]
+    labels = [callout("Centre", (0, 0, 0.02), 2.6, lift=-0.9),
+              label(f"Radius r = {_with_unit(r, unit)}" if r else "Radius r",
+                    (1.0, 0, -1.2), (R * 0.55, 0, 0)),
+              callout("Curved surface", (-R * 0.7, 0, R * 0.7), 2.7, lift=0.4)]
+    formulas = ["Volume = 4/3 πr³" + (f" ≈ {_with_unit(4 / 3 * math.pi * r ** 3, unit, 3)}"
+                                      if r else ""),
+                "Surface area = 4πr²" + (f" ≈ {_with_unit(4 * math.pi * r * r, unit, 2)}"
+                                         if r else "")]
+    title = f"Sphere (radius {_with_unit(r, unit)})" if r else "Sphere"
+    return scene(title, parts, labels, _counts(0, 0, 0, curved=1),
+                 "No flat faces, no edges, no vertices. π ≈ 3.14", SOLID_VIEW,
+                 formulas=formulas)
+
+
+def hemisphere(payload=""):
+    found, unit = measurements(payload)
+    r = found.get("r") or found.get("_")
+    R = 1.6
+    dome = [(R * math.cos(t), R * math.sin(t)) for t in np.linspace(0, math.pi / 2, 40)]
+    parts = [part("revolve", FACE, profile=dome, opacity=FACE_OPACITY),
+             part("disc", FACE, inner=0.0, outer=R, opacity=FACE_OPACITY + 0.15),
+             part("tube", EDGE, points=circle(R), radius=0.022, closed=True),
+             part("points", CORNER, centres=[(0.0, 0.0, 0.0)], radius=0.07),
+             _radius_line((0, 0, 0), (R, 0, 0), 3.0)]
+    labels = [label(f"Radius r = {_with_unit(r, unit)}" if r else "Radius r",
+                    (1.2, 0, -0.9), (R * 0.55, 0, 0)),
+              callout("Curved surface", (-R * 0.6, 0, R * 0.75), 2.8, lift=0.5),
+              callout("Flat circular face", (-R * 0.5, 0, 0.0), 2.8, lift=-0.8)]
+    formulas = ["Volume = 2/3 πr³" + (f" ≈ {_with_unit(2 / 3 * math.pi * r ** 3, unit, 3)}"
+                                      if r else ""),
+                "Curved surface = 2πr²" + (f" ≈ {_with_unit(2 * math.pi * r * r, unit, 2)}"
+                                           if r else ""),
+                "Total surface = 3πr²" + (f" ≈ {_with_unit(3 * math.pi * r * r, unit, 2)}"
+                                          if r else "")]
+    title = f"Hemisphere (radius {_with_unit(r, unit)})" if r else "Hemisphere"
+    return scene(title, parts, labels, _counts(1, 1, 0, curved=1), "Half of a sphere. π ≈ 3.14",
+                 SOLID_VIEW, formulas=formulas)
+
+
+def cylinder(payload=""):
+    found, unit = measurements(payload)
+    r, h = found.get("r"), found.get("h")
+    k = _scale(2 * (r or 1.0), h or 2.0)
+    R, H = (r or 1.0) * k, (h or 2.0) * k
+    size = max(2 * R, H)
+    parts = [part("cylinder", FACE, radius=R, height=H, resolution=64,
+                  opacity=FACE_OPACITY),
+             part("tube", EDGE, points=circle(R, centre=(0, 0, H / 2)), radius=0.02 * size,
+                  closed=True),
+             part("tube", EDGE, points=circle(R, centre=(0, 0, -H / 2)), radius=0.02 * size,
+                  closed=True),
+             _radius_line((0, 0, H / 2), (R, 0, H / 2), size),
+             part("tube", MEASURE, points=[(0, 0, -H / 2), (0, 0, H / 2)], radius=0.012 * size,
+                  opacity=0.8),
+             part("points", CORNER, centres=[(0.0, 0.0, H / 2), (0.0, 0.0, -H / 2)],
+                  radius=0.045 * size)]
+    labels = [label(f"Radius r = {_with_unit(r, unit)}" if r else "Radius r",
+                    (R * 0.4, 0, H / 2 + size * 0.35), (R * 0.5, 0, H / 2)),
+              label(f"Height h = {_with_unit(h, unit)}" if h else "Height h",
+                    (-R - size * 0.55, 0, 0), (0, 0, 0)),
+              callout("Curved surface", (R, 0, -H * 0.15), R + size * 0.6),
+              callout("Circular face", (-R * 0.5, 0, -H / 2), R + size * 0.6, lift=-size * 0.15)]
+    both = r is not None and h is not None
+    formulas = ["Volume = πr²h" + (f" ≈ {_with_unit(math.pi * r * r * h, unit, 3)}" if both else ""),
+                "Curved surface = 2πrh"
+                + (f" ≈ {_with_unit(2 * math.pi * r * h, unit, 2)}" if both else ""),
+                "Total surface = 2πr(r + h)"
+                + (f" ≈ {_with_unit(2 * math.pi * r * (r + h), unit, 2)}" if both else "")]
+    title = (f"Cylinder (r = {_num(r)}, h = {_with_unit(h, unit)})" if both else "Cylinder")
+    return scene(title, parts, labels, _counts(2, 2, 0, curved=1), "π ≈ 3.14", SOLID_VIEW,
+                 formulas=formulas)
+
+
+def cone(payload=""):
+    found, unit = measurements(payload)
+    r, h, slant = found.get("r"), found.get("h"), found.get("slant")
+    if h is None and r is not None and slant is not None and slant > r:
+        h = math.sqrt(slant * slant - r * r)
+    if slant is None and r is not None and h is not None:
+        slant = math.sqrt(r * r + h * h)
+    k = _scale(2 * (r or 1.0), h or 2.2)
+    R, H = (r or 1.0) * k, (h or 2.2) * k
+    size = max(2 * R, H)
+    base, apex = -H / 2, H / 2
+    parts = [part("cone", FACE, radius=R, height=H, opacity=FACE_OPACITY),
+             part("tube", EDGE, points=circle(R, centre=(0, 0, base)), radius=0.02 * size,
+                  closed=True),
+             part("tube", MEASURE, points=[(0, 0, base), (0, 0, apex)], radius=0.012 * size),
+             _radius_line((0, 0, base), (R, 0, base), size),
+             part("tube", MEASURE, points=[(-R, 0, base), (0, 0, apex)], radius=0.014 * size,
+                  opacity=0.85),
+             part("points", CORNER, centres=[(0.0, 0.0, apex)], radius=0.055 * size)]
+    labels = [callout("Vertex (apex)", (0, 0, apex), size * 0.9, lift=size * 0.05),
+              label(f"Height h = {_with_unit(h, unit)}" if h else "Height h",
+                    (size * 0.55, 0, size * 0.15), (0, 0, 0)),
+              label(f"Radius r = {_with_unit(r, unit)}" if r else "Radius r",
+                    (R * 0.5, 0, base - size * 0.3), (R * 0.5, 0, base)),
+              label(f"Slant height l = {_with_unit(slant, unit)}" if slant else "Slant height l",
+                    (-R - size * 0.45, 0, 0.1), (-R / 2, 0, 0))]
+    both = r is not None and h is not None
+    formulas = ["Volume = ⅓πr²h" + (f" ≈ {_with_unit(math.pi * r * r * h / 3, unit, 3)}"
+                                    if both else ""),
+                "Curved surface = πrl" + (f" ≈ {_with_unit(math.pi * r * slant, unit, 2)}"
+                                          if both else ""),
+                "Slant height l = √(r² + h²)" + (f" = {_with_unit(slant, unit)}" if both else "")]
+    title = (f"Cone (r = {_num(r)}, h = {_with_unit(h, unit)})" if both else "Cone")
+    # Built point up: VTK's cone points along its direction.
+    parts[0]["direction"] = (0, 0, 1)
+    return scene(title, parts, labels, _counts(1, 1, 1, curved=1), "π ≈ 3.14", SOLID_VIEW,
+                 formulas=formulas)
+
+
+def _polyhedron_solid(vertices, faces):
+    edges = set()
+    for face in faces:
+        for i in range(len(face)):
+            a, b = face[i], face[(i + 1) % len(face)]
+            edges.add((min(a, b), max(a, b)))
+    return sorted(edges)
+
+
+# The polygon a prism or a pyramid stands on, by the word a book uses for it.
+# "Octagonal prism" used to match only the word "prism" -- the light-through-
+# glass model -- and a child who had drawn an octagon got a rainbow.
+POLYGON_SIDES = {"triangular": 3, "triangle": 3, "square": 4, "quadrilateral": 4,
+                 "pentagonal": 5, "pentagon": 5, "hexagonal": 6, "hexagon": 6,
+                 "heptagonal": 7, "heptagon": 7, "octagonal": 8, "octagon": 8,
+                 "nonagonal": 9, "decagonal": 10, "decagon": 10}
+POLYGON_NAMES = {3: "Triangular", 4: "Square", 5: "Pentagonal", 6: "Hexagonal",
+                 7: "Heptagonal", 8: "Octagonal", 9: "Nonagonal", 10: "Decagonal"}
+RE_POLYGON_SOLID = re.compile(
+    r"\b(?:(\d{1,2})[- ]?sided|(" + "|".join(POLYGON_SIDES) + r"))[- ]+(?:based\s+)?(prism|pyramid)",
+    re.IGNORECASE)
+
+
+def polygon_sides(payload, default=3):
+    """How many sides the base has: 8 for "octagonal prism", 5 for "a
+    5-sided pyramid"."""
+    match = RE_POLYGON_SOLID.search(payload or "")
+    if not match:
+        return default
+    if match.group(1):
+        return max(3, min(12, int(match.group(1))))
+    return POLYGON_SIDES[match.group(2).lower()]
+
+
+def regular_polygon(n, radius, turn=0.0):
+    """Corners of a regular n-sided polygon, standing on a flat side --
+    turned by `turn` degrees, for a view that would otherwise see a face
+    exactly edge-on."""
+    start = -math.pi / 2 + math.pi / n + math.radians(turn)
+    return [(radius * math.cos(start + TAU * i / n), radius * math.sin(start + TAU * i / n))
+            for i in range(n)]
+
+
+def polygon_area(n, side):
+    """The area of a regular polygon from its side: n a² / (4 tan(π/n))."""
+    return n * side * side / (4 * math.tan(math.pi / n))
+
+
+def _polygon_name(n):
+    return POLYGON_NAMES.get(n, f"{n}-sided")
+
+
+def polygon_pyramid(payload=""):
+    """A pyramid on any regular polygon: square, triangular, pentagonal..."""
+    n = polygon_sides(payload, default=4)
+    found, unit = measurements(payload)
+    a, h = found.get("a") or found.get("base") or found.get("_"), found.get("h")
+    side, height = a or 2.0, h or 1.8 * (a or 2.0) / 2.0
+    k = _scale(side / (2 * math.sin(math.pi / n)) * 2, height)
+    R, H = side / (2 * math.sin(math.pi / n)) * k, height * k
+    base = -H / 2
+    ring = regular_polygon(n, R)
+    vertices = [(x, y, base) for x, y in ring] + [(0.0, 0.0, H / 2)]
+    faces = [list(range(n))] + [[i, (i + 1) % n, n] for i in range(n)]
+    size = max(2 * R, H)
+    parts = [part("polyhedron", FACE, vertices=vertices, faces=faces, opacity=FACE_OPACITY),
+             part("tube", MEASURE, points=[(0, 0, base), (0, 0, H / 2)], radius=0.012 * size)]
+    parts += _wire(vertices, _polyhedron_solid(vertices, faces), size)
+    name = _polygon_name(n)
+    front = min(ring, key=lambda p: p[1])
+    labels = [callout("Apex", (0, 0, H / 2), size * 0.95, lift=size * 0.05),
+              callout(f"{name} base", (front[0] * 0.4, front[1], base), size * 1.0,
+                      lift=-size * 0.25),
+              callout("Triangular face", (front[0] * 0.5, front[1] * 0.5, 0), size * 1.0,
+                      lift=size * 0.2),
+              label(f"Height h = {_with_unit(h, unit)}" if h else "Height h",
+                    (size * 0.6, 0, size * 0.1), (0, 0, 0))]
+    both = a is not None and h is not None
+    formulas = ["Volume = ⅓ × base area × h"]
+    if both:
+        formulas.append(f"= ⅓ × {_num(polygon_area(n, a))} × {_num(h)}"
+                        f" = {_with_unit(polygon_area(n, a) * h / 3, unit, 3)}")
+    title = (f"{name} pyramid (base side {_num(a)}, h = {_with_unit(h, unit)})" if both
+             else f"{name} pyramid")
+    return scene(title, parts, labels, _counts(n + 1, 2 * n, n + 1),
+                 f"Faces + vertices − edges = {n + 1} + {n + 1} − {2 * n} = 2", SOLID_VIEW,
+                 formulas=formulas)
+
+
+def tetrahedron(payload=""):
+    found, unit = measurements(payload)
+    a = found.get("a") or found.get("_")
+    s = 1.6
+    vertices = [(s, s, s), (s, -s, -s), (-s, s, -s), (-s, -s, s)]
+    faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]
+    size = s * 2
+    parts = [part("polyhedron", FACE, vertices=vertices, faces=faces, opacity=FACE_OPACITY)]
+    parts += _wire(vertices, _polyhedron_solid(vertices, faces), size)
+    labels = [callout("Vertex", vertices[0], size * 1.0, lift=size * 0.1),
+              callout("Triangular face", (0, -s * 0.2, -s * 0.4), size * 1.0, lift=-size * 0.3),
+              callout("Edge", ((s - s) / 2, (-s - s) / 2 * 0.0, (s - s) / 2), size * 1.0)]
+    formulas = ["Volume = ⅓ × base area × h"]
+    if a:
+        formulas.append(f"= a³ ÷ (6√2) ≈ {_with_unit(a ** 3 / (6 * math.sqrt(2)), unit, 3)}")
+    title = f"Tetrahedron (edge {_with_unit(a, unit)})" if a else "Tetrahedron (triangular pyramid)"
+    return scene(title, parts, labels, _counts(4, 6, 4),
+                 "A triangular pyramid: every face is a triangle. 4 + 4 − 6 = 2", SOLID_VIEW,
+                 formulas=formulas)
+
+
+# Turned further round than the other solids, so one end -- the shape that
+# makes it this prism -- faces the viewer instead of standing edge-on.
+PRISM_VIEW = {"camera": "xz", "azimuth": -58, "elevation": 24, "zoom": 1.0}
+
+
+def _prism_solid(title, polygon, length, count_faces, note, formulas=()):
+    """A prism lying along x, its cross-section `polygon` standing in the y-z
+    plane, given as (y, z) points.
+
+    The renderer's prism extrudes an outline in x-y along z. Turned 90 degrees
+    about y, a point (x, y, z) goes to (z, y, -x): the extrusion then runs
+    along x, and an outline point (u, v) lands at y = v, z = -u. So the
+    outline is handed over as (-z, y), and lands where the wire is drawn."""
+    half = length / 2
+    ring = [(float(y), float(z)) for y, z in polygon]
+    vertices = [(-half, y, z) for y, z in ring] + [(half, y, z) for y, z in ring]
+    n = len(ring)
+    edges = ([(i, (i + 1) % n) for i in range(n)] + [(n + i, n + (i + 1) % n) for i in range(n)]
+             + [(i, n + i) for i in range(n)])
+    size = max(length, max(abs(c) for p in ring for c in p) * 2)
+    parts = [part("prism", FACE, points2d=[(-z, y) for y, z in ring], depth=length,
+                  opacity=FACE_OPACITY, rotate=(0, 90, 0))]
+    parts += _wire(vertices, edges, size)
+    labels = [callout("Cross-section: the same all along", vertices[0], size * 1.0,
+                      lift=size * 0.25),
+              callout("Rectangular face", (0, ring[0][0], ring[0][1]), size * 1.0,
+                      lift=-size * 0.3)]
+    return scene(title, parts, labels, _counts(count_faces, len(edges), 2 * n), note, PRISM_VIEW,
+                 formulas=formulas)
+
+
+def polygon_prism(payload=""):
+    """A prism on any regular polygon: triangular, pentagonal, octagonal..."""
+    n = polygon_sides(payload, default=3)
+    found, unit = measurements(payload)
+    a = found.get("a") or found.get("base")
+    l = found.get("l") or found.get("h")
+    side, length = a or 1.6, l or 3.0
+    radius = side / (2 * math.sin(math.pi / n))
+    k = _scale(2 * radius, length)
+    ring = regular_polygon(n, radius * k)
+    name = _polygon_name(n)
+    formulas = [f"Volume = area of the {name.lower()} base × length"]
+    if a and l:
+        formulas.append(f"= {_num(polygon_area(n, a))} × {_num(l)}"
+                        f" = {_with_unit(polygon_area(n, a) * l, unit, 3)}")
+    note = f"Faces + vertices − edges = {n + 2} + {2 * n} − {3 * n} = 2"
+    title = (f"{name} prism (side {_num(a)}, length {_with_unit(l, unit)})" if a and l
+             else f"{name} prism")
+    return _prism_solid(title, ring, length * k, n + 2, note, formulas)
+
+
+# Which solid a request names. Checked before everything else in CATALOGUE,
+# and only against the NAME at the start of the payload ("Cube; side = 4 cm")
+# so "methane is tetrahedral" never becomes a geometry model.
+GEOMETRY = [
+    (r"\bcube root\b", None),
+    (r"\bcubes?\b|\bdice\b", cube),
+    (r"\bcuboids?\b|rectangular (?:prism|box|solid|block)|\bbrick\b|\bbox\b", cuboid),
+    (r"\bhemi-?spheres?\b", hemisphere),
+    (r"\bspheres?\b", sphere),
+    (r"\bcylinders?\b", cylinder),
+    (r"\bcones?\b(?!\s+cells?)", cone),
+    (r"\btetrahedr", tetrahedron),
+    (RE_POLYGON_SOLID.pattern.replace("(prism|pyramid)", "pyramid"), polygon_pyramid),
+    (r"\bpyramids?\b", polygon_pyramid),
+    (RE_POLYGON_SOLID.pattern.replace("(prism|pyramid)", "prism"), polygon_prism),
+]
+# A bare "prism" is the glass one light goes through (see `prism` above) --
+# unless it comes with measurements, which nobody gives for a glass prism.
+RE_MEASURED = re.compile(r"\b(?:side|edge|length|base|height|a|l|h)\s*=?\s*\d", re.IGNORECASE)
+
+
+def find_solid(payload):
+    name = re.split(r"[;,(]|\bwith\b|\bof\b", (payload or "").lower(), maxsplit=1)[0]
+    # "a 3D cube", "solid cylinder", "model of a cone" -- the solid is the word.
+    name = re.sub(r"\b(?:a|an|the|3d|solid|model|shape|figure|show|me|draw)\b", " ", name)
+    for pattern, builder in GEOMETRY:
+        if re.search(pattern, name, re.IGNORECASE):
+            return builder
+    if re.search(r"\bprisms?\b", name) and RE_MEASURED.search(payload or ""):
+        return polygon_prism
+    return None
+
+
 CATALOGUE = [
     # Just "Earth" or "a globe": the layers model, one corner cut away. Before
     # this "3D model of Earth" matched nothing, fell through to PubChem and
@@ -1014,6 +1509,9 @@ CATALOGUE = [
 
 def find_model(payload):
     """The builder for a request, or None when none of these fits."""
+    solid = find_solid(payload)
+    if solid is not None:
+        return solid
     text = (payload or "").lower()
     for pattern, builder in CATALOGUE:
         if re.search(pattern, text):

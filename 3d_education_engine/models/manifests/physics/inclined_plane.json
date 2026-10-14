@@ -1,0 +1,66 @@
+{
+  "id": "physics.mechanics.inclined_plane",
+  "name": "Inclined Plane",
+  "domain": "physics",
+  "subject": "mechanics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "inclined_plane",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.inclined_plane",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "9",
+      "11"
+    ],
+    "topics": [
+      "inclined plane",
+      "friction",
+      "forces",
+      "newton's laws"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Arrows: weight (red), normal force (green), friction (orange), net force (white). One friction coefficient for starting and sliding, to keep it simple."
+  },
+  "aliases": [
+    "inclined plane",
+    "incline",
+    "ramp",
+    "block on a slope",
+    "block on an incline",
+    "friction on a slope",
+    "sliding block",
+    "inclined plane friction"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "along the slope: a = g·(sinθ − μ·cosθ)",
+    "normal force N = m·g·cosθ",
+    "friction f = μ·N",
+    "it slides only if tanθ > μ"
+  ]
+}

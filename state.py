@@ -138,6 +138,21 @@ current_graph = None
 current_visual = None
 device_state_lock = threading.Lock()
 
+# Buttons she has put on the screen for things worth seeing, instead of asking
+# "would you like to see it?" -- [ACTION: offer_visual], or the try-it under a
+# worked solution. Each is {"kind", "payload", "settings", "label", "sub"}.
+# Told to the model, so "yes, show me" can be answered with the right one, and
+# cleared by her next reply unless that reply offers again. Replaced whole,
+# never changed in place, so a reader on another thread sees one list or the
+# next, never half of one.
+current_offers = []
+
+# The geometry lab, in words, for the model: the figure, how it is lettered,
+# what the student has picked on it and what that measures -- "Cube (side 4
+# cm), corners ABCDEFGH; picked AE and face ABCD: AE ⟂ face ABCD: it stands
+# at 90° to the face". None when the lab is not up. See TutorUI's geometry lab.
+current_geometry = None
+
 # ---------------------------------------------------------------- kindergarten
 # A child tapped Liza during a lesson, meaning "stop, I want to ask you
 # something". Separate from wake_event because the KG park branch clears that

@@ -747,6 +747,25 @@
    "parts": {},
    "groups": []
   },
+  "physics.electromagnetism.ac_generator": {
+   "name": "AC Generator",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "ac current",
+    "ac generator",
+    "alternating current",
+    "alternator",
+    "dynamo",
+    "electric generator",
+    "generator"
+   ],
+   "formulas": [],
+   "disclaimer": "A coil turning between the poles of a magnet. The graph underneath draws the emf as it turns: it reverses every half turn, which is why the current is alternating.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
   "physics.electromagnetism.electric_field": {
    "name": "Electric Field",
    "kind": "simulation",
@@ -761,6 +780,27 @@
    ],
    "formulas": [],
    "disclaimer": "Field lines in the plane of the charges. Red: positive charge; blue: negative.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.electromagnetism.electromagnetic_induction": {
+   "name": "Electromagnetic Induction",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "electromagnetic induction",
+    "faraday experiment",
+    "faraday's law",
+    "faradays law",
+    "galvanometer",
+    "induced current",
+    "lenz law",
+    "lenz's law",
+    "magnet and coil"
+   ],
+   "formulas": [],
+   "disclaimer": "Faraday's experiment: the needle moves only while the magnet moves. Pushed in it swings one way, pulled out the other. Needle in arbitrary units.",
    "attribution": "",
    "parts": {},
    "groups": []
@@ -802,6 +842,67 @@
    "parts": {},
    "groups": []
   },
+  "physics.matter.buoyancy": {
+   "name": "Buoyancy",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "archimedes principle",
+    "archimedes' principle",
+    "buoyancy",
+    "buoyant force",
+    "density and floating",
+    "float and sink",
+    "floating and sinking",
+    "upthrust",
+    "why things float"
+   ],
+   "formulas": [],
+   "disclaimer": "A 20 cm cube dropped into a liquid. Arrows: weight (red) and buoyant force, the upthrust (green). Water slows it down, so it settles.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.matter.radioactive_decay": {
+   "name": "Radioactive Decay",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "decay of nuclei",
+    "half life",
+    "nuclear decay",
+    "radioactive decay",
+    "radioactivity"
+   ],
+   "formulas": [],
+   "disclaimer": "400 unstable nuclei (green). Each one decays (grey) at a random moment; nobody can say which will go next, but half of them have gone after every half-life. The curve is what is left.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.matter.states_of_matter": {
+   "name": "States of Matter",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "change of state",
+    "gas particles",
+    "kinetic theory",
+    "kinetic theory of gases",
+    "matter in our surroundings",
+    "melting and boiling",
+    "particles of matter",
+    "solid liquid and gas",
+    "solid liquid gas",
+    "states of matter",
+    "three states of matter"
+   ],
+   "formulas": [],
+   "disclaimer": "Water molecules drawn as balls, hugely enlarged and slowed down. Heat them and they move faster: they vibrate in place (ice), slide past each other (water), then fly apart (steam).",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
   "physics.mechanics.circular_motion": {
    "name": "Uniform Circular Motion",
    "kind": "simulation",
@@ -837,6 +938,29 @@
    "parts": {},
    "groups": []
   },
+  "physics.mechanics.energy_track": {
+   "name": "Conservation of Energy",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "conservation of energy",
+    "energy conservation",
+    "energy skate park",
+    "energy track",
+    "kinetic and potential energy",
+    "kinetic energy",
+    "law of conservation of energy",
+    "mechanical energy",
+    "potential and kinetic energy",
+    "potential energy",
+    "roller coaster"
+   ],
+   "formulas": [],
+   "disclaimer": "No friction: the ball always comes back to the height it started from. Bars: kinetic energy (red), potential energy (blue); together they never change.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
   "physics.mechanics.free_fall": {
    "name": "Free Fall",
    "kind": "simulation",
@@ -849,6 +973,26 @@
    ],
    "formulas": [],
    "disclaimer": "No air resistance. Ghost balls show the position every 0.2 s: the gaps grow because the ball speeds up.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.mechanics.inclined_plane": {
+   "name": "Inclined Plane",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "block on a slope",
+    "block on an incline",
+    "friction on a slope",
+    "incline",
+    "inclined plane",
+    "inclined plane friction",
+    "ramp",
+    "sliding block"
+   ],
+   "formulas": [],
+   "disclaimer": "Arrows: weight (red), normal force (green), friction (orange), net force (white). One friction coefficient for starting and sliding, to keep it simple.",
    "attribution": "",
    "parts": {},
    "groups": []
@@ -901,6 +1045,82 @@
    "parts": {},
    "groups": []
   },
+  "physics.optics.concave_lens": {
+   "name": "Concave Lens",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "concave lens",
+    "diverging lens",
+    "image by concave lens",
+    "image formation by concave lens",
+    "ray diagram concave lens"
+   ],
+   "formulas": [],
+   "disclaimer": "Thin lens. A concave lens always gives a virtual, erect, smaller image on the object's side.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.optics.concave_mirror": {
+   "name": "Concave Mirror",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "concave mirror",
+    "converging mirror",
+    "image by concave mirror",
+    "image formation by concave mirror",
+    "mirror formula",
+    "ray diagram concave mirror",
+    "shaving mirror",
+    "spherical mirror"
+   ],
+   "formulas": [],
+   "disclaimer": "Rays near the axis. Inside F the image becomes virtual and erect, behind the mirror.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.optics.convex_lens": {
+   "name": "Convex Lens",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "converging lens",
+    "convex lens",
+    "image by convex lens",
+    "image formation by convex lens",
+    "lens",
+    "lens formula",
+    "magnifier",
+    "magnifying glass",
+    "ray diagram convex lens"
+   ],
+   "formulas": [],
+   "disclaimer": "Thin lens, rays near the axis. Move the object to see where the image forms and how it changes.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.optics.convex_mirror": {
+   "name": "Convex Mirror",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "convex mirror",
+    "diverging mirror",
+    "image by convex mirror",
+    "image formation by convex mirror",
+    "ray diagram convex mirror",
+    "rear view mirror"
+   ],
+   "formulas": [],
+   "disclaimer": "A convex mirror always gives a virtual, erect, smaller image behind it: the rear-view mirror of a car.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
   "physics.optics.reflection": {
    "name": "Reflection of Light",
    "kind": "simulation",
@@ -946,6 +1166,24 @@
    ],
    "formulas": [],
    "disclaimer": "Huygens' principle: every point in the gap acts as a source. A gap about the size of the wavelength spreads the wave out most.",
+   "attribution": "",
+   "parts": {},
+   "groups": []
+  },
+  "physics.waves.doppler_effect": {
+   "name": "Doppler Effect",
+   "kind": "simulation",
+   "domain": "physics",
+   "aliases": [
+    "ambulance siren",
+    "doppler",
+    "doppler effect",
+    "doppler shift",
+    "moving source of sound",
+    "train whistle"
+   ],
+   "formulas": [],
+   "disclaimer": "Seen from above. Each ring is one wave crest, spreading from where the source was when it made it. Slowed down a great deal so the crests can be watched.",
    "attribution": "",
    "parts": {},
    "groups": []

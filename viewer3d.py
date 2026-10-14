@@ -140,7 +140,9 @@ def engine_scene(model_id):
             "legend": [], "note": info.get("disclaimer", ""),
             # Simulations and animations run on ticks; a simulation should not
             # also be spun round by the viewer while the student watches it.
-            "spin": info.get("kind") != "simulation", "animated": True}
+            "spin": info.get("kind") != "simulation", "animated": True,
+            # A simulation gets sliders for its settings on the big view.
+            "simulation": info.get("kind") == "simulation"}
 
 # ---------------------------------------------------------------------------
 # scenes
@@ -377,11 +379,16 @@ class Renderer:
     goes wrong as a crash, not an exception -- and a crash in Liza's own process
     is the tutor vanishing mid-lesson. In a worker it is one lost model and a
     sentence saying so. It also keeps VTK's few hundred megabytes out of Liza
-    until somebody actually asks for a model, and gives them back on close().
+    itself. This file's worker gives them back on close(); the engine's is kept
+    warm, because starting it is most of the wait for a model (see warm()).
     """
 
     SPIN_DEG_PER_S = 30.0          # a full turn every twelve seconds
-    SPIN_FPS = 15.0
+    # A frame costs the worker about 25ms at full screen (measured 2026-10-14:
+    # 18-27ms a drag frame, heart, pendulum, solar system), so 24 leaves it
+    # idle half the time. It was 15, and since the wait was counted from the
+    # END of each frame rather than its start, that came out at 10-11.
+    SPIN_FPS = 24.0
 
     def __init__(self, on_frame, on_error=None, on_moved=None):
         # on_moved(answer): the engine put a different model up without being
@@ -389,8 +396,8 @@ class Renderer:
         # nucleus to dive into it, or back out again. This object's thread.
         self.on_frame, self.on_error, self.on_moved = on_frame, on_error, on_moved
         self._commands = queue.Queue()
-        self._worker = None
-        self._worker_kind = None            # "viewer" (this file) or "engine"
+        # One per kind: "viewer" (this file) and "engine". See warm().
+        self._workers = {}
         self._tokens = itertools.count(1)
         self._asks = {}
         self._thread = threading.Thread(target=self._run, daemon=True,
@@ -421,8 +428,21 @@ class Renderer:
         self._commands.put(("animate", bool(on)))
 
     def close(self):
-        """Stop drawing and end the worker, handing its memory back."""
+        """Stop drawing. This file's worker ends, handing its memory back; the
+        engine's is kept, idle -- see warm()."""
         self._commands.put(("close",))
+
+    def warm(self):
+        """Start the engine's worker now, in the background, so the first model
+        asked for does not wait for it.
+
+        WHY. Building the engine -- its registry, tools and agent, before any
+        model -- took 5.5-8s on the Pi 5 (2026-10-14); drawing the heart once
+        that was done took 0.2s. The worker used to end on every close(), so
+        every model a child opened paid those seconds again, on a blank view:
+        "the 3D model is lagging". Kept alive it costs ~460MB of 8GB, and
+        nothing while it waits on its pipe."""
+        self._commands.put(("warm",))
 
     def ask(self, op, text="", timeout=5.0):
         """Ask the ENGINE something and wait for its answer (a dict), or None.
@@ -454,35 +474,37 @@ class Renderer:
         import sys
         if kind == "engine":
             # The engine's own interpreter, in its own folder: see ENGINE_DIR.
-            self._worker = subprocess.Popen(
+            self._workers[kind] = subprocess.Popen(
                 [ENGINE_PYTHON, "-m", "app.liza_worker"], cwd=ENGINE_DIR,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         else:
-            self._worker = subprocess.Popen(
+            self._workers[kind] = subprocess.Popen(
                 [sys.executable, os.path.abspath(__file__), "--worker"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        self._worker_kind = kind
 
     def _worker_ready(self, kind):
-        return (self._worker is not None and self._worker.poll() is None
-                and self._worker_kind == kind)
+        worker = self._workers.get(kind)
+        return worker is not None and worker.poll() is None
 
     def _exchange(self, batch, kind="viewer"):
         """Send one batch of commands; the worker's reply, or raise."""
         import pickle
         import struct
         if not self._worker_ready(kind):
-            # One worker at a time: switching between this file's models and
-            # the engine's ends the other one, and its memory with it.
-            self._stop_worker()
+            # This file's worker is small and quick to start, and only one is
+            # wanted at a time: going to the engine's models ends it.
+            if kind == "engine":
+                self._stop_worker("viewer")
+            self._stop_worker(kind)
             self._start_worker(kind)
+        worker = self._workers[kind]
         data = pickle.dumps(batch)
-        self._worker.stdin.write(struct.pack("!I", len(data)) + data)
-        self._worker.stdin.flush()
-        return pickle.loads(_read_message(self._worker.stdout))
+        worker.stdin.write(struct.pack("!I", len(data)) + data)
+        worker.stdin.flush()
+        return pickle.loads(_read_message(worker.stdout))
 
-    def _stop_worker(self):
-        worker, self._worker = self._worker, None
+    def _stop_worker(self, kind):
+        worker = self._workers.pop(kind, None)
         if worker is None:
             return
         try:
@@ -494,14 +516,18 @@ class Renderer:
     def _run(self):
         from PIL import Image
         spinning, animating, last, scene = False, False, time.time(), None
+        due = 0.0                            # when the next clocked frame is due
         while True:
             # Frames on a clock while anything moves by itself; otherwise only
-            # when asked, so a still model costs nothing.
+            # when asked, so a still model costs nothing. The clock runs from
+            # the START of each frame: waiting a whole tick after it, as this
+            # used to, added the frame's own time to every tick.
             live = scene is not None and (
                 (spinning and scene.get("spin", True))
                 or (animating and scene.get("animated")))
             try:
-                first = self._commands.get(timeout=1 / self.SPIN_FPS if live else None)
+                first = self._commands.get(
+                    timeout=max(0.0, due - time.time()) if live else None)
                 batch = [first]
             except queue.Empty:
                 batch = []
@@ -515,8 +541,21 @@ class Renderer:
                 # Only what came AFTER the last close still stands: "close the
                 # old model, show the new one" in one batch is the new one.
                 spinning, scene = False, None
-                self._stop_worker()
+                self._stop_worker("viewer")
                 batch = batch[closes[-1] + 1:]
+            if any(c[0] == "warm" for c in batch):
+                batch = [c for c in batch if c[0] != "warm"]
+                if not self._worker_ready("engine") and not batch:
+                    started = time.time()
+                    try:
+                        # An empty batch: the worker builds the engine and
+                        # answers "ok" without drawing anything.
+                        self._exchange([], "engine")
+                        print(f"[3D] Engine ready in {time.time() - started:.1f}s.", flush=True)
+                    except Exception as exc:
+                        print(f"[3D] Could not start the engine early ({exc}).", flush=True)
+                        self._stop_worker("engine")
+                    continue
             for command in batch:
                 if command[0] == "spin":
                     spinning = command[1]
@@ -533,6 +572,8 @@ class Renderer:
                 batch = [c for c in batch if c[0] != "ask"]
             now = time.time()
             step = min(now - last, 0.2)
+            if live:
+                due = max(due + 1 / self.SPIN_FPS, now)
             if scene is not None and spinning and scene.get("spin", True):
                 batch.append(("turn", self.SPIN_DEG_PER_S * step, 0.0))
             if scene is not None and animating and scene.get("animated"):
@@ -552,7 +593,7 @@ class Renderer:
                 reply = self._exchange(batch, kind)
             except Exception as exc:
                 reply = ("error", f"the 3D drawer stopped ({exc or 'it crashed'})")
-                self._stop_worker()
+                self._stop_worker(kind)
             # The engine adds a dict of answers to its replies, one per "ask".
             answers = reply[-1] if reply[0] in ("frame", "ok") and isinstance(reply[-1], dict) else {}
             for token, answer in answers.items():
@@ -681,6 +722,12 @@ def _mesh(p, at_origin=False):
         corners = [(x, y, -depth / 2) for x, y in p["points2d"]]
         face = pv.PolyData(np.asarray(corners, float), faces=[len(corners), *range(len(corners))])
         m = face.extrude((0, 0, depth), capping=True)
+    elif shape == "polyhedron":
+        # Corners and the faces between them -- a pyramid, a tetrahedron.
+        cells = []
+        for face in p["faces"]:
+            cells += [len(face), *face]
+        m = pv.PolyData(np.asarray(p["vertices"], float), faces=cells)
     elif shape == "revolve":
         profile = np.asarray(p["profile"], float)
         angles = np.linspace(0, TAU, 72)
@@ -699,6 +746,12 @@ def _mesh(p, at_origin=False):
         m = _point_z_at(m, p["direction"])
     elif "normal" in p:
         m = _point_z_at(m, p["normal"])
+    if shape in ("box", "prism", "polyhedron"):
+        # A flat face keeps its corners. The scene is drawn with smooth
+        # shading, which on shared corner points rounds a cube off into a
+        # cushion; split normals keep each face flat and each edge sharp.
+        m = m.triangulate().compute_normals(split_vertices=True, feature_angle=30,
+                                            auto_orient_normals=True)
     if not at_origin:
         m = m.translate(tuple(p.get("centre", (0, 0, 0))))
     return _cut(m, p)

@@ -289,6 +289,24 @@ RE_SLEEP_PHRASE = re.compile(
     r'अलविदा|बाय\s*बाय|बाय)[\s.!।]*$',
     re.IGNORECASE)
 
+
+def is_sleep_request(text):
+    """True for the sleep phrase on its own, or as the first sentence.
+
+    The room is rarely quiet: "Okay, go to sleep." followed by somebody else's
+    conversation held the microphone open for 17 seconds and then missed the
+    anchored match, so the request went to the model. A leading sentence counts
+    only with two words or more -- a bare "Sleep." or "Bye." opening a longer
+    utterance is too often the start of something else.
+    """
+    if not text:
+        return False
+    if RE_SLEEP_PHRASE.match(text):
+        return True
+    first = re.split(r'(?<=[.!?।])\s+', text.strip(), maxsplit=1)[0]
+    return (first != text.strip() and len(first.split()) >= 2
+            and bool(RE_SLEEP_PHRASE.match(first)))
+
 # Used only after the Sleep button, where the bar to wake her has to be higher.
 # Sleep is an explicit "leave me alone", so an accidental wake is a much worse
 # failure here than a missed one -- the Speak button is always right there.
@@ -941,3 +959,52 @@ CAMERA_SEND_MAX = int(os.getenv("CAMERA_SEND_MAX", "1600"))
 # strange answer can be checked against what she saw. They are pictures of a
 # child's room; only the last few are kept.
 CAMERA_KEEP_PHOTOS = int(os.getenv("CAMERA_KEEP_PHOTOS", "5"))
+
+
+# ---------------------------------------------------------------- the whiteboard
+# The Transcribe Board opened full screen, to write and draw on with a finger.
+# See whiteboard.py. BOARD=0 takes the full-screen button away.
+BOARD_ENABLED = os.getenv("BOARD", "1") != "0"
+# She reads the page each time the writing stops for this long, and says in a
+# chip on the page what she read there -- before anybody asks her anything.
+# BOARD_READ_LIVE=0 leaves the page unread until she is asked about it.
+BOARD_READ_LIVE = os.getenv("BOARD_READ_LIVE", "1") != "0"
+# One second: the buttons under the writing come from this reading, and a
+# child who has stopped writing is looking for them already.
+BOARD_READ_PAUSE_S = float(os.getenv("BOARD_READ_PAUSE_S", "1.0"))
+# The model that does that reading. It has to SEE, so it is the one she answers
+# with only when that one is set; a text-only default would read nothing.
+BOARD_READ_MODEL = (os.getenv("BOARD_READ_MODEL", "")
+                    or os.getenv("LLM_MODEL", "") or "google/gemini-2.5-flash")
+# Which of OpenRouter's hosts for the model to try first. Left to itself
+# OpenRouter sent gemini-2.5-flash to Google Vertex, and that was the lag of
+# 2026-10-14: a board reading timed out, a reply ran past its 25s and came back
+# as "I'm having trouble thinking right now". Measured that day, time to first
+# token with thinking off, three runs each:
+#
+#   no preference (went to Vertex)   3.1-8.0s
+#   google-vertex only               3.0-3.3s
+#   google-ai-studio only            1.4-1.7s
+#
+# Fallbacks stay allowed, so an AI Studio outage costs speed, not the answer,
+# and a model AI Studio does not serve simply goes wherever it is served.
+# Comma-separated; empty leaves the choice to OpenRouter.
+LLM_PROVIDER_ORDER = [p.strip() for p in
+                      os.getenv("LLM_PROVIDER_ORDER", "google-ai-studio").split(",")
+                      if p.strip()]
+# Merged into the extra_body of every OpenRouter request that asks for text.
+LLM_PROVIDER = ({"provider": {"order": LLM_PROVIDER_ORDER, "allow_fallbacks": True}}
+                if LLM_PROVIDER_ORDER else {})
+# The longest side of the picture of the page that a question carries.
+BOARD_SEND_MAX = int(os.getenv("BOARD_SEND_MAX", "1280"))
+# A question about the page usually needs WORKING OUT -- a sum, a balance, a
+# force -- and an answer read off the top of the model's head is where the
+# arithmetic slips. So those turns, and only those, think first: off | low |
+# medium | high. Costs a second or two before the first word.
+BOARD_REASONING = os.getenv("BOARD_REASONING", "low").strip().lower()
+# Room for the spoken steps AND the worked solution written beside them, which
+# is several times an ordinary reply -- more again in Hindi.
+BOARD_MAX_TOKENS = int(os.getenv("BOARD_MAX_TOKENS", "2400"))
+# How many pictures of the page she was sent are kept in pictures/board/, so a
+# strange answer can be checked against what she saw.
+BOARD_KEEP_SKETCHES = int(os.getenv("BOARD_KEEP_SKETCHES", "5"))

@@ -28,7 +28,7 @@ class SeriesCircuit(Simulation):
     ALIASES = {"v": "voltage", "battery": "voltage", "resistance": "r1", "resistor": "r1", "resistor1": "r1",
                "resistor2": "r2", "resistance2": "r2"}
     loop = True
-    duration = 60.0
+    duration = float("inf")
     W, H = 6.0, 4.0
 
     def current(self):

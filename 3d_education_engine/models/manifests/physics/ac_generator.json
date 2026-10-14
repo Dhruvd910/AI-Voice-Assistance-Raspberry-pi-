@@ -1,0 +1,64 @@
+{
+  "id": "physics.electromagnetism.ac_generator",
+  "name": "AC Generator",
+  "domain": "physics",
+  "subject": "electromagnetism",
+  "kind": "simulation",
+  "simulation": {
+    "name": "ac_generator",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.ac_generator",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "12"
+    ],
+    "topics": [
+      "magnetic effects of electric current",
+      "electric generator",
+      "alternating current"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "A coil turning between the poles of a magnet. The graph underneath draws the emf as it turns: it reverses every half turn, which is why the current is alternating."
+  },
+  "aliases": [
+    "ac generator",
+    "electric generator",
+    "generator",
+    "dynamo",
+    "alternating current",
+    "ac current",
+    "alternator"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "emf ε = N·B·A·ω·sin(ω·t)",
+    "peak emf ε₀ = N·B·A·ω",
+    "ω = 2π·f",
+    "rms value = ε₀ / √2"
+  ]
+}

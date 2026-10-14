@@ -1,0 +1,68 @@
+{
+  "id": "physics.mechanics.energy_track",
+  "name": "Conservation of Energy",
+  "domain": "physics",
+  "subject": "mechanics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "energy_track",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.energy_track",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "9",
+      "11"
+    ],
+    "topics": [
+      "work and energy",
+      "kinetic energy",
+      "potential energy",
+      "conservation of energy"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "No friction: the ball always comes back to the height it started from. Bars: kinetic energy (red), potential energy (blue); together they never change."
+  },
+  "aliases": [
+    "conservation of energy",
+    "energy conservation",
+    "kinetic and potential energy",
+    "potential and kinetic energy",
+    "roller coaster",
+    "energy skate park",
+    "mechanical energy",
+    "law of conservation of energy",
+    "kinetic energy",
+    "potential energy"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "potential energy PE = m·g·h",
+    "kinetic energy KE = ½·m·v²",
+    "KE + PE = constant (no friction)",
+    "speed at the bottom v = √(2·g·h)"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "id": "physics.optics.concave_lens",
+  "name": "Concave Lens",
+  "domain": "physics",
+  "subject": "optics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "concave_lens",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.concave_lens",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "12"
+    ],
+    "topics": [
+      "light",
+      "refraction",
+      "lenses",
+      "image formation"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Thin lens. A concave lens always gives a virtual, erect, smaller image on the object's side."
+  },
+  "aliases": [
+    "concave lens",
+    "diverging lens",
+    "image by concave lens",
+    "image formation by concave lens",
+    "ray diagram concave lens"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "lens formula: 1/v − 1/u = 1/f  (f negative)",
+    "magnification m = v / u",
+    "power P = 1 / f, in dioptres"
+  ]
+}

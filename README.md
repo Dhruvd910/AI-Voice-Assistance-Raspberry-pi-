@@ -14,6 +14,7 @@ A local-first, multimodal AI assistant designed for the Raspberry Pi. Liza combi
 * **Physical Hardware Support:** Designed for 5-inch touchscreens (XPT2046 SPI) and supports physical GPIO push-buttons for instant wake-up.
 * **Live Web Search Fallback:** Automatically queries DuckDuckGo for real-time technical answers when needed.
 * **Visuals on the Transcribe Board:** Ask her to show a diagram, an equation, a graph, a number line, a table or a picture and it appears on screen — see [Showing Things](#-showing-things-diagrams-equations-graphs--pictures) below.
+* **Write and Draw on the Board:** Open the Transcribe Board full screen and write a sum, a chemical equation or a physics problem with your finger, or draw a diagram. She reads it as you write, solves it step by step out loud with the working written beside yours, and opens a graph to drag or a simulation to run — see [Writing on the Board](#-writing-on-the-board) below.
 * **She Can See:** Turn on the live camera, hold something up and ask "what is this?", or hold up a page of your book and ask her to read it, solve a question on it or check your answer — see [Showing Her Things](#-showing-her-things-the-camera) below.
 * **Her Textbooks:** Put the child's own CBSE or ICSE books on the device and she answers out of the chapter they are actually taught from — see [Her Textbooks](#-her-textbooks) below.
 * **Progress:** Every story heard, word spelled and test taken is kept per student, shown on a **My progress** screen, and remembered by her.
@@ -106,6 +107,7 @@ again to close.
 | "show me 2 plus 3 on the number line" | The same, with the hops drawn over it |
 | "show me the three times table" | A table |
 | "draw a triangle with base 6 and height 4" | The figure, measurements on the right edges |
+| "draw a cylinder with radius 3 cm and height 7 cm" | The solid as the textbook draws it — hidden edges dashed, measurements on, volume and surface area worked out underneath. Cube, cuboid, cylinder, cone, sphere, hemisphere, pyramid and prisms |
 | "show me three quarters" | Shaded circles |
 | "put quarter past three on a clock" | A clock face reading that time |
 | "show me the timeline of the freedom struggle" | Dates along a line |
@@ -116,6 +118,7 @@ again to close.
 | "show me the equations of motion" | Several formulas, one per line |
 | "draw a free body diagram of a box pushed on the floor" | The object with its forces, and the net force when the forces have numbers |
 | "draw a circuit with a cell, a switch and two bulbs in series" | A circuit diagram: cells, resistors, bulbs, switches, meters, parallel branches |
+| "show me how to solve 2x + 3 = 7" · "solve this" with the board open | The working, step by step, with what was done beside each line and the answer boxed — each step lights up as she says it |
 
 **She never refuses to draw something.** Anything without a shape of its own
 becomes a picture of whatever was asked for, and past that the words on a card.
@@ -151,6 +154,16 @@ like a textbook figure:
 - **Biology:** animal cell, plant cell, DNA, neuron, red blood cells, virus,
   bacteriophage, bacterium, flower, the human eye (cut open), mitochondrion
   and chloroplast.
+- **Geometry:** cube, cuboid, sphere, hemisphere, cylinder, cone, square
+  pyramid, tetrahedron, triangular prism and hexagonal prism. See-through faces,
+  the edges picked out, the corners marked, and the faces, edges and vertices
+  counted. Give the measurements ("a cube of side 4 cm", "a cylinder of radius
+  3 cm and height 7 cm") and it is drawn to those proportions, with the volume
+  and surface area worked out in the corner: *Volume = a³ = 64 cm³*.
+
+  Before this, "cube" was looked up as a chemical name, and PubChem has a
+  compound called that (rotenone, from the cubé plant). A child asking for a
+  cube got a molecule.
 
 Anything not on the list, such as a skeleton or a brain, is shown as a
 picture. Put a real model file in `3d-models/`, named for what it is (for
@@ -191,6 +204,32 @@ driver crash costs one model, not the whole tutor. The Pi's GPU reports an
 older OpenGL than VTK asks for, so `viewer3d.py` sets
 `MESA_GL_VERSION_OVERRIDE=3.3` before VTK loads.
 
+### Buttons, not questions
+
+She never asks "Would you like to see a simulation of it?". When a picture,
+model, graph or simulation would help and you did not ask for one, she puts a
+**button** for it under her answer and says "Tap below to see it". Tap it, or
+just say "yes" or "show me", and it opens. Two or three choices get a button
+each ("See the reaction", "See the steps"). Her next answer takes them down
+unless it offers something new.
+
+On the home screen the buttons stand along the bottom of the Transcribe Board;
+on the full-screen board, at the bottom right of the page.
+
+**A button whether or not she remembers.** Ask about something this device
+can show in 3D — "tell me about projectile motion", "what is DNA?", "how many
+faces does a cylinder have?" — and its button goes up after her answer even
+when her answer put none up itself (measured: asked about projectile motion
+three times, the model offered the simulation once). It comes from *your*
+words, never hers, and everyday words that only sound like a topic
+("current", "spring", "wave", "charge") are left out.
+
+> **Why buttons.** Asked a question like that, a child has to answer out loud,
+> and a short "Yes." is exactly what the microphone throws away as noise. In
+> one session two "Yes."es in a row were dropped before a longer reply got
+> through. A tap cannot be misheard. If the model still writes the question
+> next to the button, the question is not spoken.
+
 ### The live graph is different from everything else
 
 Ask for a graph of a formula — "y = x^2", "y = m\*x + c" — and instead of a
@@ -199,6 +238,17 @@ expression**. Drag the power on `x^2` and watch it become `x^4` in real time.
 This runs entirely on the Pi: no network call, no delay, redraws on every pixel
 of finger movement. Say "now make it x cubed" and she updates the formula from
 whatever the slider is currently set to.
+
+**Several curves on one graph.** "y = x² − 3; y = A sin x + B" draws both, the
+first in red and the second in blue, with each formula written in its colour
+above the plot. A **letter** with no value given gets a slider of its own,
+starting where the curve is the plain one — A at 1 and B at 0, so you start
+from y = sin x and drag the wave taller and higher. Formulas are read the way a
+person writes them: `x²`, `2x`, `A sin x`, `sin²x`, `sin⁻¹ x`, `√x`, `|x − 2|`,
+`log x`, `ln x`, `y = mx + c`. A sine wave is drawn across −2π to 2π and marked
+in π; `log x` and `√x` start at the y axis. An equation such as `2x + 3 = 7`
+plots as the line and the level it has to reach, crossing where x is the
+answer.
 
 A graph made of actual data points ("plot 0,0; 1,5; 2,20") or bars
 ("Mon=3; Tue=5") is a normal picture instead — sliders only apply to formulas.
@@ -222,6 +272,232 @@ fails or times out, everything falls back to being drawn locally on the Pi
 nothing breaks, it just looks plainer. The live-graph slider above is **never**
 sent over the network either way; it has to redraw instantly, so it's always
 drawn on-device.
+
+---
+
+## ✍️ Writing on the Board
+
+The Transcribe Board opens **full screen** as a page you write and draw on with
+your finger — and she understands what is on it.
+
+* **Open it:** tap the button with the pencil in the top-right corner of the
+  Transcribe Board, or say "open the board", "make the board full screen",
+  "I want to draw", "बोर्ड खोलो", "मुझे कुछ लिखना है".
+* **Close it:** the button in the top-right corner of the page (the one with
+  the brackets pointing in), or "close the board", "go back", "बोर्ड बंद करो".
+  Your writing is kept: open it again and it is still there. It is wiped when a
+  different student is picked.
+
+### The page
+
+Along the top: four pens (black, blue, red and green — a ring in red round the
+part you are asking about reads to her as exactly that), the rubber, **undo**
+and **clear**. Clear can be undone too, so one stray tap cannot lose a whole
+sum. Along the bottom: her state on the mic button (tap it to talk, the way
+Speak works) and what she is saying, since the page covers her face and the
+small board. While she talks, the **Stop talking** pill is at the top.
+
+### She reads it as you write
+
+Stop writing for a moment and she looks at the page: a chip in the corner says
+what she read — **I read: 2x + 3 = 7**, **I read: H₂ + O₂ → H₂O**, **I read: a
+block on a slope with two arrows**. Nobody has to ask; it is how you know she
+has understood your handwriting before you ask her anything about it. If she
+read it wrong, write it more clearly and the chip changes.
+
+### Buttons under your writing
+
+With the reading come **buttons for what you wrote**, right under it — about
+three or four seconds after you stop writing, without waiting for her to say
+anything:
+
+| You wrote or drew | Buttons |
+| --- | --- |
+| y = x² − 3 and y = A sin x + B | **Plot them** |
+| 2x + 3 = 7 | **Solve it** · **Plot it** |
+| H₂ + O₂ → H₂O | **Balance it** · **See the reaction** |
+| A cube (drawn or named, with or without its measurements) | **See it in 3D** · **See the shape** |
+| A triangle, a rectangle, a hexagon… | **Measure it** |
+| Projectile motion, a pendulum, a circuit… | **Run the simulation** |
+| H₂SO₄, methane | **See it in 3D** |
+
+**Solve it** and **Balance it** ask her, exactly as Ask Liza does. Every other
+button is checked before it is shown — a formula that would not plot, or a
+model this device does not have, gets no button — so a button never opens onto
+"I couldn't do that". Write anything new and they go, until the next reading.
+
+### Graphs on the page
+
+**Plot it** (or a graph she draws while the page is up) puts the graph **on the
+page, beside your writing**, as a card: the curves in their colours, the
+formulas above them, a slider per letter. It goes on the side with less of your
+writing, narrowed if a line runs into that side. The corner buttons enlarge it
+to the whole screen and put it away; **Graph** in the toolbar brings it back.
+It is the same graph as on the home screen's board, so a slider dragged here
+has moved there too. The graph and her working take turns beside your writing:
+**Steps** and **Graph** in the toolbar swap them.
+
+### Measuring a figure
+
+Draw a triangle, tap **Measure it**, and it is tidied where you drew it:
+straight sides through your corners, the corners lettered A, B, C, each angle
+written inside its corner — **64°, 55°, 61°** — and **A + B + C = 180°** in the
+middle. A four-sided figure adds up to 360°, up to an octagon at 1080°. The
+corners and angles are worked out on the Pi from your lines; she is told them
+too, so you can ask her why they add up to that. Tap it again, or write
+anything, and the marks go. **Explore it** opens your own figure in the
+geometry lab (below), where its corners can be dragged.
+
+### Ask her about it
+
+Tap **Ask Liza**, or just ask out loud while the page is up. Whatever is on the
+page goes to her with the question, as a picture, and she reads it properly
+again — thinking it through first when there is something to work out, because
+a sum worked out in a hurry is where the slips are. A drawing, a word or a name
+is answered straight away: thinking about "a cube" once cost an answer
+nineteen seconds of silence.
+
+| Write or draw | Say | What happens |
+| --- | --- | --- |
+| 2x + 3 = 7 | "Solve this" · *(or tap Ask Liza)* | She talks you through every step, and the working appears beside your writing |
+| H₂ + O₂ → H₂O | "Can you balance this?" · "इसे बैलेंस करो" | The balancing, step by step, ending on 2H₂ + O₂ → 2H₂O |
+| A box with arrows marked 10 N and 4 N | "What's the net force?" | The forces, the sum, and the answer with its direction |
+| Your own working | "Is my answer right?" · "मेरा जवाब सही है?" | What is right first, then the first mistake and exactly where, then the correct working |
+| A drawing | "What did I draw?" | What it is, and the one thing worth knowing about it (a cube: 6 faces, 12 edges, 8 corners) — never "what would you like to explore?" — with a button to see it properly |
+| y = x² − 3 and y = A sin x + B | *(tap Ask Liza)* | What each curve looks like, and both plotted beside your writing with A and B on sliders |
+| A right triangle with sides 3 cm and 4 cm | "Find the missing side" | Pythagoras step by step to 5 cm, and a **See the shape** button with the triangle drawn and labelled |
+| A box (a cube) marked 4 cm | "What is its volume?" | V = a³ = 64 cm³, and a **See it in 3D** button for the cube with its measurements |
+| A circle with radius 7 cm | "Find the area" | πr² = 154 cm², worked through |
+
+**The working beside yours.** Each step is the maths and, under it, what was
+done ("take 3 from both sides"), with the answer boxed in green at the end. The
+step she is saying lights up as she says it, and the column scrolls to keep it
+in view. It goes on whichever side of the page has less of your writing; the ✕
+puts it away and **Steps** in the toolbar brings it back. Hindi works too —
+ask in Hindi and the steps are written in Hindi.
+
+**See it.** Where it helps, the working ends with a button to try the idea
+yourself:
+
+* **See the graph** — the line or curve, with a slider for every number in it.
+* **Run the simulation** — the 3D engine's simulation set to the problem's own
+  numbers: a ball thrown at 20 m/s at 30° is launched at 20 m/s and 30°.
+* **See the reaction** / **See the molecule** — the balanced reaction drawn
+  properly, or the molecule's structure.
+* **See the shape** / **See it in 3D** — the figure or solid with your
+  measurements on it.
+
+A graph opens on the page beside your writing (see above); everything else
+opens over the page, and closing it brings you back where you were.
+
+**Without the page.** A solution she works out for a question held up to the
+camera, or for "show me how to solve it", goes on the small board instead, as a
+picture with a dot per step — tap it to enlarge.
+
+### Saying it instead of tapping it
+
+| Say | What happens |
+| --- | --- |
+| "open the board" · "I want to write" · "बोर्ड खोलो" | The page opens |
+| "clear the board" · "start again" · "बोर्ड साफ करो" | The page is wiped (undo brings it back) |
+| "undo" · "erase the last line" · "पिछला मिटाओ" | The last line goes |
+| "close the board" · "go back" · "बोर्ड बंद करो" | Back to the home screen |
+
+### Settings
+
+In `.env`:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `BOARD` | `1` | `0` takes the full-screen board away |
+| `BOARD_READ_LIVE` | `1` | `0` stops the live "I read:" chip; she still reads the page when asked |
+| `BOARD_READ_PAUSE_S` | `1.0` | How long the writing must stop before she reads it (and the buttons under it come up) |
+| `BOARD_READ_MODEL` | `LLM_MODEL` | The model that does the live reading. It has to be able to see |
+| `BOARD_REASONING` | `low` | How hard she thinks before answering about the page: `off`, `low`, `medium`, `high`. Thinking costs about two seconds before the first word, which she covers with "Let me see what you wrote." |
+| `BOARD_MAX_TOKENS` | `2400` | Room for the spoken steps and the written working together |
+| `BOARD_SEND_MAX` | `1280` | Longest side, in pixels, of the picture of the page she is sent |
+| `BOARD_KEEP_SKETCHES` | `5` | How many of those pictures are kept in `pictures/board/`, so an odd answer can be checked against what she saw |
+
+> **Why the live reading is not sent with the question.** The chip's reading
+> is a quick glance, made without thinking so it can keep up with your writing.
+> Given to her as a hint, it was trusted over the picture: a hand-drawn "10 N"
+> glanced at as "1ON" turned the net force wrong in half the runs, and in none
+> of the runs without the hint. So the chip is for you, and she reads the
+> picture herself.
+
+---
+
+## 📐 The Geometry Lab
+
+A solid or a flat figure you can **turn with a finger and tap** — and every
+tap is measured. It opens whenever a geometry figure is asked for ("show me a
+cube", "a cylinder of radius 3 cm and height 7 cm", "a right triangle with
+sides 3 and 4"), from **See it in 3D** under a cube drawn on the board, from
+**Explore it** under a drawn triangle, and from her own answers. It is lettered
+the way a textbook letters it: a cube or cuboid is **ABCD** round the bottom and
+**EFGH** above (E over A), a triangle **ABC**, a cone's apex **V** over its
+centre **O**.
+
+**Tap one thing** and it says what it is: an edge's length and the angle the
+two faces make along it; a face's shape, sides, angles and area; a corner's
+angles and why they add up to less than 360°.
+
+**Tap two** and it says how they meet, with the angle drawn where it is:
+
+| Tap | It shows |
+| --- | --- |
+| Edges AB and AE | ∠BAE = 90°: they meet at A, perpendicular |
+| Corners A and G | AG = 4√3 ≈ 6.93 cm, a space diagonal — Pythagoras twice |
+| A, G, then edge AE | ∠GAE = 54.7° |
+| Edge AE and the top face | AE ⟂ face EFGH: 90° |
+| A, G and the bottom face | AG makes 35.3° with face ABCD, with its shadow AC and the drop GC |
+| Faces ABCD and ABFE | They meet along AB at 90° (a tetrahedron's faces: 70.5°) |
+| Edges AB and FG | Skew lines: never meet; 90° between their directions; 4 cm apart |
+| Faces ABCD and EFGH | Parallel, 4 cm apart |
+| A pyramid's apex and its base | The height, measured straight down at 90° |
+| A cone's slant VP and radius OP | ∠VPO = 53.1° |
+
+**Tap three corners** and the solid is cut flat through them: B, D and E make an
+equilateral triangle with 60° in every corner; A, C and G cut the cube into a
+rectangle. A flat figure's corners can be **dragged** instead of turned: the
+angles change as you drag, and still add up to 180°.
+
+Tap something again to unpick it; **Clear** unpicks everything, **Turn back**
+straightens it. **Ask Liza about it** asks her why — "AE is perpendicular to
+face EFGH: why?" — and she can point at parts herself while she explains. Ask
+out loud about parts by name ("what's the angle between AG and the bottom
+face?") and they are picked on the screen and measured *before* she answers,
+so she can tell you the number as well as why.
+
+Everything is drawn and measured on the Pi, from the figure's own corners —
+no picture, no network. Closing the lab leaves the figure small on the board.
+
+---
+
+## 🗣️ How She Says Maths
+
+What she writes on the screen is not what she should say out loud. Her answers
+were played through her voice and transcribed back with Whisper, to hear what a
+child in the room hears, and it was often wrong: "H₂SO₄" came out as
+"H-G-S-O-D", "2H₂ + O₂ → 2H₂O" as "2H Su plus O tan 2H Su", "2x = 4" as "2x
+equals sign 4", "πr²" as "par squared", "√16" as "zaars", "NaCl" as "Nushiel",
+and the minus in "x² − 5x" was not said at all.
+
+So every sentence is turned into words just before it is spoken
+(`spoken.py`). The caption on the screen keeps the symbols.
+
+| Written | Said |
+| --- | --- |
+| H₂SO₄, CO₂, NaCl | "H 2 S O 4", "C O 2", "N A C L" — the way a chemistry teacher spells a formula |
+| 2H₂ + O₂ → 2H₂O | "2 H 2 plus O 2 gives 2 H 2 O" |
+| x² − 5x + 6 = 0 | "X squared minus 5x plus 6 equals 0" |
+| √16, πr², a³ | "the square root of 16", "pi r squared", "A cubed" |
+| 20 m/s, 9.8 m/s², 6 N, 154 cm² | "20 metres per second", "9.8 metres per second squared", "6 newtons", "154 square centimetres" |
+| triangle ABC, AB = 5 cm | "triangle A B C, A B equals 5 centimetres" |
+
+A letter on its own is capitalised when it stands for a number: the voice reads
+a lone small "y" as a syllable ("y equals" was heard as "E equals"). Hindi
+answers get the words a Hindi maths teacher uses: बराबर, गुणा, बटा, का वर्ग.
 
 ---
 

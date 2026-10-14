@@ -1,0 +1,63 @@
+{
+  "id": "physics.optics.convex_mirror",
+  "name": "Convex Mirror",
+  "domain": "physics",
+  "subject": "optics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "convex_mirror",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.convex_mirror",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "12"
+    ],
+    "topics": [
+      "light",
+      "reflection",
+      "spherical mirrors",
+      "image formation"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "A convex mirror always gives a virtual, erect, smaller image behind it: the rear-view mirror of a car."
+  },
+  "aliases": [
+    "convex mirror",
+    "diverging mirror",
+    "rear view mirror",
+    "image by convex mirror",
+    "image formation by convex mirror",
+    "ray diagram convex mirror"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "mirror formula: 1/v + 1/u = 1/f  (f positive)",
+    "magnification m = −v / u",
+    "f = R / 2"
+  ]
+}
