@@ -1,0 +1,66 @@
+{
+  "id": "physics.optics.convex_lens",
+  "name": "Convex Lens",
+  "domain": "physics",
+  "subject": "optics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "convex_lens",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.convex_lens",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "12"
+    ],
+    "topics": [
+      "light",
+      "refraction",
+      "lenses",
+      "image formation"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Thin lens, rays near the axis. Move the object to see where the image forms and how it changes."
+  },
+  "aliases": [
+    "convex lens",
+    "converging lens",
+    "lens",
+    "image by convex lens",
+    "image formation by convex lens",
+    "ray diagram convex lens",
+    "lens formula",
+    "magnifying glass",
+    "magnifier"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "lens formula: 1/v − 1/u = 1/f",
+    "magnification m = v / u = h′ / h",
+    "power P = 1 / f (f in metres), in dioptres"
+  ]
+}

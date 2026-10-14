@@ -27,7 +27,7 @@ class ProjectileMotion(Simulation):
                  "maximum height H = h + (v0·sinθ)² / (2g)"]
     PARAMETERS = [
         Parameter("initial_velocity", 20.0, 1.0, 100.0, "m/s", "launch speed"),
-        Parameter("angle", 45.0, 0.0, 90.0, "°", "launch angle above the horizontal"),
+        Parameter("angle", 45.0, 0.0, 90.0, "°", "launch angle above the horizontal", 1.0),
         Parameter("gravity", 9.81, 0.1, 30.0, "m/s²", "gravitational field strength"),
         Parameter("height", 0.0, 0.0, 50.0, "m", "launch height"),
     ]
@@ -135,8 +135,8 @@ class Pendulum(Simulation):
     title = "Simple pendulum"
     disclaimer = "No friction. Solved exactly (not the small-angle approximation), so large swings are slower."
     equations = ["d²θ/dt² = −(g/L)·sinθ", "small-angle period T ≈ 2π·√(L/g)"]
-    PARAMETERS = [Parameter("length", 2.0, 0.1, 10.0, "m", "string length"),
-                  Parameter("amplitude", 30.0, 1.0, 170.0, "°", "starting angle from vertical"),
+    PARAMETERS = [Parameter("length", 2.0, 0.1, 10.0, "m", "string length", 0.1),
+                  Parameter("amplitude", 30.0, 1.0, 170.0, "°", "starting angle from vertical", 1.0),
                   Parameter("gravity", 9.81, 0.1, 30.0, "m/s²", "gravitational field strength")]
     ALIASES = {"angle": "amplitude", "starting_angle": "amplitude", "g": "gravity", "l": "length", "string_length": "length"}
     loop = True
@@ -152,6 +152,10 @@ class Pendulum(Simulation):
         th = sol.sol(ts)[0]
         crossings = ts[1:][(np.sign(th[:-1]) != np.sign(th[1:]))]
         self.T_actual = 2 * float(np.mean(np.diff(crossings))) if len(crossings) >= 2 else self.T_small
+        # Wrap round on a whole number of real swings, so going round again
+        # does not jerk the bob back to where it started mid-swing.
+        swings = max(1, int((self.duration - 0.5) // self.T_actual))
+        self.duration = swings * self.T_actual
 
     def angle(self, t):
         return float(self.sol.sol(t % self.duration)[0])
@@ -332,3 +336,174 @@ class Collision(Simulation):
                         "momentum_after": fmt(m1 * self.v1 + m2 * self.v2, "kg·m/s"),
                         "kinetic_energy_after": fmt(ke1, "J")})
         return out
+
+
+# ======================================================================
+def _wedge(run: float, rise: float, half_width: float) -> pv.PolyData:
+    """A ramp: a right-angled triangle (top at x = 0, foot at x = run) given depth."""
+    w = half_width
+    pts = np.array([(0, -w, 0), (run, -w, 0), (0, -w, rise), (0, w, 0), (run, w, 0), (0, w, rise)], float)
+    faces = np.hstack([[3, 0, 1, 2], [3, 3, 5, 4], [4, 0, 3, 4, 1], [4, 1, 4, 5, 2], [4, 0, 2, 5, 3]])
+    return pv.PolyData(pts, faces).triangulate()
+
+
+class InclinedPlane(Simulation):
+    id = "inclined_plane"
+    title = "Block on an inclined plane"
+    disclaimer = ("Arrows: weight (red), normal force (green), friction (orange), net force (white). "
+                  "One friction coefficient for starting and sliding, to keep it simple.")
+    equations = ["along the slope: a = g·(sinθ − μ·cosθ)", "normal force N = m·g·cosθ",
+                 "friction f = μ·N", "it slides only if tanθ > μ"]
+    PARAMETERS = [Parameter("angle", 30.0, 5.0, 60.0, "°", "angle of the slope", 1.0),
+                  Parameter("friction", 0.2, 0.0, 1.0, "", "coefficient of friction μ", 0.05),
+                  Parameter("mass", 2.0, 0.5, 10.0, "kg", "mass of the block", 0.5),
+                  Parameter("gravity", 9.81, 1.0, 25.0, "m/s²", "gravitational field strength", 0.1)]
+    ALIASES = {"theta": "angle", "slope": "angle", "incline": "angle", "mu": "friction",
+               "coefficient_of_friction": "friction", "m": "mass", "g": "gravity"}
+    LENGTH = 5.0
+    BLOCK = 0.5
+
+    def prepare(self):
+        th, mu, g = np.radians(self.p("angle")), self.p("friction"), self.p("gravity")
+        self.th = th
+        self.slides = np.tan(th) > mu
+        self.a = g * (np.sin(th) - mu * np.cos(th)) if self.slides else 0.0
+        travel = self.LENGTH - self.BLOCK * 1.2
+        self.travel = travel
+        self.T = np.sqrt(2 * travel / self.a) if self.slides else 0.0
+        self.duration = self.T if self.slides else 3.0
+        self.down = np.array([np.cos(th), 0.0, -np.sin(th)])     # down the slope
+        self.out = np.array([np.sin(th), 0.0, np.cos(th)])       # away from the surface
+        self.top = np.array([0.0, 0.0, self.LENGTH * np.sin(th)])
+
+    def s(self, t):
+        return 0.5 * self.a * min(t, self.T) ** 2 if self.slides else 0.0
+
+    def centre(self, t):
+        return self.top + self.down * (0.15 + self.s(t) + self.BLOCK / 2) + self.out * (self.BLOCK / 2)
+
+    def forces(self):
+        m, g, mu = self.p("mass"), self.p("gravity"), self.p("friction")
+        weight = np.array([0, 0, -m * g])
+        normal = self.out * m * g * np.cos(self.th)
+        along = m * g * np.sin(self.th)
+        friction = -self.down * (mu * m * g * np.cos(self.th) if self.slides else along)
+        return weight, normal, friction, weight + normal + friction
+
+    def arrows(self, t):
+        c = self.centre(t)
+        k = 1.4 / (self.p("mass") * self.p("gravity"))
+        weight, normal, friction, net = self.forces()
+        return {"weight": arrow(c, weight * k, 0.03, 0.09), "normal": arrow(c, normal * k, 0.03, 0.09),
+                "friction": arrow(c + self.out * 0.0, friction * k, 0.03, 0.09),
+                "net": arrow(c, net * k, 0.03, 0.09)}
+
+    def build_parts(self):
+        run, rise = self.LENGTH * np.cos(self.th), self.LENGTH * np.sin(self.th)
+        b = self.BLOCK / 2
+        block = pv.Box((-b, b, -0.35, 0.35, -b, b)).rotate_y(self.p("angle"), inplace=False).translate(self.centre(0), inplace=False)
+        a = self.arrows(0)
+        return {"ground": ScenePart("ground", "Ground", ground(-0.5, run + 1.5, 1.6), "#3c5a3c"),
+                "ramp": ScenePart("ramp", "Inclined plane", _wedge(run, rise, 0.5), "#8a7356"),
+                "block": ScenePart("block", "Block", block, "#4fb0ff"),
+                "weight": ScenePart("weight", "Weight m·g", a["weight"], "#ff5a5a"),
+                "normal": ScenePart("normal", "Normal force", a["normal"], "#6fd08c"),
+                "friction": ScenePart("friction", "Friction", a["friction"], "#ff9f43"),
+                "net": ScenePart("net", "Net force", a["net"], "#ffffff")}
+
+    def apply(self, engine):
+        engine.move_part("block", self.centre(self.t) - self.centre(0))
+        for pid, mesh in self.arrows(self.t).items():
+            engine.update_part_mesh(pid, mesh)
+
+    def measurements(self):
+        m, g = self.p("mass"), self.p("gravity")
+        weight, normal, friction, net = self.forces()
+        out = {"normal_force": fmt(float(np.linalg.norm(normal)), "N"),
+               "friction_force": fmt(float(np.linalg.norm(friction)), "N")}
+        if self.slides:
+            out.update({"acceleration": fmt(self.a, "m/s²"), "time_to_bottom": fmt(self.T, "s"),
+                        "speed_at_bottom": fmt(self.a * self.T, "m/s")})
+        else:
+            out["result"] = "it does not slide: friction holds it (tanθ ≤ μ)"
+        return out
+
+
+# ======================================================================
+class EnergyTrack(Simulation):
+    id = "energy_track"
+    title = "Conservation of energy on a track"
+    disclaimer = ("No friction: the ball always comes back to the height it started from. Bars: kinetic "
+                  "energy (red), potential energy (blue); together they never change.")
+    equations = ["potential energy PE = m·g·h", "kinetic energy KE = ½·m·v²",
+                 "KE + PE = constant (no friction)", "speed at the bottom v = √(2·g·h)"]
+    PARAMETERS = [Parameter("height", 5.0, 0.5, 9.0, "m", "height the ball is let go from", 0.5),
+                  Parameter("mass", 1.0, 0.1, 10.0, "kg", "mass of the ball", 0.1),
+                  Parameter("gravity", 9.81, 1.0, 25.0, "m/s²", "gravitational field strength", 0.1)]
+    ALIASES = {"h": "height", "release_height": "height", "m": "mass", "g": "gravity"}
+    loop = True
+    WIDTH = 4.0        # the track is z = x² / WIDTH
+
+    def track_z(self, x):
+        return x * x / self.WIDTH
+
+    def prepare(self):
+        g, W, h = self.p("gravity"), self.WIDTH, self.p("height")
+        self.x0 = -np.sqrt(h * W)
+
+        def rhs(_t, y):
+            x, v = y
+            f1, f2 = 2 * x / W, 2 / W
+            return [v, -(g + f2 * v * v) * f1 / (1 + f1 * f1)]
+        guess = 2 * np.pi * np.sqrt(W / (2 * g)) * 2.5
+        sol = solve_ivp(rhs, (0, guess * 3), [self.x0, 0.0], dense_output=True, rtol=1e-9, atol=1e-9,
+                        max_step=guess / 200)
+        ts = np.linspace(0, guess * 3, 6000)
+        xs = sol.sol(ts)[0]
+        ups = ts[1:][(xs[:-1] < 0) & (xs[1:] >= 0)]
+        self.period = float(np.mean(np.diff(ups))) if len(ups) >= 2 else guess
+        self.sol = sol
+        self.duration = self.period * max(1, int(guess * 3 * 0.9 // self.period))
+
+    def x(self, t):
+        return float(self.sol.sol(t % self.duration)[0])
+
+    def ball(self, t):
+        x = self.x(t)
+        return np.array([x, 0.0, self.track_z(x) + 0.25])
+
+    def energies(self, t):
+        m, g = self.p("mass"), self.p("gravity")
+        total = m * g * self.p("height")
+        pe = m * g * self.track_z(self.x(t))
+        return min(pe, total), max(0.0, total - pe), total
+
+    def bars(self, t):
+        pe, ke, total = self.energies(t)
+        k = 9.0 / total             # the full bar is the total energy, whatever it is
+        ke_bar = pv.Box((7.0, 7.8, -0.3, 0.3, 0.0, max(ke * k, 1e-3)))
+        pe_bar = pv.Box((8.2, 9.0, -0.3, 0.3, 0.0, max(pe * k, 1e-3)))
+        return ke_bar, pe_bar
+
+    def build_parts(self):
+        xs = np.linspace(-6.2, 6.2, 200)
+        track = np.column_stack([xs, np.zeros_like(xs), self.track_z(xs)])
+        ke, pe = self.bars(0)
+        return {"track": ScenePart("track", "Track", polyline_tube(track, 0.08), "#c0c8d0"),
+                "start": ScenePart("start", "Release height", polyline_tube([(-6.5, 0, self.p("height") + 0.25), (6.5, 0, self.p("height") + 0.25)], 0.02), "#ffd84d", opacity=0.5),
+                "ball": ScenePart("ball", "Ball", pv.Sphere(radius=0.25, center=self.ball(0)), "#ff6b4a"),
+                "frame": ScenePart("frame", "Total energy", pv.Box((6.9, 9.1, -0.32, 0.32, 0, 9.0)).extract_feature_edges().tube(radius=0.03), "#ffffff", opacity=0.6),
+                "ke_bar": ScenePart("ke_bar", "Kinetic energy", ke, "#ff5a5a"),
+                "pe_bar": ScenePart("pe_bar", "Potential energy", pe, "#4f90ff")}
+
+    def apply(self, engine):
+        engine.move_part("ball", self.ball(self.t) - self.ball(0))
+        ke, pe = self.bars(self.t)
+        engine.update_part_mesh("ke_bar", ke)
+        engine.update_part_mesh("pe_bar", pe)
+
+    def measurements(self):
+        m, g, h = self.p("mass"), self.p("gravity"), self.p("height")
+        pe, ke, total = self.energies(self.t)
+        return {"total_energy": fmt(total, "J"), "speed_at_bottom": fmt(np.sqrt(2 * g * h), "m/s"),
+                "period": fmt(self.period, "s"), "kinetic_energy_now": fmt(ke, "J"), "potential_energy_now": fmt(pe, "J")}

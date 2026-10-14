@@ -5,15 +5,20 @@ from __future__ import annotations
 from physics.astronomy import OrbitalMotion, SolarSystem
 from physics.base import Simulation
 from physics.circuits import SeriesCircuit
-from physics.electromagnetism import ElectricField, MagneticFieldWire
-from physics.mechanics import CircularMotion, Collision, FreeFall, Pendulum, ProjectileMotion, Spring
-from physics.waves import Diffraction, Interference, Reflection, Refraction, SineWave, StandingWave
+from physics.electromagnetism import ACGenerator, ElectricField, ElectromagneticInduction, MagneticFieldWire
+from physics.matter import Buoyancy, RadioactiveDecay, StatesOfMatter
+from physics.mechanics import (CircularMotion, Collision, EnergyTrack, FreeFall, InclinedPlane, Pendulum,
+                               ProjectileMotion, Spring)
+from physics.optics import ConcaveLens, ConcaveMirror, ConvexLens, ConvexMirror
+from physics.waves import Diffraction, DopplerEffect, Interference, Reflection, Refraction, SineWave, StandingWave
 from visualization.scene import SceneModel
 
 SIMULATIONS: dict[str, type[Simulation]] = {cls.id: cls for cls in [
     ProjectileMotion, FreeFall, Pendulum, Spring, CircularMotion, Collision,
     OrbitalMotion, SolarSystem, SineWave, StandingWave, Interference, Diffraction,
     Refraction, Reflection, ElectricField, MagneticFieldWire, SeriesCircuit,
+    InclinedPlane, EnergyTrack, ConvexLens, ConcaveLens, ConcaveMirror, ConvexMirror, DopplerEffect,
+    ElectromagneticInduction, ACGenerator, StatesOfMatter, Buoyancy, RadioactiveDecay,
 ]}
 
 

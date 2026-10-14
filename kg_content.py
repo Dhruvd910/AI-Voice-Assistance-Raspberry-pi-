@@ -709,6 +709,20 @@ LETTER_SOUNDS = {
 }
 
 
+# The same names written the way a Hindi line spells them -- "ए फॉर एप्पल" is
+# how an Indian classroom writes it. A bare "A" inside a Hindi sentence goes to
+# the Hindi voice, which reads it as अ; an English "ay" there gets a Hindi
+# accent on a Latin word. These are what kg.letters_said puts in its place.
+LETTER_SOUNDS_HI = {
+    "A": "ए",    "B": "बी",   "C": "सी",   "D": "डी",   "E": "ई",
+    "F": "एफ़",   "G": "जी",   "H": "एच",   "I": "आई",   "J": "जे",
+    "K": "के",   "L": "एल",   "M": "एम",   "N": "एन",   "O": "ओ",
+    "P": "पी",   "Q": "क्यू",  "R": "आर",   "S": "एस",   "T": "टी",
+    "U": "यू",   "V": "वी",   "W": "डब्ल्यू", "X": "एक्स",
+    "Y": "वाई",  "Z": "ज़ेड",
+}
+
+
 def letter_sound(letter):
     """How to SAY one English letter. The letter itself if it is not one."""
     return LETTER_SOUNDS.get((letter or "").strip().upper(), letter)

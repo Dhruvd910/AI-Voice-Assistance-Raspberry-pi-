@@ -1,0 +1,65 @@
+{
+  "id": "physics.optics.concave_mirror",
+  "name": "Concave Mirror",
+  "domain": "physics",
+  "subject": "optics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "concave_mirror",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.concave_mirror",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "12"
+    ],
+    "topics": [
+      "light",
+      "reflection",
+      "spherical mirrors",
+      "image formation"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Rays near the axis. Inside F the image becomes virtual and erect, behind the mirror."
+  },
+  "aliases": [
+    "concave mirror",
+    "converging mirror",
+    "spherical mirror",
+    "image by concave mirror",
+    "image formation by concave mirror",
+    "ray diagram concave mirror",
+    "mirror formula",
+    "shaving mirror"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "mirror formula: 1/v + 1/u = 1/f",
+    "magnification m = −v / u",
+    "f = R / 2"
+  ]
+}

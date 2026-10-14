@@ -1,0 +1,60 @@
+{
+  "id": "physics.matter.radioactive_decay",
+  "name": "Radioactive Decay",
+  "domain": "physics",
+  "subject": "nuclear physics",
+  "kind": "simulation",
+  "simulation": {
+    "name": "radioactive_decay",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.radioactive_decay",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "12"
+    ],
+    "topics": [
+      "nuclei",
+      "radioactivity",
+      "half-life"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "400 unstable nuclei (green). Each one decays (grey) at a random moment; nobody can say which will go next, but half of them have gone after every half-life. The curve is what is left."
+  },
+  "aliases": [
+    "radioactive decay",
+    "radioactivity",
+    "half life",
+    "half-life",
+    "nuclear decay",
+    "decay of nuclei"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "N = N₀ · (½)^(t / T½)",
+    "after one half-life half are left, after two a quarter, after three an eighth"
+  ]
+}

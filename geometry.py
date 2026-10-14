@@ -712,14 +712,23 @@ def picks_in(payload):
     return match.group(1) if match else ""
 
 
-def from_drawing(corners, name, grid=28.0):
+def from_drawing(corners, name, grid=28.0, faces=None):
     """A flat figure from the corners of one drawn on the board (page pixels,
-    y down), one unit to a square of the page's dots."""
+    y down), one unit to a square of the page's dots. `faces` lists the
+    regions when there is more than one -- two triangles sharing a side --
+    as indices into `corners`, which are lettered A, B, C... in order."""
     pts = [(x / grid, -y / grid) for x, y in corners]
     cx, cy = sum(x for x, _ in pts) / len(pts), sum(y for _, y in pts) / len(pts)
     pts = [(x - cx, y - cy) for x, y in pts]
     title = f"Your {(name or 'figure').split(';')[0].strip().lower()}"
-    figure = _flat(title, pts, "units", title)
+    if faces and len(faces) > 1:
+        figure = Figure(title, [(x, y, 0.0) for x, y in pts], faces, "units", title,
+                        flat=True, facts=[f"{len(faces)} shapes sharing their corners and sides"],
+                        kind="flat")
+    else:
+        figure = _flat(title, pts, "units", title)
+    # Each region read from its first letter: ABC, not CAB.
+    figure.faces = [f[f.index(min(f)):] + f[:f.index(min(f))] for f in figure.faces]
     figure.facts.append("1 unit = one square of the board's dots")
     return figure
 
@@ -900,7 +909,9 @@ def _segment_kind(figure, a, b):
     if figure.is_edge(a, b):
         return "an edge" if not figure.flat else "a side"
     if figure.flat:
-        return "a diagonal"
+        if any(a in face and b in face for face in figure.faces):
+            return "a diagonal"
+        return "a line joining two corners"
     for face in figure.faces:
         if a in face and b in face and len(face) > 3 and len(figure.faces) > 1:
             return "a face diagonal: it runs across a face"
@@ -979,6 +990,8 @@ def live_facts(figure):
     """A flat figure as it stands -- after a corner has been dragged, too:
     what kind it is now, its angles (whole degrees, adding up as they must),
     its sides and its area."""
+    if len(figure.faces) > 1:
+        return _live_facts_of_many(figure)
     face = figure.faces[0]
     points = figure.face_points(0)
     shape, sides, angles, area = _shape_words(points, figure.unit)
@@ -995,11 +1008,39 @@ def live_facts(figure):
     return lines
 
 
+def flat_face_title(figure, k):
+    """"Triangle ABE": one region of a flat figure, by its corners."""
+    nouns = {3: "Triangle", 4: "Quadrilateral", 5: "Pentagon", 6: "Hexagon", 7: "Heptagon",
+             8: "Octagon"}
+    face = figure.faces[k]
+    return f"{nouns.get(len(face), 'Polygon')} " + "".join(figure.labels[i] for i in face)
+
+
+def _live_facts_of_many(figure):
+    """live_facts for a figure of several regions: each one's angles, and the
+    area of the lot."""
+    lines = []
+    total_area = 0.0
+    for k, face in enumerate(figure.faces):
+        shape, _sides, angles, area = _shape_words(figure.face_points(k), figure.unit)
+        total_area += area
+        n = len(face)
+        whole = whole_degrees(angles, (n - 2) * 180)
+        lines.append(f"{flat_face_title(figure, k)} ({shape.split(' ', 1)[1]}): "
+                     + ", ".join(f"∠{figure.labels[face[i]]} = {whole[i]}°" for i in range(n))
+                     + f" — together {(n - 2) * 180}°")
+    lines.append(f"Area, all of it = {area_words(total_area, figure.unit)}")
+    return lines
+
+
 def reshaped(figure):
     """A corner of a flat figure has been dragged: its name now says only
     what it is made of, and what kind it has become is worked out live."""
     nouns = {3: "Triangle", 4: "Quadrilateral", 5: "Pentagon", 6: "Hexagon", 7: "Heptagon",
              8: "Octagon"}
+    if len(figure.faces) > 1:
+        figure.facts = []
+        return
     face = figure.faces[0]
     if len(face) <= 10:
         figure.title = (f"{nouns.get(len(face), 'Polygon')} "
@@ -1065,19 +1106,29 @@ def _one(figure, element, colour, reading, brief=False):
         i = element[1]
         name = figure.labels[i]
         if figure.flat:
-            for face in figure.faces[:1]:
-                if i in face:
-                    k = face.index(i)
-                    points = figure.face_points(0)
-                    _name, _sides, angles, _area_ = _shape_words(points, unit)
-                    p, q, r = points[k - 1], points[k], points[(k + 1) % len(points)]
-                    reading.line(f"∠{figure.labels[face[k - 1]]}{name}"
-                                 f"{figure.labels[face[(k + 1) % len(face)]]} = {degrees(angles[k])}"
-                                 f" inside the {figure.name.lower().replace('your ', '')}", colour, True)
-                    reading.line(f"The angle outside it is {degrees(180 - angles[k])}", colour)
-                    reading.arc(q, _sub(p, q), _sub(r, q), colour, degrees(angles[k]))
-                    return
-            reading.line(f"Point {name}", colour, True)
+            # One angle per region the corner belongs to: where two
+            # triangles share corner C, each has its own angle at C.
+            owners = [k for k, face in enumerate(figure.faces) if i in face]
+            total = 0.0
+            for k in owners:
+                face = figure.faces[k]
+                j = face.index(i)
+                points = figure.face_points(k)
+                _name, _sides, angles, _area_ = _shape_words(points, unit)
+                p, q, r = points[j - 1], points[j], points[(j + 1) % len(points)]
+                where = (figure.name.lower().replace('your ', '') if len(figure.faces) == 1
+                         else flat_face_title(figure, k)[:1].lower() + flat_face_title(figure, k)[1:])
+                reading.line(f"∠{figure.labels[face[j - 1]]}{name}"
+                             f"{figure.labels[face[(j + 1) % len(face)]]} = {degrees(angles[j])}"
+                             f" inside the {where}", colour, True)
+                reading.arc(q, _sub(p, q), _sub(r, q), colour, degrees(angles[j]))
+                total += angles[j]
+            if len(owners) == 1 and len(figure.faces) == 1:
+                reading.line(f"The angle outside it is {degrees(180 - total)}", colour)
+            elif len(owners) > 1:
+                reading.line(f"The angles at {name} add up to {degrees(total)}", colour)
+            if not owners:
+                reading.line(f"Point {name}", colour, True)
             return
         meeting = [e for e in figure.edges if i in e and figure.is_edge(*e)]
         if not meeting:

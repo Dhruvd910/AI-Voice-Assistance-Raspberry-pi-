@@ -1,0 +1,65 @@
+{
+  "id": "physics.electromagnetism.electromagnetic_induction",
+  "name": "Electromagnetic Induction",
+  "domain": "physics",
+  "subject": "electromagnetism",
+  "kind": "simulation",
+  "simulation": {
+    "name": "electromagnetic_induction",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.electromagnetic_induction",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "10",
+      "12"
+    ],
+    "topics": [
+      "magnetic effects of electric current",
+      "electromagnetic induction",
+      "faraday's law"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Faraday's experiment: the needle moves only while the magnet moves. Pushed in it swings one way, pulled out the other. Needle in arbitrary units."
+  },
+  "aliases": [
+    "electromagnetic induction",
+    "faraday's law",
+    "faradays law",
+    "faraday experiment",
+    "magnet and coil",
+    "induced current",
+    "lenz's law",
+    "lenz law",
+    "galvanometer"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "induced emf ε = −N·dΦ/dt  (Faraday's law)",
+    "faster motion, more turns or a stronger magnet → bigger current",
+    "the current opposes the change that makes it (Lenz's law)"
+  ]
+}

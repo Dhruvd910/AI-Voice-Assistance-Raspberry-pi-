@@ -2846,7 +2846,9 @@ OFFER_WORDS = {
     "array": ("See it as dots", "बिंदुओं में देखो"),
 }
 RE_SIMULATION = re.compile(r"motion|fall|pendulum|spring|orbit|wave|collision|circuit|"
-                           r"field|refraction|reflection|diffraction|interference|solar",
+                           r"field|refraction|reflection|diffraction|interference|solar|"
+                           r"inclined|incline|energy|lens|mirror|doppler|induction|generator|"
+                           r"states of matter|buoyan|floating|radioactiv|half.life",
                            re.IGNORECASE)
 
 

@@ -144,15 +144,23 @@ def _bond(a, b, radius) -> pv.PolyData:
 
 
 class ReactionAnimator:
-    """Plays the reaction over `duration` seconds, then holds on the products."""
+    """Plays the reaction over `duration` seconds, holds on the products for
+    `hold` seconds so they can be looked at, then plays it again."""
 
     name = "play"
 
-    def __init__(self, model: ReactionModel, duration: float = 8.0):
-        self.model, self.duration, self.t = model, duration, 0.0
+    def __init__(self, model: ReactionModel, duration: float = 8.0, hold: float = 2.5):
+        self.model, self.duration, self.hold, self.t = model, duration, hold, 0.0
+        self.held = 0.0
 
     def tick(self, dt: float, engine) -> None:
-        self.t = min(self.duration, self.t + dt)
+        if self.t >= self.duration:
+            self.held += dt
+            if self.held < self.hold:
+                return
+            self.t, self.held = 0.0, 0.0
+        else:
+            self.t = min(self.duration, self.t + dt)
         self._apply(engine)
 
     def _apply(self, engine) -> None:

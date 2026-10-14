@@ -43,7 +43,7 @@ import config  # noqa: F401  (imported for the .env it loads)
 # each of them; imported back by name because they are only ever read.
 from config import (BARGE_IN_NEAR_MISS, KG_BARGE_IN_ENABLED,
                     KG_WAKE_WORD_ENABLED, MIC_ENERGY_CEILING,
-                    NAME_DEVANAGARI, NAME_LATIN, RE_SLEEP_PHRASE, RE_STOP_TAIL,
+                    NAME_DEVANAGARI, NAME_LATIN, RE_SLEEP_PHRASE, is_sleep_request, RE_STOP_TAIL,
                     MIC_ENERGY_FLOOR, NAME_END,
                     BARGE_IN_DEBUG, BARGE_IN_ENABLED, BARGE_IN_LEAD_S,
                     BARGE_IN_MARGIN, BARGE_IN_MS, BARGE_IN_WARMUP_FRAMES,
@@ -115,7 +115,7 @@ import camera
 # ai_loop sends the page with the question; whiteboard.py draws it and reads it.
 import geometry
 import whiteboard
-from config import BOARD_MAX_TOKENS, BOARD_REASONING
+from config import BOARD_MAX_TOKENS, BOARD_REASONING, LLM_PROVIDER
 # The voice. audio.py reads two names back through this module at call time.
 # The Kindergarten flow. kg.py reads a few names back through this module at
 # call time; see its foot for which.
@@ -236,10 +236,10 @@ LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "off")
 # Sent with every reply request; see start_chat_stream(). "exclude" keeps the
 # chain of thought out of delta.content when thinking IS on -- everything that
 # arrives there is read aloud, so without it she recites her own thinking.
-LLM_TUNING = ({"extra_body": {"reasoning": {"enabled": False}}}
+LLM_TUNING = ({"extra_body": {"reasoning": {"enabled": False}, **LLM_PROVIDER}}
               if LLM_REASONING_EFFORT == "off" else
               {"reasoning_effort": LLM_REASONING_EFFORT,
-               "extra_body": {"reasoning": {"exclude": True}}})
+               "extra_body": {"reasoning": {"exclude": True}, **LLM_PROVIDER}})
 # Longest single pause while waiting out a rate limit; see start_chat_stream().
 LLM_RETRY_MAX_WAIT_S = float(os.getenv("LLM_RETRY_MAX_WAIT_S", "5.0"))
 # Charged against the rate limit on every request whether it is used or not; see
@@ -255,7 +255,8 @@ def board_tuning():
     excluded from the reply, which is read aloud."""
     if BOARD_REASONING in ("", "off", "none", "0", "false"):
         return LLM_TUNING
-    return {"extra_body": {"reasoning": {"effort": BOARD_REASONING, "exclude": True}}}
+    return {"extra_body": {"reasoning": {"effort": BOARD_REASONING, "exclude": True},
+                           **LLM_PROVIDER}}
 
 # ALSA's "default" device does not resolve without a configured ~/.asoundrc, so
 # playback is pointed at a specific card.
@@ -2975,7 +2976,7 @@ def ai_loop(ui, headless=False):
         # Never on a verdict: `text` is then the whole recitation, and although
         # RE_SLEEP_PHRASE is anchored and could not match one, a student whose
         # entire answer was the word "sleep" should be marked, not obeyed.
-        if text and not is_retell_eval and RE_SLEEP_PHRASE.match(text):
+        if text and not is_retell_eval and is_sleep_request(text):
             print(f"[STATE] Asked out loud to sleep: {text!r}", flush=True)
             if retell_buffer:
                 # Said so rather than done quietly. Being asked to sleep ends the

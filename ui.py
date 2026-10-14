@@ -43,6 +43,7 @@ from state import (audio_queue, kg_ask_cancel, kg_ask_event,
                    wake_event)
 import camera
 import kg_content
+import kg_workbook
 import media
 import profiles
 import chatlog
@@ -68,6 +69,8 @@ COL_CARD_EDGE = "#EAEDF8"
 COL_SHADOW    = "#B4BCDD"
 COL_TEXT      = "#1E2233"
 COL_TEXT_DIM  = "#8891A8"
+# The letters of a figure measured on the board: no O, which is a centre.
+WB_LETTERS = "ABCDEFGHIJKLMNPQRSTUVWXYZ"
 COL_TEXT_FAINT= "#B6BDD0"
 COL_TRACK     = "#E6E9F5"
 COL_INDIGO    = "#6366F1"
@@ -957,7 +960,7 @@ def _same_thing(a, b):
     return key(a) == key(b)
 
 
-class TutorUI:
+class TutorUI(kg_workbook.WorkbookScreens):
     def __init__(self, root):
         self.root = root
         self.root.title("Liza")
@@ -1061,6 +1064,10 @@ class TutorUI:
         self._tick_clock()
         self._follow_spoken_captions()
         self.root.after(400, self._hold_fullscreen)
+        # The 3D engine takes 5-8s to start and a model 0.2s to draw once it
+        # has, so it is started here, once the screen is up, rather than when
+        # a child asks for a heart and watches a blank view. See Renderer.warm.
+        self.root.after(20000, lambda: self._renderer3d().warm())
 
     # The fullscreen request at the top of __init__ is made before the window
     # exists, and labwc (through Xwayland) honours that only some of the time. On
@@ -1901,16 +1908,28 @@ class TutorUI:
         covers) or `liza stop` from another machine could close her."""
         x0, y0, x1, y1 = 660, BTN_Y0 + 14, 784, BTN_Y0 + BTN_H - 14
         self._exit_armed = None
-        self._exit_box = self._round_rect(x0, y0, x1, y1, 18, fill="#1E293B",
-                                          outline="#FFFFFF", width=2, tags="btnEXIT")
-        self._exit_label = self.canvas.create_text(
-            (x0 + x1) // 2, (y0 + y1) // 2, text="✕  EXIT",
-            font=self._font(13, True), fill="#FFFFFF", tags="btnEXIT")
+        self._exit_box = None
+        icon = ui_asset("Home", "Exit.png")
+        if icon is not None:
+            # The red cross at the right end, with room on its left for the
+            # "Tap again" that the first tap shows.
+            cx, cy = x1 - icon.width // 2, (y0 + y1) // 2
+            self._place_asset(icon, cx - icon.width // 2, cy - icon.height // 2, "btnEXIT")
+            self._exit_label = self.canvas.create_text(
+                cx - icon.width // 2 - 6, cy, text="", anchor="e",
+                font=self._font(11, True), fill="#DC2626", tags="btnEXIT")
+        else:
+            self._exit_box = self._round_rect(x0, y0, x1, y1, 18, fill="#1E293B",
+                                              outline="#FFFFFF", width=2, tags="btnEXIT")
+            self._exit_label = self.canvas.create_text(
+                (x0 + x1) // 2, (y0 + y1) // 2, text="✕  EXIT",
+                font=self._font(13, True), fill="#FFFFFF", tags="btnEXIT")
         self.canvas.tag_bind("btnEXIT", "<ButtonPress-1>", self._exit_tapped)
 
     def _exit_tapped(self, event=None):
         if self._exit_armed is None:
-            self.canvas.itemconfigure(self._exit_box, fill="#DC2626")
+            if self._exit_box is not None:
+                self.canvas.itemconfigure(self._exit_box, fill="#DC2626")
             self.canvas.itemconfigure(self._exit_label, text="Tap again",
                                       font=self._font(11, True))
             self._exit_armed = self.root.after(self.EXIT_CONFIRM_MS, self._disarm_exit)
@@ -1925,6 +1944,9 @@ class TutorUI:
 
     def _disarm_exit(self):
         self._exit_armed = None
+        if self._exit_box is None:
+            self.canvas.itemconfigure(self._exit_label, text="")
+            return
         self.canvas.itemconfigure(self._exit_box, fill="#1E293B")
         self.canvas.itemconfigure(self._exit_label, text="✕  EXIT",
                                   font=self._font(13, True))
@@ -2729,7 +2751,7 @@ class TutorUI:
         self._wb_offer_left = UI_W - 14
         self._wb_graph_open = False   # the graph as a card on the page
         self._wb_suggestions = []     # buttons under the writing, from the reading
-        self._wb_measure = None       # whiteboard.measure_polygon's, while shown
+        self._wb_measure = None       # whiteboard.measure_drawing's, while shown
         # Buttons she has offered: see the "buttons for something worth
         # seeing" section. Here because the transcript is fitted around them.
         self._offers = []
@@ -2797,11 +2819,14 @@ class TutorUI:
         m = self._wb_measure
         if not (self._wb_open and m):
             return ""
-        letters = "ABCDEFGH"
+        import whiteboard
         name = re.split(r"[;,(]", m.get("name") or "figure")[0].strip().lower()
-        return (f"their {name} has angles "
-                + ", ".join(f"{letters[i]} = {a}°" for i, a in enumerate(m["angles"]))
-                + f" (adding up to {sum(m['angles'])}°)")
+        parts = []
+        for title, face, angles in zip(whiteboard.figure_names(m), m["faces"], m["angles"]):
+            parts.append(f"{title}: " + ", ".join(
+                f"∠{WB_LETTERS[i]} = {a}°" for i, a in zip(face, angles))
+                + f" (adding up to {sum(angles)}°)")
+        return f"their {name}, lettered on the page -- " + "; ".join(parts)
 
     def board_working(self):
         """Any thread: the worked solution beside their writing, for the model."""
@@ -3884,62 +3909,91 @@ class TutorUI:
     def _wb_draw_measure(self):
         """Their figure, tidied: straight sides through the corners found in
         the ink, a letter at each corner, each angle written inside it, and
-        what the angles add up to underneath."""
+        what the angles add up to underneath. Every region of it -- two
+        triangles sharing a side are two triangles, each with its own
+        angles, and the corner they share has one letter."""
         c = self.canvas
         c.delete(self.WB_MEASURE_TAG)
         m = self._wb_measure
         if not (self._wb_open and m):
             return
-        pts = [(x, y + self.WB_TOP) for x, y in m["corners"]]
-        n = len(pts)
+        pts = [(x, y + self.WB_TOP) for x, y in m["points"]]
+        faces = m["faces"]
         tags = (self.WB_TAG, self.WB_MEASURE_TAG)
         ink = "#7C3AED"
-        c.create_polygon(*[v for p in pts for v in p], fill="", outline=ink, width=3,
-                         joinstyle="round", tags=tags)
-        cx, cy = sum(x for x, _ in pts) / n, sum(y for _, y in pts) / n
-        shortest = min(math.dist(pts[i], pts[i - 1]) for i in range(n))
-        radius = max(10, min(22, shortest * 0.22))
-        font = self._font(11 if n <= 4 else 9, True)
-        letters = "ABCDEFGH"
+        sides = {(min(a, b), max(a, b)) for f in faces for a, b in zip(f, f[1:] + f[:1])}
+        for a, b in sides:
+            c.create_line(*pts[a], *pts[b], fill=ink, width=3, capstyle="round", tags=tags)
+        many = len(faces) > 1
+        font = self._font(9 if many or len(faces[0]) > 4 else 11, True)
+        middles = []
+        for f, angles in zip(faces, m["angles"]):
+            ring = [pts[i] for i in f]
+            n = len(ring)
+            cx, cy = sum(x for x, _ in ring) / n, sum(y for _, y in ring) / n
+            middles.append((cx, cy))
+            shortest = min(math.dist(ring[i], ring[i - 1]) for i in range(n))
+            radius = max(9, min(22, shortest * 0.22))
+            for i, (x, y) in enumerate(ring):
+                (ax, ay), (bx, by) = ring[i - 1], ring[(i + 1) % n]
+                # Tk measures arcs anticlockwise from east with y UP.
+                first = math.degrees(math.atan2(y - ay, ax - x))
+                second = math.degrees(math.atan2(y - by, bx - x))
+                extent = (second - first) % 360
+                start = first
+                # The arc goes on the side of the corner that is inside THIS
+                # region, which for a dent in an arrow is the long way round.
+                if (extent > 180) != (angles[i] > 180):
+                    start, extent = second, 360 - extent
+                c.create_arc(x - radius, y - radius, x + radius, y + radius, start=start,
+                             extent=extent, style="arc", outline=ink, width=2, tags=tags)
+                middle = math.radians(start + extent / 2)
+                reach = radius + (14 if extent > 60 else 22)
+                lx, ly = x + math.cos(middle) * reach, y - math.sin(middle) * reach
+                words = f"{angles[i]}°"
+                box = font.measure(words) / 2 + 3
+                self._round_rect(lx - box, ly - 9, lx + box, ly + 9, 7, fill="#FFFFFF",
+                                 outline="", tags=tags)
+                c.create_text(lx, ly, text=words, font=font, fill=ink, tags=tags)
+        # Each letter pushed away from the regions its corner belongs to; a
+        # corner in the middle of them all (two triangles meeting at a
+        # point) gets its letter above it.
         for i, (x, y) in enumerate(pts):
-            (ax, ay), (bx, by) = pts[i - 1], pts[(i + 1) % n]
-            # Tk measures arcs anticlockwise from east with y UP.
-            first = math.degrees(math.atan2(y - ay, ax - x))
-            second = math.degrees(math.atan2(y - by, bx - x))
-            extent = (second - first) % 360
-            start = first
-            if extent > 180:
-                start, extent = second, 360 - extent
-            c.create_arc(x - radius, y - radius, x + radius, y + radius, start=start,
-                         extent=extent, style="arc", outline=ink, width=2, tags=tags)
-            middle = math.radians(start + extent / 2)
-            reach = radius + (16 if extent > 60 else 24)
-            lx, ly = x + math.cos(middle) * reach, y - math.sin(middle) * reach
-            words = f"{m['angles'][i]}°"
-            box = font.measure(words) / 2 + 4
-            self._round_rect(lx - box, ly - 10, lx + box, ly + 10, 8, fill="#FFFFFF",
-                             outline="", tags=tags)
-            c.create_text(lx, ly, text=words, font=font, fill=ink, tags=tags)
-            dx, dy = x - cx, y - cy
-            away = math.hypot(dx, dy) or 1.0
-            c.create_text(x + dx / away * 17, y + dy / away * 17, text=letters[i],
+            owners = [middles[k] for k, f in enumerate(faces) if i in f]
+            ox = sum(p[0] for p in owners) / len(owners)
+            oy = sum(p[1] for p in owners) / len(owners)
+            dx, dy = x - ox, y - oy
+            away = math.hypot(dx, dy)
+            if away < 6:
+                dx, dy, away = 0.0, -1.0, 1.0
+            c.create_text(x + dx / away * 17, y + dy / away * 17, text=WB_LETTERS[i],
                           font=self._font(12, True), fill=COL_TEXT, tags=tags)
-        total = (n - 2) * 180
-        words = " + ".join(letters[:n]) + f" = {total}°" if n <= 4 else f"The angles add up to {total}°"
+        if many:
+            words = "  ·  ".join(
+                "".join(WB_LETTERS[i] for i in f) + f" = {(len(f) - 2) * 180}°" for f in faces[:4])
+        else:
+            n = len(faces[0])
+            total = (n - 2) * 180
+            words = (" + ".join(WB_LETTERS[i] for i in faces[0]) + f" = {total}°" if n <= 4
+                     else f"The angles add up to {total}°")
         width = self._font(12, True).measure(words) / 2 + 12
+        xs, ys = [x for x, _ in pts], [y for _, y in pts]
+        cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
 
         def inside(px, py):
-            # On the inner side of every edge (the corners go clockwise).
-            return all((bx - ax) * (py - ay) - (by - ay) * (px - ax) >= 0
-                       for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]))
+            # On the same side of every edge, whichever way round they go.
+            ring = [pts[i] for i in faces[0]]
+            sides = [(bx - ax) * (py - ay) - (by - ay) * (px - ax)
+                     for (ax, ay), (bx, by) in zip(ring, ring[1:] + ring[:1])]
+            return all(v >= 0 for v in sides) or all(v <= 0 for v in sides)
         # Inside the figure when it fits there -- under it is where the
         # buttons for it are -- else over the top of it, else beside it.
-        lift = 16 if n == 3 else 0
-        x, y = cx, cy + lift
-        if not all(inside(x + dx, y + dy) for dx in (-width, width) for dy in (-14, 14)):
-            x, y = cx, min(py for _, py in pts) - 34
+        lift = 16 if len(faces[0]) == 3 else 0
+        x, y = middles[0][0], middles[0][1] + lift
+        if many or not all(inside(x + dx, y + dy) for dx in (-width, width) for dy in (-14, 14)):
+            x, y = cx, min(ys) - 34
             if y < self.WB_TOP + 18:
-                x, y = max(px for px, _ in pts) + width + 24, cy
+                x, y = max(xs) + width + 24, cy
         x = max(12 + width, min(UI_W - 12 - width, x))
         self._round_rect(x - width, y - 14, x + width, y + 14, 14, fill="#F5F3FF",
                          outline="#DDD6FE", tags=tags)
@@ -3966,7 +4020,8 @@ class TutorUI:
             return "break"
         if offer["kind"] == "explore" and offer.get("measure"):
             measured = offer["measure"]
-            figure = geometry.from_drawing(measured["corners"], measured.get("name"))
+            figure = geometry.from_drawing(measured["points"], measured.get("name"),
+                                           faces=measured["faces"])
             app_state.current_visual = {"kind": "geometry", "title": figure.describe(),
                                         "steps": []}
             self.show_geometry(figure)
@@ -4045,8 +4100,22 @@ class TutorUI:
         return (x1 - x0 - 8, y1 - y0 - 8)
 
     def _model3d_big_size(self):
-        x0, y0, x1, y1 = self.BIG_MODEL3D_BOX
+        x0, y0, x1, y1 = self._model3d_picture_box()
         return (x1 - x0, y1 - y0)
+
+    # A simulation's settings, as sliders down the right of the big view.
+    SIM_PANEL_W = 236
+
+    def _model3d_has_panel(self):
+        scene = getattr(self, "_model3d_scene", None)
+        return bool(scene and scene.get("simulation"))
+
+    def _model3d_picture_box(self):
+        """Where the frames go: the whole big view, or left of the sliders."""
+        x0, y0, x1, y1 = self.BIG_MODEL3D_BOX
+        if self._model3d_has_panel():
+            x1 -= self.SIM_PANEL_W
+        return (x0, y0, x1, y1)
 
     def show_model3d(self, scene):
         """Put a 3D model up: full screen and turning, with a still on the board."""
@@ -4099,7 +4168,7 @@ class TutorUI:
                                             fill="#C9D2EA", font=self._font(9),
                                             tags=tag)
             x = self.canvas.bbox(label)[2] + 16
-        x0, y0, x1, y1 = self.BIG_MODEL3D_BOX
+        x0, y0, x1, y1 = self._model3d_picture_box()
         glass = tag + "glass"
         # The touch surface: an empty rectangle the size of the picture, so a
         # drag is caught even before the first frame has arrived.
@@ -4122,6 +4191,12 @@ class TutorUI:
         self._model3d_button(UI_W / 2 - 150, bottom, "\u2212", lambda: self._model3d_zoom(1 / 1.25))
         self._model3d_button(UI_W / 2 - 80, bottom, "+", lambda: self._model3d_zoom(1.25))
         self._model3d_button(UI_W / 2 + 20, bottom, "Reset", self._model3d_reset, width=96)
+        self._model3d_paused = False
+        if scene.get("animated"):
+            # Everything that moves keeps moving -- a throw lands and is thrown
+            # again -- so a child who wants to look at one moment needs a way
+            # to hold it.
+            self._model3d_pause_button(UI_W / 2 + 130, bottom)
         self.canvas.create_text(UI_W - 20, bottom, text="drag to turn it", anchor="e",
                                 fill="#8891A8", font=self._font(9), tags=tag)
         if scene.get("formulas"):
@@ -4138,7 +4213,7 @@ class TutorUI:
             # "Not to scale", "Spreading exaggerated": the honest small print,
             # in the free corner left of the buttons.
             self.canvas.create_text(16, bottom, text=scene["note"], anchor="w",
-                                    width=UI_W / 2 - 180, fill="#8891A8",
+                                    width=UI_W / 2 - 196, fill="#8891A8",
                                     font=self._font(8), tags=tag)
         close = tag + "close"
         self._close_icon(UI_W - 26, 24, close)
@@ -4158,6 +4233,220 @@ class TutorUI:
         # system, whose planets move) says so in the scene, and viewer3d obeys.
         renderer.spin(True)
         renderer.animate(True)
+        if self._model3d_has_panel():
+            self._sim_panel_frame()
+            self._sim_panel_fetch()
+        return "break"
+
+    def _model3d_pause_button(self, cx, cy, width=96):
+        tag = self.BIG_MODEL3D_TAG + "pause"
+        self._round_rect(cx - width / 2, cy - 20, cx + width / 2, cy + 20, 12,
+                         fill="#1E2A4A", outline="#3A4A75", tags=(self.BIG_MODEL3D_TAG, tag))
+        self._model3d_pause_text = self.canvas.create_text(
+            cx, cy, text="Pause", fill="#FFFFFF", font=self._font(11, bold=True),
+            tags=(self.BIG_MODEL3D_TAG, tag))
+        self.canvas.tag_bind(tag, "<Button-1>", lambda e: (self._model3d_toggle_pause(), "break")[1])
+
+    def _model3d_toggle_pause(self):
+        self._model3d_paused = not getattr(self, "_model3d_paused", False)
+        self._renderer3d().animate(not self._model3d_paused)
+        if getattr(self, "_model3d_pause_text", None):
+            self.canvas.itemconfig(self._model3d_pause_text,
+                                   text="Play" if self._model3d_paused else "Pause")
+
+    # --- the simulation's sliders -----------------------------------------
+    # Drag a knob: the number beside it follows the finger; let go and the
+    # simulation is rebuilt with it and starts again. Not live while dragging:
+    # each new value rebuilds the scene in the worker, and a drag is dozens
+    # of values a second.
+    SIM_TAG = "big3dsim"
+
+    def _sim_panel_box(self):
+        x0, y0, x1, y1 = self.BIG_MODEL3D_BOX
+        return (x1 - self.SIM_PANEL_W + 6, y0 + 4, x1 - 8, y1 - 4)
+
+    def _sim_panel_frame(self, message="Loading the settings\u2026"):
+        """The empty panel, at once, so the picture does not jump sideways."""
+        tag = self.SIM_TAG
+        self.canvas.delete(tag)
+        px0, py0, px1, py1 = self._sim_panel_box()
+        self._round_rect(px0, py0, px1, py1, 12, fill="#141C33", outline="#2A3658",
+                         tags=(self.BIG_MODEL3D_TAG, tag, tag + "bg"))
+        self.canvas.create_text(px0 + 14, py0 + 18, text="Change it", anchor="w",
+                                fill="#C9D2EA", font=self._font(10, bold=True),
+                                tags=(self.BIG_MODEL3D_TAG, tag))
+        if message:
+            self.canvas.create_text((px0 + px1) / 2, (py0 + py1) / 2, text=message,
+                                    fill="#8891A8", font=self._font(9), width=px1 - px0 - 24,
+                                    tags=(self.BIG_MODEL3D_TAG, tag))
+        # Taps on the panel are the panel's, not the model's or the mic's.
+        self.canvas.tag_bind(tag + "bg", "<Button-1>", lambda e: "break")
+
+    def _sim_panel_fetch(self, delay_ms=0):
+        """Ask the engine, off the Tk thread, what can be changed."""
+        scene = getattr(self, "_model3d_scene", None)
+
+        def ask():
+            # The first model starts the worker: allow it time to come up.
+            answer = self.renderer_ask("params", "", timeout=20.0)
+            def land():
+                if getattr(self, "_model3d_scene", None) is not scene \
+                        or not getattr(self, "_model3d_big_open", False):
+                    return
+                if answer and answer.get("handled"):
+                    self._sim_panel_draw(answer)
+                else:
+                    self._sim_panel_frame("Say what to change, like \u201cmake the angle 60\u201d.")
+            self.root.after(0, land)
+        self.root.after(delay_ms, lambda: threading.Thread(target=ask, daemon=True,
+                                                           name="sim-params").start())
+
+    @staticmethod
+    def _sim_step(param):
+        step = float(param.get("step") or 0.0)
+        if step > 0:
+            return step
+        raw = (param["max"] - param["min"]) / 100.0
+        for nice in (0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100):
+            if nice >= raw:
+                return nice
+        return raw
+
+    @staticmethod
+    def _sim_value_text(value, param, step):
+        decimals = 0 if step >= 1 else 1 if step >= 0.1 else 2
+        unit = param.get("unit") or ""
+        number = f"{value:.{decimals}f}"
+        if not unit:
+            return number
+        return f"{number}{unit}" if unit in ("\u00b0", "\u00d7") else f"{number} {unit}"
+
+    # The engine's names, where a child would say something else.
+    SIM_LABELS = {("amplitude", "\u00b0"): "starting angle", ("initial_velocity", "m/s"): "launch speed",
+                  ("height", "m"): "height", ("r1", "\u03a9"): "resistor 1", ("r2", "\u03a9"): "resistor 2",
+                  ("mass1", "kg"): "mass of cart 1", ("mass2", "kg"): "mass of cart 2",
+                  ("velocity1", "m/s"): "speed of cart 1", ("velocity2", "m/s"): "speed of cart 2",
+                  ("n1", ""): "refractive index 1", ("n2", ""): "refractive index 2"}
+
+    # Results that change every frame say nothing in a still line of text.
+    SIM_MOVING_RESULTS = ("now", "time", "years_elapsed", "half_lives_passed")
+
+    def _sim_results_text(self, measurements):
+        lines = []
+        for key, value in (measurements or {}).items():
+            if key in ("x",) or any(w in key for w in self.SIM_MOVING_RESULTS):
+                continue
+            name = key.replace("_", " ")
+            lines.append(f"{name[:1].upper()}{name[1:]}: {value}")
+        return "\n".join(lines[:4])
+
+    def _sim_panel_draw(self, controls):
+        params = controls.get("params") or {}
+        self._sim_params = params
+        self._sim_panel_frame(message=None if params else "Nothing to change here.")
+        tag = self.SIM_TAG
+        px0, py0, px1, py1 = self._sim_panel_box()
+        results_h = 78
+        top, bottom = py0 + 40, py1 - results_h
+        row = min(62, (bottom - top) / max(1, len(params)))
+        self._sim_sliders = {}
+        for i, (name, param) in enumerate(params.items()):
+            y = top + i * row
+            step = self._sim_step(param)
+            label = self.SIM_LABELS.get((name, param.get("unit")), name.replace("_", " "))
+            self.canvas.create_text(px0 + 14, y + 8, text=label[:1].upper() + label[1:], anchor="w",
+                                    fill="#FFFFFF", font=self._font(9, bold=True),
+                                    tags=(self.BIG_MODEL3D_TAG, tag))
+            value_item = self.canvas.create_text(px1 - 12, y + 8, anchor="e", fill="#FFE066",
+                                                 font=self._font(9, bold=True),
+                                                 tags=(self.BIG_MODEL3D_TAG, tag))
+            tx0, tx1, ty = px0 + 22, px1 - 22, y + 32
+            hit = f"{tag}hit{i}"
+            # A tall, invisible strip: a finger lands anywhere near the track.
+            self.canvas.create_rectangle(px0 + 6, y + 14, px1 - 6, y + 50, fill="#141C33",
+                                         outline="", tags=(self.BIG_MODEL3D_TAG, tag, hit))
+            self.canvas.create_line(tx0, ty, tx1, ty, width=6, fill="#3A4A75", capstyle="round",
+                                    tags=(self.BIG_MODEL3D_TAG, tag, hit))
+            fill = self.canvas.create_line(tx0, ty, tx0, ty, width=6, fill="#6366F1",
+                                           capstyle="round", tags=(self.BIG_MODEL3D_TAG, tag, hit))
+            knob = self.canvas.create_oval(tx0 - 11, ty - 11, tx0 + 11, ty + 11, fill="#FFFFFF",
+                                           outline="#6366F1", width=2,
+                                           tags=(self.BIG_MODEL3D_TAG, tag, hit))
+            slider = {"name": name, "param": param, "step": step, "track": (tx0, tx1, ty),
+                      "fill": fill, "knob": knob, "value_item": value_item,
+                      "value": float(param["value"])}
+            self._sim_sliders[name] = slider
+            self._sim_place(slider, slider["value"])
+            self.canvas.tag_bind(hit, "<ButtonPress-1>", lambda e, s=slider: self._sim_drag(e, s))
+            self.canvas.tag_bind(hit, "<B1-Motion>", lambda e, s=slider: self._sim_drag(e, s))
+            self.canvas.tag_bind(hit, "<ButtonRelease-1>", lambda e, s=slider: self._sim_release(e, s))
+        self._sim_results = self.canvas.create_text(
+            px0 + 14, py1 - results_h + 6, anchor="nw", width=px1 - px0 - 26,
+            text=self._sim_results_text(controls.get("measurements")), fill="#C9D2EA",
+            font=self._font(8), tags=(self.BIG_MODEL3D_TAG, tag))
+        self.canvas.tag_raise(tag)
+        self.canvas.tag_raise(self.BIG_MODEL3D_TAG + "close")
+
+    def _sim_place(self, slider, value):
+        p = slider["param"]
+        tx0, tx1, ty = slider["track"]
+        span = (p["max"] - p["min"]) or 1.0
+        x = tx0 + (tx1 - tx0) * (value - p["min"]) / span
+        self.canvas.coords(slider["fill"], tx0, ty, x, ty)
+        self.canvas.coords(slider["knob"], x - 11, ty - 11, x + 11, ty + 11)
+        self.canvas.itemconfig(slider["value_item"],
+                               text=self._sim_value_text(value, p, slider["step"]))
+
+    def _sim_drag(self, event, slider):
+        p, step = slider["param"], slider["step"]
+        tx0, tx1, _ty = slider["track"]
+        f = min(1.0, max(0.0, (event.x - tx0) / ((tx1 - tx0) or 1)))
+        value = p["min"] + f * (p["max"] - p["min"])
+        # Whole steps of the number itself (9.8, 10.0), not of the distance
+        # from the bottom of the range (9.6, 10.1); the ends stay reachable.
+        if f <= 0.0 or f >= 1.0:
+            value = p["min"] if f <= 0.0 else p["max"]
+        else:
+            value = round(value / step) * step
+        value = round(min(p["max"], max(p["min"], value)), 6)
+        slider["value"] = value
+        self._sim_place(slider, value)
+        return "break"
+
+    def _sim_release(self, event, slider):
+        self._sim_drag(event, slider)
+        value, name = slider["value"], slider["name"]
+        if abs(value - float(slider["param"]["value"])) < 1e-9:
+            return "break"
+        slider["param"]["value"] = value
+        if getattr(self, "_sim_results", None):
+            self.canvas.itemconfig(self._sim_results, text="Working it out\u2026")
+        print(f"[3D] Slider: {name} = {value:g}", flush=True)
+        scene = getattr(self, "_model3d_scene", None)
+
+        def send():
+            answer = self.renderer_ask("set", f"{name}={value:g}", timeout=8.0)
+
+            def land():
+                if getattr(self, "_model3d_scene", None) is not scene:
+                    return
+                if not answer or not answer.get("handled"):
+                    reason = (answer or {}).get("reason") or "it did not answer"
+                    print(f"[3D] Slider {name} = {value:g} refused: {reason}", flush=True)
+                    if getattr(self, "_sim_results", None):
+                        self.canvas.itemconfig(self._sim_results, text=reason)
+                    return
+                if answer.get("board"):
+                    # ON_BOARD: she should know the angle is now 60, not 45.
+                    app_state.current_visual = {"kind": "model3d", "title": answer["board"],
+                                                "steps": []}
+                if getattr(self, "_sim_results", None):
+                    self.canvas.itemconfig(self._sim_results,
+                                           text=self._sim_results_text(answer.get("measurements")))
+                if getattr(self, "_model3d_paused", False):
+                    self._model3d_toggle_pause()
+            self.root.after(0, land)
+        threading.Thread(target=send, daemon=True, name="sim-set").start()
         return "break"
 
     def _model3d_button(self, cx, cy, text, command, width=56):
@@ -4283,6 +4572,9 @@ class TutorUI:
             return
         if answer.get("changed_model") or not getattr(self, "_model3d_big_open", False):
             self._open_model3d()
+        elif self._model3d_has_panel():
+            # "Make the angle 60", said rather than slid: the knob follows.
+            self._sim_panel_fetch()
         if getattr(self, "_renderer", None) is not None:
             self._renderer.spin(False)
 
@@ -5053,13 +5345,18 @@ class TutorUI:
                 c.create_text(sx + dx / away * push, sy + dy / away * push, text=label,
                               font=font, fill=picked or (COL_TEXT if seen else COL_TEXT_DIM),
                               tags=tags)
-        if (figure.flat and not small and figure.kind == "flat" and len(faces) == 1
-                and len(faces[0]) <= 10):
-            # A flat figure's sides, measured where they are.
-            ring = faces[0]
-            for a, b in zip(ring, ring[1:] + ring[:1]):
+        if (figure.flat and not small and figure.kind == "flat"
+                and len(figure.edges) <= 16 and len(faces[0]) <= 10):
+            # A flat figure's sides, measured where they are -- each once,
+            # however many regions share it.
+            for a, b in figure.edges:
                 (ax, ay, _), (bx, by, _) = screen[a], screen[b]
-                ex, ey = (ax + bx) / 2 - mx, (ay + by) / 2 - my
+                # Square off the side, on the side away from the middle: a
+                # side two regions share runs through the middle, where
+                # "away from it" would be along the line itself.
+                ex, ey = ay - by, bx - ax
+                if ex * ((ax + bx) / 2 - mx) + ey * ((ay + by) / 2 - my) < 0:
+                    ex, ey = -ex, -ey
                 away = math.hypot(ex, ey) or 1.0
                 length = math.dist(figure.points[a], figure.points[b])
                 c.create_text((ax + bx) / 2 + ex / away * 16, (ay + by) / 2 + ey / away * 16,
@@ -6335,6 +6632,7 @@ class TutorUI:
         "counting": ("Counting",          "#059669"),
         "order":    ("Alphabet order",    "#D97706"),
         "test":     ("Tests taken",       "#0EA5E9"),
+        "workbook": ("Workbook pages",    "#F97316"),
         "lesson":   ("Topics learned",    "#0F766E"),
         "retell":   ("Topics re-told",    "#BE185D"),
     }
@@ -6473,11 +6771,18 @@ class TutorUI:
     def _build_chats_button(self):
         x0, y0, x1, y1 = self.CHATS_BOX
         w, h = x1 - x0, y1 - y0
+        tags = (self.CHATS_TAG,)
+        # The finished icon, label and all, when it is there; 62x62 is the box.
+        icon = ui_asset("Home", "Chat.png", box=(w, h))
+        if icon is not None:
+            item = self._place_asset(icon, x0, y0, tags)
+            self._press_feedback(self.CHATS_TAG, item, icon,
+                                 lambda event=None: self.show_chat_history())
+            return
         # Cut from the profile card's own artwork, left end and right end joined,
         # so the corners and the glow match the three cards beside it. Squashing
         # the 204px card to 62 would have turned its corners into ovals.
         art = ui_asset("Home", "Profile_bg.png", box=CARD_BOX)
-        tags = (self.CHATS_TAG,)
         if art is not None:
             half = w // 2
             face = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -7005,9 +7310,15 @@ class TutorUI:
         # activity to wander into.
         # Kept inside the panel: it ends at 461, and the row used to run to 464.
         row_y = 406 if glass is not None else 412
-        self._overlay_button(30, row_y, 430, row_y + 50, "Test yourself",
-                             self.show_kg_test_picker, fill="#0EA5E9", size=15,
+        self._overlay_button(30, row_y, 224, row_y + 50, "Test yourself",
+                             self.show_kg_test_picker, fill="#0EA5E9", size=13,
                              sub="See what you have learned",
+                             label_frac=0.42, sub_frac=0.74)
+        # The workbook shares the test's row: both are the child DOING
+        # something rather than being shown it. See kg_workbook.
+        self._overlay_button(236, row_y, 430, row_y + 50, "Workbook",
+                             self.show_kg_workbook, fill="#F97316", size=13,
+                             sub="Match, add, colour and more",
                              label_frac=0.42, sub_frac=0.74)
         # Between the test and Switch user, because that is the order somebody
         # sitting with the child reaches for them: try something, see how it

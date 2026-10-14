@@ -33,7 +33,7 @@ import solution
 import store
 import visuals
 import whiteboard
-from config import MPV_AUDIO_DEVICE
+from config import LLM_PROVIDER, MPV_AUDIO_DEVICE
 from media import _die_with_parent, stop_media_playback
 from state import (device_state_lock, get_device_state, media_active,
                    note_media_started, set_playing_state, subprocess_lock)
@@ -1089,7 +1089,7 @@ def phrase_action_result(asked_for, raw, language="en"):
                        f"The device returned:\n{raw}\n\n"
                        f"Say what this tells them, briefly."}],
             max_tokens=160, temperature=0.3,
-            extra_body={"reasoning": {"enabled": False}})
+            extra_body={"reasoning": {"enabled": False}, **LLM_PROVIDER})
         spoken = (done.choices[0].message.content or "").strip()
         return spoken or raw
     except Exception as exc:

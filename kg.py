@@ -22,7 +22,7 @@ import kg_content
 import profiles
 import state
 from media import stop_media_playback
-from config import KG_ASK_START_S, KG_DOUBT_MEMORY, KG_MIN_LOGPROB
+from config import KG_ASK_START_S, KG_DOUBT_MEMORY, KG_MIN_LOGPROB, LLM_PROVIDER
 from state import (_kg_listen_lock, _kg_listen_next, _kg_listen_valid_from,
                    kg_ask_cancel,
                    audio_queue, kg_active, kg_listen_requests, kg_listen_results,
@@ -273,7 +273,7 @@ def kg_answer_doubt(question, language="en"):
                       + list(_kg_doubt_history)
                       + [{"role": "user", "content": f"{who} asks: {question}"}]),
             max_tokens=180, temperature=0.5,
-            extra_body={"reasoning": {"enabled": False}})
+            extra_body={"reasoning": {"enabled": False}, **LLM_PROVIDER})
         answer = (done.choices[0].message.content or "").strip()
     except Exception as exc:
         print(f"[KG] Could not answer the doubt ({exc}).", flush=True)
@@ -293,7 +293,7 @@ def kg_answer_doubt(question, language="en"):
                           {"role": "user", "content":
                            f"{who} asks: {question}\n\nAnswer in English only."}],
                 max_tokens=180, temperature=0.5,
-                extra_body={"reasoning": {"enabled": False}})
+                extra_body={"reasoning": {"enabled": False}, **LLM_PROVIDER})
             answer = (done.choices[0].message.content or "").strip()
         except Exception as exc:
             print(f"[KG] The retry failed too ({exc}).", flush=True)
@@ -475,9 +475,55 @@ def kg_say_many(segments, split=True):
     for text, tone in segments:
         if not text:
             continue
+        # Before the split, so a letter inside a Hindi sentence stays in it as
+        # ए rather than being cut out as an English "ay" the voice says as "eh".
+        text = letters_said(text)
         for run in (single_script_runs(text) if split else [text]):
             audio_queue.put((run, kg_delivery(tone)) if tone else run)
     audio_queue.put("[END_OF_RESPONSE]")
+
+
+# A Latin letter standing alone: not part of a word ("I'm", "don't"), a
+# hyphenated name ("double-you") or a number ("3D").
+_RE_LONE_LATIN = re.compile(r"(?<![A-Za-z0-9'\u2019-])([A-Za-z])(?![A-Za-z0-9'\u2019-])")
+
+# What follows a letter that is being NAMED rather than used as a word.
+_RE_LETTER_USE = re.compile(
+    r"\s*(?:$|[.,!?;:)\"'\u2019]|(?:for|to|is|and|comes|से)\b|[A-Za-z](?![A-Za-z'\u2019]))")
+
+_RE_ENGLISH_NEXT = re.compile(r"\s+[A-Za-z]{2,}")
+
+
+def letters_said(run):
+    """Every lone English letter in a KG line replaced by its spoken NAME.
+
+    The screens that teach letters already say "ay" rather than "A", but any
+    line that slipped through -- "Tap them from A to Z.", a child's question
+    answered with "A for Apple" in a Hindi sentence -- was read by the voice as
+    अ. One guard here covers every KG line, including the model's. A Hindi line
+    gets the name in Devanagari (ए), an English one the English name (ay).
+    In an English line "a", "A" and "I" are usually words, and the caption
+    shows what is queued here, so "A cat" and "I am" are left alone; they are
+    renamed only where they are plainly the letter -- "A to Z", "A for Apple",
+    "I is for", or standing on their own before a full stop.
+    """
+    # Not the dandas: "A for Apple।" is an English run that ends a Hindi line.
+    hindi = bool(re.search(r"[\u0900-\u0963\u0966-\u097f]", run))
+    names = kg_content.LETTER_SOUNDS_HI if hindi else kg_content.LETTER_SOUNDS
+
+    def name(match):
+        letter = match.group(1)
+        if not hindi and letter in "aiAI" and not _RE_LETTER_USE.match(
+                run, match.end()):
+            return letter
+        if hindi and _RE_ENGLISH_NEXT.match(run, match.end()):
+            # "जैसे A for Apple" -- the letter opens an English phrase and is
+            # split off with it, so it takes the English name. As ए it would
+            # be cut off at the end of the Hindi run and clipped.
+            return kg_content.LETTER_SOUNDS[letter.upper()]
+        return names[letter.upper()]
+
+    return _RE_LONE_LATIN.sub(name, run)
 
 
 _HINDI_LETTERS = {entry[0] for entry in kg_content.HINDI_ALPHABET}
@@ -522,6 +568,11 @@ def single_script_runs(text):
             continue
         if script == "hi" and run in _HINDI_LETTERS:
             run += "।"
+        if script == "en":
+            # A danda carried over from the Hindi sentence is Devanagari, and
+            # one Devanagari character sends the whole run to the Hindi voice:
+            # "A for Apple।" came back as "एफ़ोर आपद".
+            run = run.replace("॥", ".").replace("।", ".")
         out.append(run)
     return out
 

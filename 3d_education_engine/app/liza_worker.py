@@ -132,6 +132,10 @@ class LizaWorker:
         before = self.engine.model_id
         if op == "state":
             return {"handled": True, "board": self.board_text(), "model_id": before}
+        if op == "params":
+            return self.sim_controls()
+        if op == "set":
+            return self.set_from_slider(text)
         accept = ("command",) if op == "try" else ("command", "model_request")
         reply = agent.try_command(text, accept=accept)
         if reply is None:
@@ -146,6 +150,36 @@ class LizaWorker:
         if not reply.ok:
             answer["reason"] = reply.text
         return answer
+
+    # ------------------------------------------------------------ sliders
+    def sim_controls(self) -> dict:
+        """What Liza's screen needs to draw a slider per setting."""
+        sim = self.engine.simulation
+        if sim is None:
+            return {"handled": False, "reason": "no simulation is running"}
+        d = sim.describe()
+        return {"handled": True, "params": d["parameters"], "measurements": d["measurements"],
+                "model_id": self.engine.model_id, "board": self.board_text()}
+
+    def set_from_slider(self, text: str) -> dict:
+        """"angle=60" from a slider: set it, rebuild, and keep it running."""
+        from agent.tool_registry import ToolCall
+        name, _, value = (text or "").partition("=")
+        try:
+            value = float(value)
+        except ValueError:
+            return {"handled": False, "reason": f"not a number: {value!r}"}
+        sim = self.engine.simulation
+        if sim is None:
+            return {"handled": False, "reason": "no simulation is running"}
+        result = self.sv.tools.execute(ToolCall("set_parameter", {"name": name.strip(), "value": value}))
+        if not result.ok:
+            return {"handled": False, "reason": result.message}
+        sim = self.engine.simulation
+        sim.playing = True
+        return {"handled": True, "reply": result.message, "board": self.board_text(),
+                "model_id": self.engine.model_id, "changed_model": False,
+                "params": sim.describe()["parameters"], "measurements": sim.measurements()}
 
     # ------------------------------------------------------------ one batch
     def run(self, batch) -> tuple:
@@ -166,6 +200,10 @@ class LizaWorker:
                 # looked broken ("pause" and the sliders still work).
                 if eng.simulation is not None:
                     eng.simulation.playing = True
+                elif eng.scene is not None and eng.scene.animations and eng.animator is None:
+                    # Likewise a model's own motion -- the heart beating, the
+                    # methane burning -- starts without being asked for.
+                    eng.animate(next(iter(eng.scene.animations)))
                 dirty = True
             elif eng.scene is None:
                 if name == "ask":

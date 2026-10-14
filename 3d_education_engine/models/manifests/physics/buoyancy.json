@@ -1,0 +1,67 @@
+{
+  "id": "physics.matter.buoyancy",
+  "name": "Buoyancy",
+  "domain": "physics",
+  "subject": "matter",
+  "kind": "simulation",
+  "simulation": {
+    "name": "buoyancy",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.buoyancy",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "8",
+      "9",
+      "11"
+    ],
+    "topics": [
+      "gravitation",
+      "buoyancy",
+      "archimedes' principle",
+      "floating and sinking"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "A 20 cm cube dropped into a liquid. Arrows: weight (red) and buoyant force, the upthrust (green). Water slows it down, so it settles."
+  },
+  "aliases": [
+    "buoyancy",
+    "buoyant force",
+    "archimedes principle",
+    "archimedes' principle",
+    "floating and sinking",
+    "float and sink",
+    "upthrust",
+    "why things float",
+    "density and floating"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "buoyant force F_B = ρ_liquid · V_under · g  (Archimedes)",
+    "it floats if ρ_object < ρ_liquid",
+    "fraction under the surface = ρ_object / ρ_liquid"
+  ]
+}

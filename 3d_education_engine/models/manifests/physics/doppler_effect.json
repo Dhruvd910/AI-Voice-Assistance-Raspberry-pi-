@@ -1,0 +1,62 @@
+{
+  "id": "physics.waves.doppler_effect",
+  "name": "Doppler Effect",
+  "domain": "physics",
+  "subject": "waves",
+  "kind": "simulation",
+  "simulation": {
+    "name": "doppler_effect",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.doppler_effect",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "11",
+      "12"
+    ],
+    "topics": [
+      "sound",
+      "waves",
+      "doppler effect"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Seen from above. Each ring is one wave crest, spreading from where the source was when it made it. Slowed down a great deal so the crests can be watched."
+  },
+  "aliases": [
+    "doppler effect",
+    "doppler",
+    "doppler shift",
+    "moving source of sound",
+    "ambulance siren",
+    "train whistle"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "in front (source coming): f′ = f·v / (v − vs)",
+    "behind (source going away): f′ = f·v / (v + vs)",
+    "v = speed of sound ≈ 343 m/s"
+  ]
+}

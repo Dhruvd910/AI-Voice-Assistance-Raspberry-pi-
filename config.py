@@ -289,6 +289,24 @@ RE_SLEEP_PHRASE = re.compile(
     r'अलविदा|बाय\s*बाय|बाय)[\s.!।]*$',
     re.IGNORECASE)
 
+
+def is_sleep_request(text):
+    """True for the sleep phrase on its own, or as the first sentence.
+
+    The room is rarely quiet: "Okay, go to sleep." followed by somebody else's
+    conversation held the microphone open for 17 seconds and then missed the
+    anchored match, so the request went to the model. A leading sentence counts
+    only with two words or more -- a bare "Sleep." or "Bye." opening a longer
+    utterance is too often the start of something else.
+    """
+    if not text:
+        return False
+    if RE_SLEEP_PHRASE.match(text):
+        return True
+    first = re.split(r'(?<=[.!?।])\s+', text.strip(), maxsplit=1)[0]
+    return (first != text.strip() and len(first.split()) >= 2
+            and bool(RE_SLEEP_PHRASE.match(first)))
+
 # Used only after the Sleep button, where the bar to wake her has to be higher.
 # Sleep is an explicit "leave me alone", so an accidental wake is a much worse
 # failure here than a missed one -- the Speak button is always right there.
@@ -958,6 +976,25 @@ BOARD_READ_PAUSE_S = float(os.getenv("BOARD_READ_PAUSE_S", "1.0"))
 # with only when that one is set; a text-only default would read nothing.
 BOARD_READ_MODEL = (os.getenv("BOARD_READ_MODEL", "")
                     or os.getenv("LLM_MODEL", "") or "google/gemini-2.5-flash")
+# Which of OpenRouter's hosts for the model to try first. Left to itself
+# OpenRouter sent gemini-2.5-flash to Google Vertex, and that was the lag of
+# 2026-10-14: a board reading timed out, a reply ran past its 25s and came back
+# as "I'm having trouble thinking right now". Measured that day, time to first
+# token with thinking off, three runs each:
+#
+#   no preference (went to Vertex)   3.1-8.0s
+#   google-vertex only               3.0-3.3s
+#   google-ai-studio only            1.4-1.7s
+#
+# Fallbacks stay allowed, so an AI Studio outage costs speed, not the answer,
+# and a model AI Studio does not serve simply goes wherever it is served.
+# Comma-separated; empty leaves the choice to OpenRouter.
+LLM_PROVIDER_ORDER = [p.strip() for p in
+                      os.getenv("LLM_PROVIDER_ORDER", "google-ai-studio").split(",")
+                      if p.strip()]
+# Merged into the extra_body of every OpenRouter request that asks for text.
+LLM_PROVIDER = ({"provider": {"order": LLM_PROVIDER_ORDER, "allow_fallbacks": True}}
+                if LLM_PROVIDER_ORDER else {})
 # The longest side of the picture of the page that a question carries.
 BOARD_SEND_MAX = int(os.getenv("BOARD_SEND_MAX", "1280"))
 # A question about the page usually needs WORKING OUT -- a sum, a balance, a

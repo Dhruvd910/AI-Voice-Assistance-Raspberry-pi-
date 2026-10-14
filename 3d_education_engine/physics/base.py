@@ -25,6 +25,8 @@ class Parameter:
     maximum: float
     unit: str
     description: str
+    # The smallest change a slider makes; 0 lets the screen pick a round one.
+    step: float = 0.0
 
     def check(self, value: float) -> float:
         value = float(value)
@@ -40,8 +42,15 @@ class Simulation:
     disclaimer = "Simplified educational simulation."
     units = "m"
     front = "-y"
-    duration = 10.0          # seconds of simulated time before it stops (or loops)
+    duration = 10.0          # seconds of simulated time before it starts again
+    # loop: the motion is periodic and t wraps round seamlessly. Otherwise the
+    # run is one story (a throw, a fall, a crash): it holds its last frame for
+    # END_PAUSE seconds so the result can be read, then plays again. A student
+    # watching a ball land once and then a frozen screen thought it was broken;
+    # with `repeat` off it stops at the end as it used to.
     loop = False
+    repeat = True
+    END_PAUSE = 1.5
     PARAMETERS: list[Parameter] = []
     ALIASES: dict[str, str] = {}      # "launch angle" -> "angle"
 
@@ -50,6 +59,7 @@ class Simulation:
         for key, value in overrides.items():
             self.set_parameter(key, value)
         self.t = 0.0
+        self.held = 0.0
         self.playing = False
         self.speed = 1.0
         self.prepare()
@@ -76,15 +86,24 @@ class Simulation:
     # ------------------------------------------------------------ time
     def reset(self) -> None:
         self.t = 0.0
+        self.held = 0.0
 
     def advance(self, dt: float) -> None:
+        if self.t >= self.duration and not self.loop:
+            # At the end of a run: hold it, then go round again.
+            self.held += dt
+            if self.repeat and self.held >= self.END_PAUSE:
+                self.reset()
+            elif not self.repeat:
+                self.playing = False
+            return
         self.t += dt * self.speed
         if self.t >= self.duration:
             if self.loop:
                 self.t %= self.duration
             else:
                 self.t = self.duration
-                self.playing = False
+                self.held = 0.0
 
     def step(self, n: int = 1, dt: float = 1 / 30) -> None:
         for _ in range(n):
@@ -103,7 +122,7 @@ class Simulation:
     def describe(self) -> dict:
         return {"id": self.id, "title": self.title, "time_s": round(self.t, 3), "playing": self.playing,
                 "parameters": {k: {"value": v.value, "unit": v.unit, "min": v.minimum, "max": v.maximum,
-                                   "description": v.description} for k, v in self.params.items()},
+                                   "step": v.step, "description": v.description} for k, v in self.params.items()},
                 "equations": self.equations, "measurements": self.measurements()}
 
 
@@ -134,3 +153,23 @@ def ground(xmin: float, xmax: float, depth: float = 2.0, z: float = 0.0) -> pv.P
 
 def fmt(value: float, unit: str, digits: int = 2) -> str:
     return f"{value:.{digits}f} {unit}".strip()
+
+
+def point_along(points, fraction: float) -> np.ndarray:
+    """The point `fraction` (0..1) of the way along a polyline, by length."""
+    pts = np.asarray(points, dtype=float)
+    seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    d = min(max(fraction, 0.0), 1.0) * cum[-1]
+    i = int(np.clip(np.searchsorted(cum, d, side="right") - 1, 0, len(seg) - 1))
+    f = (d - cum[i]) / seg[i] if seg[i] > 0 else 0.0
+    return pts[i] + f * (pts[i + 1] - pts[i])
+
+
+def beads(points, radius: float, resolution: int = 10) -> pv.PolyData:
+    """Small balls at the given points, as one mesh: light pulses, charges."""
+    pts = np.asarray(points, dtype=float).reshape(-1, 3)
+    if len(pts) == 0:
+        return pv.Sphere(radius=1e-4)
+    ball = pv.Sphere(radius=radius, theta_resolution=resolution, phi_resolution=resolution)
+    return pv.PolyData(pts).glyph(geom=ball, scale=False, orient=False)

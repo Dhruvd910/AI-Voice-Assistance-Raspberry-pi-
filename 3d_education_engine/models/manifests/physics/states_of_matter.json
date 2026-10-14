@@ -1,0 +1,68 @@
+{
+  "id": "physics.matter.states_of_matter",
+  "name": "States of Matter",
+  "domain": "physics",
+  "subject": "matter",
+  "kind": "simulation",
+  "simulation": {
+    "name": "states_of_matter",
+    "parameters": {}
+  },
+  "source": {
+    "provider": "3D Education Engine (procedural)",
+    "url": "local://generated",
+    "source_id": "physics.states_of_matter",
+    "creator": "3D Education Engine",
+    "license": "LicenseRef-Generated",
+    "license_url": "docs/provenance.md#generated-content",
+    "attribution": "Educational model generated procedurally by 3D Education Engine, based on the standard equations of motion stated in the simulation.",
+    "download_date": "2026-10-14",
+    "modification_status": "generated"
+  },
+  "educational": {
+    "grades": [
+      "6",
+      "7",
+      "8",
+      "9"
+    ],
+    "topics": [
+      "matter in our surroundings",
+      "states of matter",
+      "kinetic theory"
+    ],
+    "scale_level": "simulation",
+    "disclaimer": "Water molecules drawn as balls, hugely enlarged and slowed down. Heat them and they move faster: they vibrate in place (ice), slide past each other (water), then fly apart (steam)."
+  },
+  "aliases": [
+    "states of matter",
+    "solid liquid gas",
+    "solid liquid and gas",
+    "three states of matter",
+    "particles of matter",
+    "kinetic theory",
+    "kinetic theory of gases",
+    "melting and boiling",
+    "change of state",
+    "matter in our surroundings",
+    "gas particles"
+  ],
+  "parts": {},
+  "capabilities": [
+    "rotate",
+    "zoom",
+    "hide",
+    "show",
+    "highlight",
+    "transparent",
+    "focus",
+    "label",
+    "measure",
+    "simulate",
+    "animate"
+  ],
+  "equations": [
+    "average kinetic energy of the particles ∝ temperature (in kelvin)",
+    "water melts at 273 K (0 °C) and boils at 373 K (100 °C)"
+  ]
+}

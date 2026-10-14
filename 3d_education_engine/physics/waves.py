@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pyvista as pv
 
-from physics.base import Parameter, Simulation, arrow, fmt, polyline_tube
+from physics.base import Parameter, Simulation, arrow, beads, fmt, point_along, polyline_tube
 from visualization.scene import ScenePart
 
 
@@ -20,7 +20,7 @@ class SineWave(Simulation):
                   Parameter("frequency", 0.5, 0.05, 5.0, "Hz", "frequency f")]
     ALIASES = {"a": "amplitude", "lambda": "wavelength", "f": "frequency"}
     loop = True
-    duration = 40.0
+    duration = float("inf")      # y(x, t) is periodic in t: never wrap (a wrap jumps the phase)
     LENGTH = 10.0
 
     def y(self, x, t):
@@ -49,13 +49,13 @@ class StandingWave(Simulation):
     title = "Standing wave on a string"
     disclaimer = "Fixed at both ends. Yellow dots mark nodes (no motion); the loops between them are antinodes."
     equations = ["y = 2A·sin(n·π·x / L)·cos(ω·t)", "λ = 2L / n", "f = n·v / (2L)"]
-    PARAMETERS = [Parameter("harmonic", 3, 1, 8, "", "harmonic number n (number of loops)"),
+    PARAMETERS = [Parameter("harmonic", 3, 1, 8, "", "harmonic number n (number of loops)", 1.0),
                   Parameter("amplitude", 0.4, 0.05, 1.0, "m", "amplitude of each travelling wave"),
                   Parameter("length", 6.0, 1.0, 10.0, "m", "string length L"),
                   Parameter("wave_speed", 10.0, 1.0, 50.0, "m/s", "wave speed v")]
     ALIASES = {"n": "harmonic", "mode": "harmonic", "l": "length", "v": "wave_speed", "speed": "wave_speed"}
     loop = True
-    duration = 60.0
+    duration = float("inf")
 
     def set_parameter(self, name, value):
         key = super().set_parameter(name, value)
@@ -95,7 +95,7 @@ class Interference(Simulation):
                   Parameter("frequency", 1.0, 0.1, 3.0, "Hz", "frequency f")]
     ALIASES = {"d": "separation", "lambda": "wavelength", "f": "frequency"}
     loop = True
-    duration = 30.0
+    duration = float("inf")
     SIZE, RES = 16.0, 110
 
     def sources(self):
@@ -173,8 +173,37 @@ class Refraction(Simulation):
                  "angle of reflection = angle of incidence"]
     PARAMETERS = [Parameter("n1", 1.0, 1.0, 2.5, "", "refractive index of the upper medium (air ≈ 1.00)"),
                   Parameter("n2", 1.5, 1.0, 2.5, "", "refractive index of the lower medium (glass ≈ 1.5, water ≈ 1.33)"),
-                  Parameter("angle", 40.0, 0.0, 89.0, "°", "angle of incidence, from the normal")]
+                  Parameter("angle", 40.0, 0.0, 89.0, "°", "angle of incidence, from the normal", 1.0)]
     ALIASES = {"incidence": "angle", "angle_of_incidence": "angle", "incident_angle": "angle", "theta": "angle"}
+
+    loop = True
+    duration = 3.0          # one pulse's trip; four pulses ride the ray at once
+    PULSES = 4
+
+    def ray_path(self):
+        """Where the light goes, and how long each piece takes: slower in the
+        denser medium (v = c / n), so the pulses bunch up after the bend."""
+        th = np.radians(self.p("angle"))
+        L = 2.0
+        start = np.array([-np.sin(th), 0, np.cos(th)]) * L
+        r = self.refracted_angle()
+        if r is None:
+            end, n_after = np.array([np.sin(th), 0, np.cos(th)]) * L, self.p("n1")
+        else:
+            rr = np.radians(r)
+            end, n_after = np.array([np.sin(rr), 0, -np.cos(rr)]) * L, self.p("n2")
+        return start, end, L * self.p("n1"), L * n_after
+
+    def pulses(self, t):
+        start, end, t1, t2 = self.ray_path()
+        out = []
+        for k in range(self.PULSES):
+            s = ((t / self.duration) + k / self.PULSES) % 1.0 * (t1 + t2)
+            out.append(start * (1 - s / t1) if s < t1 else end * ((s - t1) / t2))
+        return beads(out, 0.07)
+
+    def apply(self, engine):
+        engine.update_part_mesh("light", self.pulses(self.t))
 
     def refracted_angle(self):
         s = self.p("n1") * np.sin(np.radians(self.p("angle"))) / self.p("n2")
@@ -194,6 +223,7 @@ class Refraction(Simulation):
         if r is not None:
             rr = np.radians(r)
             parts["refracted"] = ScenePart("refracted", "Refracted ray", arrow((0, 0, 0), np.array([np.sin(rr), 0, -np.cos(rr)]) * L, 0.025, 0.08), "#ff6b4a")
+        parts["light"] = ScenePart("light", "Light pulses", self.pulses(0.0), "#ffffff")
         return parts
 
     def measurements(self):
@@ -211,8 +241,19 @@ class Reflection(Simulation):
     front = "-y"
     disclaimer = "Angles are measured from the normal, the line at right angles to the mirror."
     equations = ["angle of reflection = angle of incidence", "incident ray, reflected ray and normal lie in one plane"]
-    PARAMETERS = [Parameter("angle", 35.0, 0.0, 89.0, "°", "angle of incidence, from the normal")]
+    PARAMETERS = [Parameter("angle", 35.0, 0.0, 89.0, "°", "angle of incidence, from the normal", 1.0)]
     ALIASES = {"incidence": "angle", "angle_of_incidence": "angle", "theta": "angle"}
+    loop = True
+    duration = 2.5
+    PULSES = 4
+
+    def pulses(self, t):
+        th = np.radians(self.p("angle"))
+        path = [np.array([-np.sin(th), 0, np.cos(th)]) * 2.0, np.zeros(3), np.array([np.sin(th), 0, np.cos(th)]) * 2.0]
+        return beads([point_along(path, ((t / self.duration) + k / self.PULSES) % 1.0) for k in range(self.PULSES)], 0.07)
+
+    def apply(self, engine):
+        engine.update_part_mesh("light", self.pulses(self.t))
 
     def build_parts(self):
         th = np.radians(self.p("angle"))
@@ -220,7 +261,58 @@ class Reflection(Simulation):
         return {"mirror": ScenePart("mirror", "Mirror", pv.Box((-2.5, 2.5, -0.6, 0.6, -0.12, 0)), "#c8d8e8"),
                 "normal": ScenePart("normal", "Normal", polyline_tube([(0, 0, 0), (0, 0, 2.2)], 0.01), "#d0d0d0", opacity=0.7),
                 "incident": ScenePart("incident", "Incident ray", arrow(inc, -inc, 0.025, 0.08), "#ffd84d"),
-                "reflected": ScenePart("reflected", "Reflected ray", arrow((0, 0, 0), np.array([np.sin(th), 0, np.cos(th)]) * 2.0, 0.025, 0.08), "#ff9f43")}
+                "reflected": ScenePart("reflected", "Reflected ray", arrow((0, 0, 0), np.array([np.sin(th), 0, np.cos(th)]) * 2.0, 0.025, 0.08), "#ff9f43"),
+                "light": ScenePart("light", "Light pulses", self.pulses(0.0), "#ffffff")}
 
     def measurements(self):
         return {"angle_of_incidence": fmt(self.p("angle"), "°", 1), "angle_of_reflection": fmt(self.p("angle"), "°", 1)}
+
+
+class DopplerEffect(Simulation):
+    id = "doppler_effect"
+    title = "Doppler effect"
+    front = "+z"
+    disclaimer = ("Seen from above. Each ring is one wave crest, spreading from where the source was when it "
+                  "made it. Slowed down a great deal so the crests can be watched.")
+    equations = ["in front (source coming): f′ = f·v / (v − vs)", "behind (source going away): f′ = f·v / (v + vs)",
+                 "v = speed of sound ≈ 343 m/s"]
+    PARAMETERS = [Parameter("source_speed", 150.0, 0.0, 330.0, "m/s", "speed of the source (an ambulance, a train)", 5.0),
+                  Parameter("frequency", 440.0, 100.0, 1000.0, "Hz", "frequency the source gives out", 10.0)]
+    ALIASES = {"speed": "source_speed", "vs": "source_speed", "velocity": "source_speed", "f": "frequency"}
+    SOUND = 343.0
+    C = 2.0            # crest speed on screen, units per second
+    EMIT = 0.45        # a new crest every this many seconds on screen
+    SPAN = 7.0
+
+    def prepare(self):
+        self.vs = self.C * self.p("source_speed") / self.SOUND
+        self.duration = 2 * self.SPAN / self.vs if self.vs > 0.05 else 8.0
+
+    def source_x(self, t):
+        return -self.SPAN + self.vs * t if self.vs > 0.05 else 0.0
+
+    def crests(self, t):
+        rings = []
+        for k in range(int(t / self.EMIT) + 1):
+            te = k * self.EMIT
+            r = self.C * (t - te)
+            if 0.05 < r < 9.0:
+                cx = self.source_x(te)
+                rings.append(polyline_tube([(cx + r * np.cos(a), r * np.sin(a), 0) for a in np.linspace(0, 2 * np.pi, 72)], 0.035, 5))
+        return pv.merge(rings) if rings else pv.Sphere(radius=1e-4)
+
+    def build_parts(self):
+        return {"road": ScenePart("road", "Road", pv.Box((-9, 9, -0.4, 0.4, -0.12, -0.08)), "#3c4a5a"),
+                "source": ScenePart("source", "Moving source", pv.Sphere(radius=0.3, center=(self.source_x(0), 0, 0)), "#ff6b4a"),
+                "crests": ScenePart("crests", "Wave crests", self.crests(0.0), "#4fb0ff"),
+                "front_listener": ScenePart("front_listener", "Listener in front: higher pitch", pv.Cube(center=(8.5, -1.5, 0), x_length=0.5, y_length=0.5, z_length=0.5), "#6fd08c"),
+                "back_listener": ScenePart("back_listener", "Listener behind: lower pitch", pv.Cube(center=(-8.5, -1.5, 0), x_length=0.5, y_length=0.5, z_length=0.5), "#c080ff")}
+
+    def apply(self, engine):
+        engine.move_part("source", (self.source_x(self.t) - self.source_x(0), 0, 0))
+        engine.update_part_mesh("crests", self.crests(self.t))
+
+    def measurements(self):
+        f, v, vs = self.p("frequency"), self.SOUND, self.p("source_speed")
+        return {"heard_in_front": fmt(f * v / (v - vs), "Hz", 0), "heard_behind": fmt(f * v / (v + vs), "Hz", 0),
+                "wavelength_in_front": fmt((v - vs) / f, "m", 3), "wavelength_behind": fmt((v + vs) / f, "m", 3)}

@@ -41,7 +41,7 @@ import time
 from PIL import Image, ImageDraw
 
 from config import (BOARD_ENABLED, BOARD_KEEP_SKETCHES, BOARD_READ_MODEL,
-                    BOARD_SEND_MAX)
+                    BOARD_SEND_MAX, LLM_PROVIDER)
 
 PAPER = (255, 255, 255)
 SKETCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -177,6 +177,357 @@ def measure_polygon(strokes, corners):
     return {"corners": [(round(x, 1), round(y, 1)) for x, y in shape], "angles": angles}
 
 
+# ------------------------------------------------------- measuring a whole figure
+# measure_polygon fits ONE outline round all the ink, so two triangles sharing
+# a side came out as the one big triangle around them, and two joined at a
+# corner as nothing at all (logs/liza.log, 2026-10-14 17:10: "two triangles
+# joined at a vertex", and only "See the shape" under it). This reads the
+# drawing the way a person does: as lines, the points where they meet -- a
+# corner two shapes share, a line ending on another, two lines crossing --
+# and the closed regions those lines fence off. Each region is a face, each
+# meeting point a corner, lettered once however many faces share it.
+#
+# What the reading names only decides WHETHER to try (a circle is not lines);
+# what the figure is comes from the ink, so a house, an arrow, a star or three
+# triangles in a row are measured as drawn without anyone listing them.
+CURVED_WORDS = re.compile(r"circle|semicircle|ellipse|oval|\barc\b|sector|ring|curve|"
+                          r"cylinder|cone|sphere|वृत्त", re.IGNORECASE)
+POLYGON_WORDS = re.compile(r"triangle|quadrilateral|square|rectangle|rhomb|parallelogram|"
+                           r"trapez|kite|pentagon|hexagon|heptagon|octagon|nonagon|decagon|"
+                           r"polygon|star|arrow|त्रिभुज|चतुर्भुज|वर्ग|आयत", re.IGNORECASE)
+FIGURE_MAX_CORNERS = len("ABCDEFGHIJKLMNPQRSTUVWXYZ")
+
+
+def worth_measuring(found):
+    """Whether the reading names a flat figure made of straight lines -- and
+    not a circuit, a graph or a cube, whose lines also fence regions off."""
+    shape = found.get("shape") or ""
+    return bool(shape) and not found.get("solid") and not (
+        CURVED_WORDS.search(shape) and not POLYGON_WORDS.search(shape))
+
+
+def _simplify(line, eps):
+    """Ramer-Douglas-Peucker: the corners of a hand-drawn line."""
+    if len(line) < 3:
+        return list(line)
+    (ax, ay), (bx, by) = line[0], line[-1]
+    dx, dy = bx - ax, by - ay
+    norm = math.hypot(dx, dy)
+    if norm < 1e-9:
+        far = [math.hypot(x - ax, y - ay) for x, y in line]
+    else:
+        far = [abs(dy * (x - ax) - dx * (y - ay)) / norm for x, y in line]
+    i = max(range(1, len(line) - 1), key=lambda k: far[k])
+    if far[i] <= eps:
+        return [line[0], line[-1]]
+    return _simplify(line[:i + 1], eps)[:-1] + _simplify(line[i:], eps)
+
+
+def _smooth(line, step=3.0, reach=3):
+    """The line resampled every `step` pixels and averaged over its neighbours:
+    a finger's wobble is not a corner."""
+    if len(line) < 3:
+        return list(line)
+    even = [line[0]]
+    carry = 0.0
+    for (ax, ay), (bx, by) in zip(line, line[1:]):
+        d = math.hypot(bx - ax, by - ay)
+        t = step - carry
+        while t <= d:
+            even.append((ax + (bx - ax) * t / d, ay + (by - ay) * t / d))
+            t += step
+        carry = (carry + d) % step if d else carry
+    even.append(line[-1])
+    out = []
+    for k in range(len(even)):
+        if k in (0, len(even) - 1):
+            out.append(even[k])            # the ends stay where they were drawn
+            continue
+        lo, hi = max(0, k - reach), min(len(even), k + reach + 1)
+        out.append((sum(x for x, _ in even[lo:hi]) / (hi - lo),
+                    sum(y for _, y in even[lo:hi]) / (hi - lo)))
+    return out
+
+
+def _seg_gap(p, a, b):
+    """(distance from p to the segment ab, how far along it, 0..1)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / max(1e-9, dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+    return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy), t
+
+
+def _crossing(a, b, c, d):
+    """Where segments ab and cd cross, strictly inside both, or None."""
+    r = (b[0] - a[0], b[1] - a[1])
+    s = (d[0] - c[0], d[1] - c[1])
+    den = r[0] * s[1] - r[1] * s[0]
+    if abs(den) < 1e-9:
+        return None
+    t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den
+    u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den
+    if 0.0 < t < 1.0 and 0.0 < u < 1.0:
+        return (a[0] + t * r[0], a[1] + t * r[1])
+    return None
+
+
+def _signed_area(ring):
+    return sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1)
+               in zip(ring, ring[1:] + ring[:1])) / 2
+
+
+def _lines_of(strokes):
+    """The drawing as straight lines: (node positions, set of (i, j) edges)."""
+    lines = [line for line, _colour, _width, erase in strokes if not erase and len(line) >= 2]
+    ink = [p for line in lines for p in line]
+    if len(ink) < 6:
+        return None, None, ink, 0.0
+    xs, ys = [x for x, _ in ink], [y for _, y in ink]
+    span = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+    if span < 40:
+        return None, None, ink, span
+    eps = max(5.0, 0.03 * span)
+    # Close enough to be the same point: where a child meant two lines to meet.
+    snap = max(10.0, min(28.0, 0.05 * span))
+    nodes, edges = [], set()
+    for line in lines:
+        corners = _simplify(_smooth([tuple(p) for p in line]), eps)
+        start = len(nodes)
+        nodes.extend(corners)
+        edges.update((start + k, start + k + 1) for k in range(len(corners) - 1))
+
+    def merge():
+        """Join nodes nearer than `snap`; drop what that makes of the edges."""
+        parent = list(range(len(nodes)))
+
+        def root(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                if math.dist(nodes[i], nodes[j]) < snap:
+                    parent[root(i)] = root(j)
+        groups = {}
+        for i in range(len(nodes)):
+            groups.setdefault(root(i), []).append(i)
+        index, merged = {}, []
+        for members in groups.values():
+            for i in members:
+                index[i] = len(merged)
+            merged.append((sum(nodes[i][0] for i in members) / len(members),
+                           sum(nodes[i][1] for i in members) / len(members)))
+        return merged, {(min(index[a], index[b]), max(index[a], index[b]))
+                        for a, b in edges if index[a] != index[b]}
+
+    nodes, edges = merge()
+    # Two lines crossing make a corner where they cross.
+    for _round in range(3):
+        cuts = {}
+        listed = sorted(edges)
+        for k, (a, b) in enumerate(listed):
+            for c, d in listed[k + 1:]:
+                if len({a, b, c, d}) < 4:
+                    continue
+                at = _crossing(nodes[a], nodes[b], nodes[c], nodes[d])
+                if at is None or min(math.dist(at, nodes[i]) for i in (a, b, c, d)) < snap:
+                    continue
+                nodes.append(at)
+                cuts.setdefault((a, b), []).append(len(nodes) - 1)
+                cuts.setdefault((c, d), []).append(len(nodes) - 1)
+        if not cuts:
+            break
+        for (a, b), extra in cuts.items():
+            edges.discard((a, b))
+            chain = [a] + sorted(extra, key=lambda i: math.dist(nodes[a], nodes[i])) + [b]
+            edges.update((min(p, q), max(p, q)) for p, q in zip(chain, chain[1:]))
+        nodes, edges = merge()
+    # A line that stops on another -- a median, a roof on a wall -- cuts that
+    # one in two where it lands.
+    for _round in range(len(nodes) + 1):
+        split = None
+        for a, b in edges:
+            for n in range(len(nodes)):
+                if n in (a, b):
+                    continue
+                gap, t = _seg_gap(nodes[n], nodes[a], nodes[b])
+                if gap < snap and 0.0 < t < 1.0 and min(
+                        math.dist(nodes[n], nodes[a]), math.dist(nodes[n], nodes[b])) >= snap:
+                    split = (a, b, n)
+                    break
+            if split:
+                break
+        if split is None:
+            break
+        a, b, n = split
+        edges.discard((a, b))
+        edges.update({(min(a, n), max(a, n)), (min(n, b), max(n, b))})
+    # Loose ends -- a line run on past a corner, a stray tick -- belong to no
+    # region; and a corner the line runs straight through is not a corner.
+    while True:
+        changed = False
+        degree = {}
+        for a, b in edges:
+            degree.setdefault(a, []).append(b)
+            degree.setdefault(b, []).append(a)
+        for n, near in degree.items():
+            if len(near) == 1:
+                edges.discard((min(n, near[0]), max(n, near[0])))
+                changed = True
+                break
+            if len(near) == 2:
+                p, q = near
+                u = (nodes[p][0] - nodes[n][0], nodes[p][1] - nodes[n][1])
+                v = (nodes[q][0] - nodes[n][0], nodes[q][1] - nodes[n][1])
+                cos = (u[0] * v[0] + u[1] * v[1]) / max(1e-9, math.hypot(*u) * math.hypot(*v))
+                # Straight on, or so near the line from one neighbour to the
+                # other that the bend is the finger's, not the figure's.
+                # A short kink just past a real corner, where smoothing
+                # rounded it, is judged against its own short side.
+                off, _t = _seg_gap(nodes[n], nodes[p], nodes[q])
+                short = min(math.dist(nodes[n], nodes[p]), math.dist(nodes[n], nodes[q]))
+                if (cos < math.cos(math.radians(160)) or off < max(eps, 0.35 * short)) \
+                        and (min(p, q), max(p, q)) not in edges:
+                    edges -= {(min(n, p), max(n, p)), (min(n, q), max(n, q))}
+                    edges.add((min(p, q), max(p, q)))
+                    changed = True
+                    break
+        if not changed:
+            break
+    return nodes, edges, ink, span
+
+
+def measure_figure(strokes):
+    """Every closed region of the drawing, measured: {"points": [(x, y), ...]
+    page coordinates, lettered A, B, C... in order; "faces": [[point index,
+    ...], ...] clockwise on the screen from the face's first letter;
+    "angles": [[whole degrees per corner], ...] each face adding up to what it
+    must}. Lettered as an NCERT book letters them: anticlockwise from the top
+    corner. None when the ink is not straight lines fencing something in."""
+    nodes, edges, ink, span = _lines_of(strokes)
+    if not edges:
+        return None
+    near = {}
+    for a, b in edges:
+        near.setdefault(a, []).append(b)
+        near.setdefault(b, []).append(a)
+    # Round each region by always taking the next line round at each corner.
+    for n in near:
+        near[n].sort(key=lambda m: math.atan2(nodes[m][1] - nodes[n][1],
+                                              nodes[m][0] - nodes[n][0]))
+    unused = {(a, b) for a, b in edges} | {(b, a) for a, b in edges}
+    rings = []
+    while unused:
+        start = unused.pop()
+        ring, (u, v) = [start[0]], start
+        while True:
+            ring.append(v)
+            around = near[v]
+            w = around[(around.index(u) - 1) % len(around)]
+            if (v, w) == start or len(ring) > 4 * len(nodes):
+                break
+            unused.discard((v, w))
+            u, v = v, w
+        rings.append(ring[:-1] if ring[-1] == ring[0] else ring)
+    areas = [_signed_area([nodes[i] for i in r]) for r in rings]
+    if not rings:
+        return None
+    # The outside of each piece goes round the other way from its regions.
+    outside = 1 if areas[max(range(len(rings)), key=lambda k: abs(areas[k]))] > 0 else -1
+    faces = [r for r, a in zip(rings, areas)
+             if a * outside < 0 and abs(a) >= 400 and 3 <= len(r) <= 12 and len(set(r)) == len(r)]
+    outer = [r for r, a in zip(rings, areas) if a * outside > 0]
+    if not faces or len(faces) > 12:
+        return None
+    # The ink should be these lines, not a scribble they were found in.
+    tolerance = max(12.0, 0.06 * span)
+    lines = [(nodes[a], nodes[b]) for a, b in edges]
+    close = sum(1 for p in ink if min(_seg_gap(p, a, b)[0] for a, b in lines) < tolerance)
+    if close < 0.8 * len(ink):
+        return None
+    used = sorted({i for f in faces for i in f})
+    if len(used) > FIGURE_MAX_CORNERS:
+        return None
+    # Letters the way a book gives them: round the outside anticlockwise from
+    # the top corner, then any corner inside. (y grows downwards, so a
+    # positive area is clockwise on the screen.)
+    order = []
+    for ring in sorted(outer, key=lambda r: min(nodes[i][0] for i in r)):
+        ring = [i for i in ring if i in used]
+        if _signed_area([nodes[i] for i in ring]) > 0:
+            ring = ring[::-1]
+        if not ring:
+            continue
+        top = min(range(len(ring)), key=lambda k: (nodes[ring[k]][1], nodes[ring[k]][0]))
+        for i in ring[top:] + ring[:top]:
+            if i not in order:
+                order.append(i)
+    order += sorted((i for i in used if i not in order), key=lambda i: (nodes[i][1], nodes[i][0]))
+    index = {i: k for k, i in enumerate(order)}
+    points = [(round(nodes[i][0], 1), round(nodes[i][1], 1)) for i in order]
+    lettered, angles = [], []
+    for face in faces:
+        ring = [index[i] for i in face]
+        if _signed_area([points[i] for i in ring]) > 0:
+            ring = ring[::-1]                 # anticlockwise on the screen
+        first = ring.index(min(ring))
+        ring = ring[first:] + ring[:first]
+        n = len(ring)
+        raw = []
+        for k in range(n):
+            (px, py), (qx, qy), (rx, ry) = (points[ring[k - 1]], points[ring[k]],
+                                            points[ring[(k + 1) % n]])
+            u, v = (px - qx, py - qy), (rx - qx, ry - qy)
+            angle = math.degrees(math.atan2(u[0] * v[1] - u[1] * v[0], u[0] * v[0] + u[1] * v[1]))
+            raw.append(angle % 360)
+        if sum(raw) > (n - 2) * 180 + 1:      # measured round the outside: flip
+            raw = [360 - a for a in raw]
+        total = (n - 2) * 180
+        whole = [int(a) for a in raw]
+        for k in sorted(range(n), key=lambda k: raw[k] - int(raw[k]),
+                        reverse=True)[:max(0, total - sum(whole))]:
+            whole[k] += 1
+        lettered.append(ring)
+        angles.append(whole)
+    together = sorted(zip(lettered, angles), key=lambda fa: fa[0])
+    return {"points": points, "faces": [f for f, _ in together],
+            "angles": [a for _, a in together]}
+
+
+def figure_from_polygon(measured):
+    """measure_polygon's one outline, in measure_figure's shape -- and turned
+    round to go anticlockwise from the top, as measure_figure letters."""
+    corners, angles = measured["corners"], measured["angles"]
+    corners = corners[:1] + corners[1:][::-1]
+    angles = angles[:1] + angles[1:][::-1]
+    return {"points": corners, "faces": [list(range(len(corners)))], "angles": [angles]}
+
+
+def measure_drawing(strokes, found):
+    """The figure on the page, measured, for a reading that names one: every
+    region of it when there is more than one, else the single outline the
+    reading's name asks for -- which forgives a sloppy corner better -- and
+    the regions again when that does not fit. None when neither does."""
+    figure = measure_figure(strokes) if worth_measuring(found) else None
+    if figure and len(figure["faces"]) > 1:
+        return figure
+    corners = corners_wanted(found.get("shape"))
+    single = measure_polygon(strokes, corners) if corners else None
+    if single:
+        return figure_from_polygon(single)
+    return figure
+
+
+def figure_names(measured):
+    """"triangle ABC", "quadrilateral CDEF" -- each face, by its letters."""
+    nouns = {3: "triangle", 4: "quadrilateral", 5: "pentagon", 6: "hexagon",
+             7: "heptagon", 8: "octagon"}
+    letters = "ABCDEFGHIJKLMNPQRSTUVWXYZ"
+    return [f"{nouns.get(len(f), 'polygon')} " + "".join(letters[i] for i in f)
+            for f in measured["faces"]]
+
+
 def snapshot(strokes, page_size):
     """The page as she should see it: cropped to the writing, scaled so the
     longest side is BOARD_SEND_MAX or the writing is MAX_ZOOM times its size,
@@ -282,10 +633,10 @@ The other fields say what could be shown or worked out. Leave each one empty unl
 - plot: every function or equation in x on it, each copied as written: ["y = x² − 3", "y = A sin x + B"], ["x² − 5x + 6 = 0"]
 - solve: a few words when there is something to work out -- an equation, a sum, a question, an equation to balance: "solve 2x + 3 = 7", "balance the equation", "find the net force", "find the area". Empty for a drawing or a word.
 - solid: a 3D solid drawn or named, then any measurements on it: "Cube; side = 4 cm", "Cylinder; radius = 3 cm; height = 7 cm", "Octagonal prism"
-- shape: a flat figure drawn or named, then any measurements on it: "Right triangle; AB = 3 cm; BC = 4 cm", "Circle; radius = 5 cm", "Hexagon"
+- shape: a flat figure drawn or named, then any measurements on it: "Right triangle; AB = 3 cm; BC = 4 cm", "Circle; radius = 5 cm", "Hexagon". Several figures drawn together are named together: "Two triangles sharing a side", "Square with both diagonals", "House: a square with a triangle on top"
 - reaction: a chemical equation, in plain text: "H2 + O2 -> H2O"
 - molecule: one compound named or drawn: "H2SO4", "methane"
-- simulation: only one of these, when the page shows it: projectile motion, free fall, pendulum, spring, collision, circular motion, orbit, circuit, reflection, refraction, interference, diffraction, standing wave, magnetic field around a wire, electric field
+- simulation: only one of these, when the page shows it: projectile motion, free fall, pendulum, spring, collision, circular motion, orbit, circuit, reflection, refraction, interference, diffraction, standing wave, magnetic field around a wire, electric field, inclined plane, conservation of energy, convex lens, concave lens, concave mirror, convex mirror, doppler effect, electromagnetic induction, ac generator, states of matter, buoyancy, radioactive decay
 
 If nothing on it can be read yet: {"read": "?"}"""
 
@@ -337,7 +688,7 @@ def read(image):
                           {"type": "image_url", "image_url": {"url": url}},
                           {"type": "text", "text": "What is on the board?"}]}],
             max_tokens=260, temperature=0,
-            extra_body={"reasoning": {"enabled": False}})
+            extra_body={"reasoning": {"enabled": False}, **LLM_PROVIDER})
     except Exception as exc:
         status = getattr(exc, "status_code", None)
         if status in (400, 404) and "image" in str(exc).lower():
@@ -447,8 +798,11 @@ def suggestions(found, hindi=False):
         add("shape", solid)
     shape = found.get("shape") or ""
     if found.get("measure"):
+        faces = found["measure"]["faces"]
         add("measure", shape, label="कोण नापो" if hindi else "Measure it",
-            sub=" · ".join(f"{a}°" for a in found["measure"]["angles"]))
+            sub=" · ".join(f"{a}°" for a in found["measure"]["angles"][0])
+            if len(faces) == 1 else
+            (f"{len(faces)} आकार" if hindi else ", ".join(figure_names(found["measure"]))))
         offers[-1]["measure"] = found["measure"]
         # Their own figure in the geometry lab: corners to drag, sides and
         # corners to tap and measure.
@@ -562,15 +916,15 @@ class Reader:
                     found = read(image)
             except Exception as exc:
                 print(f"[BOARD] Reading failed ({exc}).", flush=True)
-            corners = corners_wanted(found.get("shape")) if found.get("read") else None
-            if corners:
+            measured = None
+            if found.get("read"):
                 try:
-                    measured = measure_polygon(strokes, corners)
+                    measured = measure_drawing(strokes, found)
                 except Exception as exc:
                     print(f"[BOARD] Could not measure the figure ({exc}).", flush=True)
-                    measured = None
-                if measured:
-                    found = dict(found, measure=dict(measured, name=found["shape"]))
+            if measured:
+                found = dict(found, measure=dict(measured, name=found.get("shape") or ""))
+                print(f"[BOARD] Measured: {', '.join(figure_names(measured))}.", flush=True)
             remember_reading(version, found)
             with self._lock:
                 if _pending["version"] == version:

@@ -213,7 +213,13 @@ The payload is different for each kind. Use a semicolon between the title and th
                  motion, collision, orbit, solar system, travelling wave,
                  standing wave, interference, diffraction, refraction,
                  reflection, electric field, magnetic field of a wire, series
-                 circuit.
+                 circuit, inclined plane (friction), conservation of energy,
+                 convex lens, concave lens, concave mirror, convex mirror
+                 (image formation, ray diagrams), Doppler effect,
+                 electromagnetic induction, AC generator, states of matter
+                 (solid, liquid, gas particles), buoyancy (floating and
+                 sinking), radioactive decay (half-life). Every simulation
+                 runs on its own and has sliders for its settings.
                  [ACTION: show_visual:model3d | human heart]
                  [ACTION: show_visual:model3d | projectile motion]
               1. Any molecule, as ball-and-stick: name; SMILES, as for molecule.
